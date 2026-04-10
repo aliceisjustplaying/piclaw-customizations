@@ -26,7 +26,7 @@ declare -A PATCH_FILES=(
   ["02-bootstrap-broadcast-event.patch"]="runtime/src/runtime/bootstrap.ts"
   ["03-dispatch-codex-endpoints.patch"]="runtime/src/channels/web/http/dispatch-agent.ts"
   ["04-web-codex-action-handler.patch"]="runtime/web/src/ui/app-extension-status.ts"
-  ["07-dream-model-override.patch"]="runtime/src/dream.ts"
+  # 07-dream-model-override.patch is multi-file (dream.ts + task-scheduler.ts), handled separately below
 )
 
 cd "$WORK_DIR/piclaw"
@@ -55,6 +55,31 @@ for patch_name in $(echo "${!PATCH_FILES[@]}" | tr ' ' '\n' | sort); do
     echo "  ✅ $patch_name — regenerated ($lines_added lines added)"
   fi
 done
+
+# --- Multi-file patch: 07-dream-model-override ---
+PATCH07_FILES=("runtime/src/dream.ts" "runtime/src/task-scheduler.ts")
+PATCH07_NAME="07-dream-model-override.patch"
+PATCH07_OUTPUT=""
+for rel_path in "${PATCH07_FILES[@]}"; do
+  clean="$rel_path"
+  live="$INSTALLED/$rel_path"
+  if [ ! -f "$clean" ] || [ ! -f "$live" ]; then
+    echo "  ⚠️  $PATCH07_NAME — missing: $rel_path"
+    continue
+  fi
+  hunk=$(diff -u "$clean" "$live" 2>&1 | sed "1s|^--- .*|--- $rel_path|; 2s|^+++ .*|+++ $rel_path|" || true)
+  if [ -n "$hunk" ]; then
+    PATCH07_OUTPUT+="${hunk}
+"
+  fi
+done
+if [ -n "$PATCH07_OUTPUT" ]; then
+  echo "$PATCH07_OUTPUT" > "$PATCH_DIR/$PATCH07_NAME"
+  lines_added=$(grep -c '^+[^+]' "$PATCH_DIR/$PATCH07_NAME" 2>/dev/null || echo 0)
+  echo "  ✅ $PATCH07_NAME — regenerated ($lines_added lines added, multi-file)"
+else
+  echo "  ⚠️  $PATCH07_NAME — no diff"
+fi
 
 echo ""
 echo "[regen] Verifying regenerated patches apply cleanly..."
