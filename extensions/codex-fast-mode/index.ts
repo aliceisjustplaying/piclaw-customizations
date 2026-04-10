@@ -9,12 +9,6 @@ interface PersistedState {
 const COMMAND_NAME = "fast";
 const STATE_FILE = "/workspace/.pi/codex-fast-mode.json";
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== "object") return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
 function readEnabled(): boolean {
   try {
     const parsed = JSON.parse(readFileSync(STATE_FILE, "utf8")) as Partial<PersistedState>;
@@ -29,41 +23,21 @@ function writeEnabled(enabled: boolean): void {
   writeFileSync(STATE_FILE, `${JSON.stringify({ enabled }, null, 2)}\n`, "utf8");
 }
 
-function isFastCapableCodexPayload(payload: unknown): payload is Record<string, unknown> & { model: string } {
-  if (!isPlainObject(payload)) return false;
-  if (typeof payload.model !== "string") return false;
-
-  const model = payload.model.trim().toLowerCase();
-  if (!model.startsWith("gpt-5.4")) return false;
-
-  // pi's OpenAI Codex provider builds a Responses-style payload with these fields.
-  return Array.isArray(payload.input)
-    && typeof payload.instructions === "string"
-    && isPlainObject(payload.text)
-    && payload.parallel_tool_calls === true;
-}
-
 function describeFastMode(enabled: boolean): string {
   return enabled
-    ? "Codex Fast mode: on (applies to GPT-5.4 Codex requests only)"
+    ? "Codex Fast mode: requested, but provider injection is currently disabled pending a correct implementation"
     : "Codex Fast mode: off";
 }
 
 export const codexFastMode: ExtensionFactory = (pi: ExtensionAPI) => {
   let enabled = readEnabled();
 
-  pi.on("before_provider_request", (event) => {
-    if (!enabled) return;
-    if (!isFastCapableCodexPayload(event.payload)) return;
-
-    return {
-      ...event.payload,
-      service_tier: "fast",
-    };
-  });
+  // Intentionally no before_provider_request hook for now.
+  // A previous attempt that injected service_tier: "fast" directly caused empty/no-op replies.
+  // Keep the command/state shape, but disable provider mutation until the real Codex contract is known.
 
   pi.registerCommand(COMMAND_NAME, {
-    description: "Show or set Codex Fast mode (on|off|status)",
+    description: "Show Codex Fast mode status (provider injection currently disabled)",
     handler: async (args, ctx) => {
       const value = args.trim().toLowerCase();
 
@@ -75,7 +49,7 @@ export const codexFastMode: ExtensionFactory = (pi: ExtensionAPI) => {
       if (value === "on") {
         enabled = true;
         writeEnabled(true);
-        ctx.ui.notify("Codex Fast mode enabled for GPT-5.4", "info");
+        ctx.ui.notify("Fast mode request recorded, but injection is disabled until a correct implementation is found", "warning");
         return;
       }
 
