@@ -26,6 +26,7 @@ declare -A PATCH_FILES=(
   ["02-bootstrap-broadcast-event.patch"]="runtime/src/runtime/bootstrap.ts"
   ["03-dispatch-codex-endpoints.patch"]="runtime/src/channels/web/http/dispatch-agent.ts"
   ["04-web-codex-action-handler.patch"]="runtime/web/src/ui/app-extension-status.ts"
+  ["07-dream-model-override.patch"]="runtime/src/dream.ts"
 )
 
 cd "$WORK_DIR/piclaw"

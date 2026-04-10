@@ -12,6 +12,7 @@ patches/                          # Source patches applied before build
 ├── 04-web-codex-action-handler.patch   # Web UI action handlers for codex widgets
 ├── 05-web-update-autocomplete.patch    # /update and /fast in slash command autocomplete
 ├── 06-terminal-dock-and-popout-fixes.patch # Terminal dock sizing/rendering/reattach fixes
+├── 07-dream-model-override.patch          # Dream model override via PICLAW_DREAM_MODEL env var
 ├── verify-patches.sh                   # Check patches against latest upstream
 ├── regenerate-patches.sh               # Regenerate patches from deployed files
 └── README.md                           # Patch documentation
@@ -43,6 +44,15 @@ Applied to the [rcarmo/piclaw](https://github.com/rcarmo/piclaw) source tree bef
 | 04 | `runtime/web/src/ui/app-extension-status.ts` | Handle `codex.stop` and `codex.dismiss` actions in web UI |
 | 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete (used by the installed `@benvargas/pi-openai-fast` package) |
 | 06 | `runtime/web/src/panes/terminal-pane.ts`, `runtime/web/src/ui/app-main-shell-render.ts`, `runtime/web/src/ui/app-pane-runtime-orchestration.ts`, `runtime/web/static/css/editor.css` | Fix terminal dock sizing/rendering, make standalone dock fill the sidebar, and make popout→dock reattach reliable |
+| 07 | `runtime/src/dream.ts` | Read `PICLAW_DREAM_MODEL` env var to override the model used for nightly Dream maintenance (defaults to session model when unset) |
+
+### Environment variables
+
+| Variable | Default | Purpose |
+|----------|---------|----------|
+| `PICLAW_DREAM_MODEL` | *(unset — inherits session model)* | Model identifier for the nightly Dream task, e.g. `claude-sonnet-4-6` |
+
+Set in `/etc/piclaw/piclaw.env` for systemd deployments.
 
 ### Verifying patches
 
