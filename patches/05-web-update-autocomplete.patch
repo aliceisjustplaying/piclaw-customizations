@@ -5,7 +5,7 @@
    { name: "/logout", description: "Logout from an AI model provider" },
    { name: "/commands", description: "List available commands" },
 +  { name: "/update", description: "Update PiClaw to latest git main" },
-+  { name: "/service-tier", description: "Show or set the OpenAI service tier" },
++  { name: "/fast", description: "Show or set Codex Fast mode" },
  ];
  
  const COMPOSE_HISTORY_STORAGE_KEY = 'piclaw_compose_history';
