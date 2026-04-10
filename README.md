@@ -19,8 +19,12 @@ patches/                          # Source patches applied before build
 extensions/codex-delegate/        # PiClaw extension
 └── index.ts                          # Multi-task Codex delegation with live widgets
 
-extensions/codex-fast-mode/       # PiClaw extension
-└── index.ts                          # Injects Codex Fast mode via /fast
+extensions/pi-openai-fast/       # Installed third-party Pi extension package
+├── extensions/index.ts              # Implements /fast via service_tier=priority
+├── package.json
+└── README.md
+
+configs/pi-openai-fast.json      # Project config for the fast-mode package
 
 scripts/                          # Maintenance scripts
 ├── piclaw-update.sh                  # Full update: git pull → patch → build → install
@@ -37,7 +41,7 @@ Applied to the [rcarmo/piclaw](https://github.com/rcarmo/piclaw) source tree bef
 | 02 | `runtime/src/runtime/bootstrap.ts` | Wire `broadcastEvent` on `globalThis` for extensions |
 | 03 | `runtime/src/channels/web/http/dispatch-agent.ts` | Add `/agent/codex/stop` and `/agent/codex/dismiss` HTTP endpoints |
 | 04 | `runtime/web/src/ui/app-extension-status.ts` | Handle `codex.stop` and `codex.dismiss` actions in web UI |
-| 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete |
+| 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete (used by the installed `@benvargas/pi-openai-fast` package) |
 | 06 | `runtime/web/src/panes/terminal-pane.ts`, `runtime/web/src/ui/app-main-shell-render.ts`, `runtime/web/src/ui/app-pane-runtime-orchestration.ts`, `runtime/web/static/css/editor.css` | Fix terminal dock sizing/rendering, make standalone dock fill the sidebar, and make popout→dock reattach reliable |
 
 ### Verifying patches
@@ -85,26 +89,50 @@ cd /workspace/.pi/extensions/codex-delegate
 ln -sf /home/agent/.bun/install/global/node_modules node_modules
 ```
 
-## Codex Fast Mode Extension
+## Fast Mode
 
-A PiClaw extension that persists Codex Fast mode and injects `service_tier: "fast"` into outgoing GPT-5.4 Codex requests without patching upstream Pi/PiClaw.
+Fast mode is currently provided by the third-party Pi package [`@benvargas/pi-openai-fast`](https://github.com/ben-vargas/pi-packages/tree/main/packages/pi-openai-fast), installed as a workspace extension under `/workspace/.pi/extensions/pi-openai-fast`.
 
-### Features
+### What is deployed
 
-- **Request hook**: Uses `before_provider_request` to add `service_tier: "fast"` only to GPT-5.4 Codex-shaped payloads
-- **Persistent setting**: Stores the current state in `/workspace/.pi/codex-fast-mode.json`
-- **Slash command**: `/fast` supports `on`, `off`, and `status`
+- Package: `@benvargas/pi-openai-fast@1.0.2`
+- Slash command: `/fast`
+- Config path: `/workspace/.pi/extensions/pi-openai-fast.json`
+- Supported models:
+  - `openai/gpt-5.4`
+  - `openai-codex/gpt-5.4`
 
-### Installation
+### Observed behavior on this instance
 
-Copy to the PiClaw extensions directory:
+Although the Codex docs talk about `service_tier = "fast"` plus `features.fast_mode = true`, the package uses `service_tier=priority` and **this empirically worked as fast mode on `pi.mosphere.at`** with the ChatGPT/Codex OAuth setup.
+
+So the current documented setup is:
+
+- `/fast on` → enables the package
+- `/fast off` → disables it
+- `/fast status` → reports status
+- when active, requests for the configured GPT-5.4 models get `service_tier=priority`
+
+### Files in this repo
+
+This repo vendors the package files for reproducibility:
 
 ```bash
-mkdir -p /workspace/.pi/extensions/codex-fast-mode
-cp extensions/codex-fast-mode/index.ts /workspace/.pi/extensions/codex-fast-mode/
-cd /workspace/.pi/extensions/codex-fast-mode
-ln -sf /home/agent/.bun/install/global/node_modules node_modules
+extensions/pi-openai-fast/
+configs/pi-openai-fast.json
 ```
+
+### Install / wire-up
+
+```bash
+rm -rf /workspace/.pi/extensions/codex-fast-mode
+mkdir -p /workspace/.pi/extensions/pi-openai-fast
+cp -R extensions/pi-openai-fast/. /workspace/.pi/extensions/pi-openai-fast/
+cp configs/pi-openai-fast.json /workspace/.pi/extensions/pi-openai-fast.json
+ln -sf /home/agent/.bun/install/global/node_modules /workspace/.pi/extensions/pi-openai-fast/node_modules
+```
+
+After copying, restart PiClaw so the package loads.
 
 ## Update Script
 

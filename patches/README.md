@@ -11,7 +11,7 @@ They must be re-applied after every `git pull` / source update.
 | 02 | `runtime/src/runtime/bootstrap.ts` | Wire `broadcastEvent` to `globalThis.__PICLAW_BROADCAST_EVENT__` for extension widgets |
 | 03 | `runtime/src/channels/web/http/dispatch-agent.ts` | Add `POST /agent/codex/stop` and `POST /agent/codex/dismiss` endpoints |
 | 04 | `runtime/web/src/ui/app-extension-status.ts` | Route `codex.stop` and `codex.dismiss` panel actions to the web endpoints |
-| 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete |
+| 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete (used by the installed `@benvargas/pi-openai-fast` package) |
 | 06 | `runtime/web/src/panes/terminal-pane.ts`, `runtime/web/src/ui/app-main-shell-render.ts`, `runtime/web/src/ui/app-pane-runtime-orchestration.ts`, `runtime/web/static/css/editor.css` | Fix terminal dock sizing/rendering, make standalone dock fill the sidebar, and make popout→dock reattach reliable |
 
 ## Apply all patches
