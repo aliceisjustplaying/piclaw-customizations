@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export HOME=/home/agent
+CLI=/home/agent/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/cli.js
+exec sudo -u agent -H env HOME=/home/agent node --input-type=module -e '
+import { mkdirSync, realpathSync, writeFileSync, symlinkSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+const cli = realpathSync(process.argv[1]);
+const pkg = dirname(dirname(cli));
+const { buildSystemPrompt } = await import(pathToFileURL(join(pkg, "dist/core/system-prompt.js")).href);
+const { createAllToolDefinitions } = await import(pathToFileURL(join(pkg, "dist/core/tools/index.js")).href);
+const defs = createAllToolDefinitions(process.cwd());
+const names = ["read", "bash", "edit", "write"];
+const toolSnippets = Object.fromEntries(names.map((n) => [n, defs[n]?.promptSnippet]).filter(([, v]) => v));
+const promptGuidelines = names.flatMap((n) => defs[n]?.promptGuidelines ?? []);
+let s = buildSystemPrompt({ selectedTools: names, toolSnippets, promptGuidelines, cwd: process.cwd() })
+  .replace(/\nCurrent date:.*\nCurrent working directory:.*$/s, "")
+  .replace("Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):", "Pi documentation (read this only for pi-specific questions):");
+const out = join(process.env.HOME, ".pi/agent/SYSTEM.md");
+mkdirSync(dirname(out), { recursive: true });
+writeFileSync(out, s + "\n");
+const piBin = join(process.env.HOME, ".bun/bin/pi");
+if (!existsSync(piBin)) symlinkSync(join(pkg, "dist/cli.js"), piBin);
+console.log(out);
+' "$CLI"
