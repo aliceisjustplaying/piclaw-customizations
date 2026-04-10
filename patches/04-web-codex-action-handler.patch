@@ -1,0 +1,19 @@
+--- runtime/web/src/ui/app-extension-status.ts.bak	2026-04-10 12:51:25.615493477 +0000
++++ runtime/web/src/ui/app-extension-status.ts	2026-04-10 12:51:25.627493624 +0000
+@@ -137,5 +137,16 @@
+     };
+   }
+ 
++
++  if (actionType.startsWith('codex.stop')) {
++    await fetch('/agent/codex/stop', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: actionType }) });
++    return { refreshAutoresearchStatus: false };
++  }
++
++  if (actionType.startsWith('codex.dismiss')) {
++    await fetch('/agent/codex/dismiss', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: actionType }) });
++    return { refreshAutoresearchStatus: false };
++  }
++
+   throw new Error(`Unsupported panel action: ${actionType || actionKey}`);
+ }

@@ -1,0 +1,46 @@
+--- runtime/src/channels/web/http/dispatch-agent.ts
++++ runtime/src/channels/web/http/dispatch-agent.ts
+@@ -56,6 +56,43 @@
+     handle: (channel, req) => channel.handleAutoresearchDismiss(req),
+   },
+   {
++    method: "POST" as const,
++    path: "/agent/codex/dismiss",
++    handle: async (_channel: any, req: Request) => {
++      try {
++        const broadcast = (globalThis as any).__PICLAW_BROADCAST_EVENT__;
++        if (typeof broadcast === "function") {
++          let wkey = "codex-delegate"; try { const body = await req.json(); console.error("[codex-dismiss] body:", JSON.stringify(body)); if (typeof body?.key === "string") wkey = body.key.replace("codex.dismiss.", "codex-"); } catch (e) { console.error("[codex-dismiss] parse error:", e); } console.error("[codex-dismiss] resolved wkey:", wkey); broadcast("extension_ui_widget", { chat_jid: "web:default", key: wkey, content: [], options: { surface: "status-panel", remove: true } });
++        }
++        return Response.json({ ok: true });
++      } catch (err) {
++        return Response.json({ error: String(err) }, { status: 500 });
++      }
++    },
++  },
++  {
++    method: "POST" as const,
++    path: "/agent/codex/stop",
++    handle: async (_channel: any, req: Request) => {
++      try {
++        let taskId = "";
++        try { const body = await req.json(); if (typeof body?.key === "string") taskId = body.key.replace("codex.stop.", ""); } catch {}
++        const { spawnSync } = await import("node:child_process");
++        const tmuxSession = "codex-" + taskId;
++        spawnSync("tmux", ["send-keys", "-t", tmuxSession, "C-c", ""], { stdio: "ignore" });
++        setTimeout(() => spawnSync("tmux", ["kill-session", "-t", tmuxSession], { stdio: "ignore" }), 2000);
++        const broadcast = (globalThis as any).__PICLAW_BROADCAST_EVENT__;
++        if (typeof broadcast === "function") {
++          const wkey = "codex-" + taskId;
++          broadcast("extension_ui_widget", { chat_jid: "web:default", key: wkey, content: [], options: { surface: "status-panel", remove: true } });
++        }
++        return Response.json({ ok: true });
++      } catch (err) {
++        return Response.json({ error: String(err) }, { status: 500 });
++      }
++    },
++  },
++  {
+     method: "GET",
+     path: "/agent/queue-state",
+     handle: (channel, req) => channel.handleAgentQueueState(req),

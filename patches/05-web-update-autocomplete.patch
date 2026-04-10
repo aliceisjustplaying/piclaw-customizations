@@ -1,0 +1,10 @@
+--- runtime/web/src/components/compose-box.ts.bak	2026-04-10 13:12:53.135438266 +0000
++++ runtime/web/src/components/compose-box.ts	2026-04-10 13:12:53.139438315 +0000
+@@ -67,6 +67,7 @@
+   { name: "/login", description: "Login to an AI model provider (OAuth or API key)" },
+   { name: "/logout", description: "Logout from an AI model provider" },
+   { name: "/commands", description: "List available commands" },
++  { name: "/update", description: "Update PiClaw to latest git main" },
+ ];
+ 
+ const COMPOSE_HISTORY_STORAGE_KEY = 'piclaw_compose_history';

@@ -1,0 +1,10 @@
+--- runtime/src/runtime/bootstrap.ts
++++ runtime/src/runtime/bootstrap.ts
+@@ -152,6 +152,7 @@
+   deps.log("=== Piclaw - Pi Coding Agent Assistant ===");
+ 
+   const web = await deps.startWebChannel(queue, agentPool);
++  if (typeof (web as any).broadcastEvent === "function") { (globalThis as any).__PICLAW_BROADCAST_EVENT__ = (t: string, d: unknown) => (web as any).broadcastEvent(t, d); }
+   const pushover = await deps.startOptionalPushoverChannel();
+   const whatsapp = deps.createWhatsAppChannel(state);
+ 
