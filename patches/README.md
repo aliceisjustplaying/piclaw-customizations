@@ -9,17 +9,34 @@ They must be re-applied after every `git pull` / source update.
 |---|------|---------|
 | 01 | `runtime/src/agent-pool/session.ts` | Load `~/.pi/agent/SYSTEM.md` as system prompt override |
 | 02 | `runtime/src/runtime/bootstrap.ts` | Wire `broadcastEvent` to `globalThis.__PICLAW_BROADCAST_EVENT__` for extension widgets |
-| 03 | `runtime/src/channels/web/http/dispatch-agent.ts` | Add `POST /agent/codex/dismiss` endpoint |
-| 04 | `runtime/web/src/ui/app-extension-status.ts` | Route `codex.dismiss` panel action to the dismiss endpoint |
+| 03 | `runtime/src/channels/web/http/dispatch-agent.ts` | Add `POST /agent/codex/stop` and `POST /agent/codex/dismiss` endpoints |
+| 04 | `runtime/web/src/ui/app-extension-status.ts` | Route `codex.stop` and `codex.dismiss` panel actions to the web endpoints |
+| 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/service-tier` to slash command autocomplete |
+| 06 | `runtime/web/src/panes/terminal-pane.ts`, `runtime/web/static/css/editor.css` | Make terminal fit/fill its host reliably with delayed resize retries and flex layout fixes |
+| 07 | `runtime/web/src/ui/app-main-shell-render.ts`, `runtime/web/src/ui/app-pane-runtime-orchestration.ts`, `runtime/web/static/css/editor.css` | Let standalone terminal dock fill the whole pane and make popout→dock reattach less brittle via live-transfer recovery |
 
 ## Apply all patches
 
 ```bash
 cd /path/to/piclaw-source
 for p in /workspace/patches/[0-9]*.patch; do
-  sed 's/\.orig\t/\t/g' "$p" | patch -p0
+  sed 's/\.orig\t/\t/g; s/\.bak\t/\t/g' "$p" | patch -p0
 done
 ```
+
+## Verify against latest upstream
+
+```bash
+/workspace/patches/verify-patches.sh
+```
+
+## Regenerate server-side patches from the live install
+
+```bash
+/workspace/patches/regenerate-patches.sh
+```
+
+Note: web-source patches (like 04, 05, 06) are verified against upstream source but cannot be regenerated from the compiled installed bundle.
 
 ## Workflow
 
@@ -31,5 +48,3 @@ done
 6. `bun pm pack` → install globally
 
 The update script at `/workspace/migrated/piclaw-update.sh` automates this.
-
-| 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` to slash command autocomplete |
