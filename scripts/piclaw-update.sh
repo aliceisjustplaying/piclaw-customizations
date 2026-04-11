@@ -269,14 +269,17 @@ apply_source_patches() {
 }
 
 build_from_source() {
-  status "Building PiClaw from source"
   cd "${SOURCE_DIR}"
+  status "Installing dependencies"
   BUN_INSTALL_CACHE_DIR="${SOURCE_DIR}/.bun-cache" quiet bun install --ignore-scripts
+  status "Compiling server"
   quiet bun run build
+  status "Compiling web UI"
   quiet bun run build:web
 
   find runtime/web/static/dist -type f -name '*.map' -delete
 
+  status "Packing tarball"
   rm -rf "${PACK_DIR}"
   mkdir -p "${PACK_DIR}"
   rm -f piclaw-*.tgz
