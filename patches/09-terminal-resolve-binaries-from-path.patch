@@ -7,21 +7,23 @@
  import { FFIType, dlopen } from "bun:ffi";
  import type { ServerWebSocket } from "bun";
 
-@@ -188,8 +188,20 @@
+@@ -188,8 +188,22 @@
    return Buffer.from(chunk).toString("utf8");
  }
 
-+function resolveFromPath(name: string, fallback: string): string {
-+  const dirs = (process.env.PATH || "").split(":");
++const EXTRA_BIN_DIRS = ["/run/current-system/sw/bin", "/usr/local/bin", "/usr/bin", "/bin"];
++
++function findExecutable(name: string): string {
++  const dirs = (process.env.PATH || "").split(":").concat(EXTRA_BIN_DIRS);
 +  for (const dir of dirs) {
 +    const candidate = `${dir}/${name}`;
 +    try { accessSync(candidate, constants.X_OK); return candidate; } catch { /* next */ }
 +  }
-+  return fallback;
++  return name;
 +}
 +
-+const SCRIPT_BIN = resolveFromPath("script", "/usr/bin/script");
-+const BASH_BIN = resolveFromPath("bash", "/usr/bin/bash");
++const SCRIPT_BIN = findExecutable("script");
++const BASH_BIN = findExecutable("bash");
 +
  function defaultSpawnProcess(cwd: string): TerminalProcessLike {
 -  return spawn("/usr/bin/script", ["-qf", "-c", "/usr/bin/bash -i", "/dev/null"], {
