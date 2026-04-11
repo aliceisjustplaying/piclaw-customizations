@@ -16,6 +16,7 @@ patches/                          # Source patches applied before build
 ├── 08-webauthn-enrol-regex-fix.patch
 ├── 09-terminal-resolve-binaries-from-path.patch
 ├── 10-extension-ui-error-details.patch
+├── 11-db-lazy-init-for-extension-module-graph.patch
 ├── verify-patches.sh                   # Check patches against latest upstream
 ├── regenerate-patches.sh               # Regenerate patches from deployed files
 └── README.md                           # Patch documentation
@@ -56,6 +57,7 @@ Applied to the [rcarmo/piclaw](https://github.com/rcarmo/piclaw) source tree bef
 | 08 | WebAuthn enrol regex fix | |
 | 09 | Terminal binary resolution from PATH | |
 | 10 | Extension UI error details | Show readable extension path/event/error instead of `[object Object]` |
+| 11 | DB lazy init for extension module graph | Ensure Jiti-loaded extension code can initialize and use the DB singleton on first access |
 
 ### Post-install patches
 

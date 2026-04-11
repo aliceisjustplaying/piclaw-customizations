@@ -17,6 +17,7 @@ They must be re-applied after every `git pull` / source update.
 | 08 | `runtime/src/channels/web/auth/webauthn-enrol-page.ts` | Fix regex syntax error in passkey enrolment inline script — `\+` and `\/` inside the template literal lose their backslash, producing invalid `/+/g` and `///g` in the browser |
 | 09 | `runtime/src/channels/web/terminal/terminal-session-service.ts` | Resolve `script` and `bash` from PATH instead of hardcoding `/usr/bin/` — fixes terminal on NixOS and other non-FHS distros |
 | 10 | `runtime/src/channels/web/theming/ui-bridge.ts` | Show structured extension UI errors as readable details instead of `[object Object]` |
+| 11 | `runtime/src/db/connection.ts` | Lazily initialize the DB on first `getDb()` access so Jiti-loaded extension module graphs share a working DB handle |
 
 ## Apply all patches
 
