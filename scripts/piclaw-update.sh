@@ -271,7 +271,7 @@ apply_source_patches() {
 build_from_source() {
   status "Building PiClaw from source"
   cd "${SOURCE_DIR}"
-  quiet BUN_INSTALL_CACHE_DIR="${SOURCE_DIR}/.bun-cache" bun install --ignore-scripts
+  BUN_INSTALL_CACHE_DIR="${SOURCE_DIR}/.bun-cache" quiet bun install --ignore-scripts
   quiet bun run build
   quiet bun run build:web
 
