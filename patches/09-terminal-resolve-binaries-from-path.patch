@@ -1,0 +1,31 @@
+--- runtime/src/channels/web/terminal/terminal-session-service.ts
++++ runtime/src/channels/web/terminal/terminal-session-service.ts
+@@ -1,5 +1,5 @@
+ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+-import { openSync, closeSync, readlinkSync, readdirSync, readFileSync } from "node:fs";
++import { openSync, closeSync, readlinkSync, readdirSync, readFileSync, accessSync, constants } from "node:fs";
+ import { FFIType, dlopen } from "bun:ffi";
+ import type { ServerWebSocket } from "bun";
+
+@@ -188,8 +188,20 @@
+   return Buffer.from(chunk).toString("utf8");
+ }
+
++function resolveFromPath(name: string, fallback: string): string {
++  const dirs = (process.env.PATH || "").split(":");
++  for (const dir of dirs) {
++    const candidate = `${dir}/${name}`;
++    try { accessSync(candidate, constants.X_OK); return candidate; } catch { /* next */ }
++  }
++  return fallback;
++}
++
++const SCRIPT_BIN = resolveFromPath("script", "/usr/bin/script");
++const BASH_BIN = resolveFromPath("bash", "/usr/bin/bash");
++
+ function defaultSpawnProcess(cwd: string): TerminalProcessLike {
+-  return spawn("/usr/bin/script", ["-qf", "-c", "/usr/bin/bash -i", "/dev/null"], {
++  return spawn(SCRIPT_BIN, ["-qf", "-c", `${BASH_BIN} -i`, "/dev/null"], {
+     cwd,
+     env: {
+       ...process.env,

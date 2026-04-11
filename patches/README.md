@@ -15,6 +15,7 @@ They must be re-applied after every `git pull` / source update.
 | 06 | `runtime/web/src/panes/terminal-pane.ts`, `runtime/web/src/ui/app-main-shell-render.ts`, `runtime/web/src/ui/app-pane-runtime-orchestration.ts`, `runtime/web/static/css/editor.css` | Fix terminal dock sizing/rendering, make standalone dock fill the sidebar, and make popout→dock reattach reliable |
 | 07 | `runtime/src/dream.ts`, `runtime/src/task-scheduler.ts` | Read `PICLAW_DREAM_MODEL` env var to override the model used for nightly Dream maintenance; add model switching to internal task path so Dream actually runs on the specified model (defaults to session model when unset) |
 | 08 | `runtime/src/channels/web/auth/webauthn-enrol-page.ts` | Fix regex syntax error in passkey enrolment inline script — `\+` and `\/` inside the template literal lose their backslash, producing invalid `/+/g` and `///g` in the browser |
+| 09 | `runtime/src/channels/web/terminal/terminal-session-service.ts` | Resolve `script` and `bash` from PATH instead of hardcoding `/usr/bin/` — fixes terminal on NixOS and other non-FHS distros |
 
 ## Apply all patches
 
