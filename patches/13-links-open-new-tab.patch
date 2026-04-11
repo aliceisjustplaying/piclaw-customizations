@@ -1,0 +1,19 @@
+--- runtime/web/src/markdown.ts	2026-04-11 21:04:18.207237313 +0000
++++ runtime/web/src/markdown.ts	2026-04-11 21:04:39.702451500 +0000
+@@ -180,8 +180,14 @@
+                         el.removeAttribute(attr.name);
+                     } else {
+                         el.setAttribute(attr.name, safe);
+-                        if (tag === 'a' && !el.getAttribute('rel')) {
+-                            el.setAttribute('rel', 'noopener noreferrer');
++                        if (tag === 'a') {
++                            if (!el.getAttribute('rel')) {
++                                el.setAttribute('rel', 'noopener noreferrer');
++                            }
++                            // Open external links in a new tab
++                            if (/^https?:\/\//i.test(safe)) {
++                                el.setAttribute('target', '_blank');
++                            }
+                         }
+                     }
+                 } else if (name === 'src') {

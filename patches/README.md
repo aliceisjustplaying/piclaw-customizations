@@ -19,6 +19,7 @@ They must be re-applied after every `git pull` / source update.
 | ~~10~~ | — | Removed (merged upstream as commit `4fcd82d`) |
 | 11 | `runtime/src/db/connection.ts` | Lazily initialize the DB on first `getDb()` access so Jiti-loaded extension module graphs share a working DB handle |
 | 12 | `runtime/src/channels/web/theming/ui-bridge.ts` | Fix TS2352 build error in upstream `4fcd82d` — `ExtensionError` is a concrete interface, not castable to `Record<string, unknown>` |
+| 13 | `runtime/web/src/markdown.ts` | Make external links (http/https) in rendered markdown open in a new tab (`target="_blank"`) |
 
 ## Apply all patches
 
