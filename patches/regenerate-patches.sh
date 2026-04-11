@@ -20,13 +20,15 @@ echo "[regen] Installed piclaw at: $INSTALLED"
 echo "[regen] Cloning clean source..."
 git clone --depth=1 --quiet "$REPO_URL" "$WORK_DIR/piclaw"
 
-# Files we patch (relative to piclaw root)
+# Single-file server-side patches (relative to piclaw root)
 declare -A PATCH_FILES=(
   ["01-session-system-prompt.patch"]="runtime/src/agent-pool/session.ts"
   ["02-bootstrap-broadcast-event.patch"]="runtime/src/runtime/bootstrap.ts"
-  # 03-codex-endpoints-and-action-handler.patch is multi-file (dispatch-agent.ts + web UI), cannot be regenerated from installed bundle
-  # 06-dream-model-override.patch is multi-file (dream.ts + task-scheduler.ts), handled separately below
-  # 07-db-lazy-init-for-extension-module-graph.patch is single-file, handled separately below
+  # 04-web-codex-action-handler.patch is multi-file (dispatch-agent.ts + web UI), cannot be regenerated from installed bundle
+  # 05-web-update-autocomplete.patch is web-source only, cannot be regenerated from installed bundle
+  # 06-terminal-dock-and-popout-fixes.patch is web-source only, cannot be regenerated from installed bundle
+  ["11-db-lazy-init-for-extension-module-graph.patch"]="runtime/src/db/connection.ts"
+  ["12-fix-extension-error-cast.patch"]="runtime/src/channels/web/theming/ui-bridge.ts"
 )
 
 cd "$WORK_DIR/piclaw"
@@ -45,7 +47,7 @@ for patch_name in $(echo "${!PATCH_FILES[@]}" | tr ' ' '\n' | sort); do
     continue
   fi
 
-  # Generate diff with relative paths (clean as "a/path", live as "b/path")
+  # Generate diff with relative paths
   diff_output=$(diff -u "$clean" "$live" 2>&1 | sed "1s|^--- .*|--- $rel_path|; 2s|^+++ .*|+++ $rel_path|") || true
   if [ -z "$diff_output" ]; then
     echo "  ⚠️  $patch_name — no diff (patch not applied to live?)"
@@ -56,29 +58,29 @@ for patch_name in $(echo "${!PATCH_FILES[@]}" | tr ' ' '\n' | sort); do
   fi
 done
 
-# --- Multi-file patch: 06-dream-model-override ---
-PATCH07_FILES=("runtime/src/dream.ts" "runtime/src/task-scheduler.ts")
-PATCH07_NAME="06-dream-model-override.patch"
-PATCH07_OUTPUT=""
-for rel_path in "${PATCH07_FILES[@]}"; do
+# --- Multi-file patch: 07-dream-model-override ---
+DREAM_PATCH_FILES=("runtime/src/dream.ts" "runtime/src/task-scheduler.ts")
+DREAM_PATCH_NAME="07-dream-model-override.patch"
+DREAM_PATCH_OUTPUT=""
+for rel_path in "${DREAM_PATCH_FILES[@]}"; do
   clean="$rel_path"
   live="$INSTALLED/$rel_path"
   if [ ! -f "$clean" ] || [ ! -f "$live" ]; then
-    echo "  ⚠️  $PATCH07_NAME — missing: $rel_path"
+    echo "  ⚠️  $DREAM_PATCH_NAME — missing: $rel_path"
     continue
   fi
   hunk=$(diff -u "$clean" "$live" 2>&1 | sed "1s|^--- .*|--- $rel_path|; 2s|^+++ .*|+++ $rel_path|" || true)
   if [ -n "$hunk" ]; then
-    PATCH07_OUTPUT+="${hunk}
+    DREAM_PATCH_OUTPUT+="${hunk}
 "
   fi
 done
-if [ -n "$PATCH07_OUTPUT" ]; then
-  echo "$PATCH07_OUTPUT" > "$PATCH_DIR/$PATCH07_NAME"
-  lines_added=$(grep -c '^+[^+]' "$PATCH_DIR/$PATCH07_NAME" 2>/dev/null || echo 0)
-  echo "  ✅ $PATCH07_NAME — regenerated ($lines_added lines added, multi-file)"
+if [ -n "$DREAM_PATCH_OUTPUT" ]; then
+  echo "$DREAM_PATCH_OUTPUT" > "$PATCH_DIR/$DREAM_PATCH_NAME"
+  lines_added=$(grep -c '^+[^+]' "$PATCH_DIR/$DREAM_PATCH_NAME" 2>/dev/null || echo 0)
+  echo "  ✅ $DREAM_PATCH_NAME — regenerated ($lines_added lines added, multi-file)"
 else
-  echo "  ⚠️  $PATCH07_NAME — no diff"
+  echo "  ⚠️  $DREAM_PATCH_NAME — no diff"
 fi
 
 echo ""
