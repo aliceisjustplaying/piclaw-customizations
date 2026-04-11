@@ -1,6 +1,6 @@
 --- runtime/src/db/connection.ts
 +++ runtime/src/db/connection.ts
-@@ -738,14 +738,15 @@
+@@ -738,14 +738,18 @@
  
  /**
   * Return the singleton Database instance.
@@ -19,6 +19,9 @@
 +export function getDb(): Database {
 +  if (!db) {
 +    initDatabase();
++  }
++  if (!db) {
++    throw new Error("Database initialization failed");
 +  }
 +
    return db;
