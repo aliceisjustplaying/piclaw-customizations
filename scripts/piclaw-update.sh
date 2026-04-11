@@ -437,6 +437,27 @@ wire_runtime_extensions_node_modules() {
   fi
 }
 
+apply_post_install_patches() {
+  local post_patch_dir="${SCRIPT_DIR}/../patches/post-install"
+  [ -d "${post_patch_dir}" ] || return 0
+
+  local count=0
+  for script in "${post_patch_dir}"/[0-9]*.sh; do
+    [ -f "${script}" ] || continue
+    [ -x "${script}" ] || chmod +x "${script}"
+    status "Running post-install patch $(basename "${script}")"
+    if ! quiet "${script}"; then
+      error "Post-install patch $(basename "${script}") failed"
+      exit 1
+    fi
+    count=$((count + 1))
+  done
+
+  if [ "${count}" -gt 0 ]; then
+    status "Applied ${count} post-install patch(es)"
+  fi
+}
+
 fix_permissions() {
   local bun_install
   bun_install="$(resolve_bun_install)"
@@ -493,6 +514,7 @@ main() {
   capture_pi_agent_version_after_install
   wire_extension_node_modules
   wire_runtime_extensions_node_modules
+  apply_post_install_patches
   fix_permissions
   ensure_piclaw_symlink
   regenerate_system_prompt
