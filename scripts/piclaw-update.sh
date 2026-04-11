@@ -95,10 +95,13 @@ require_command() {
   fi
 }
 
+resolve_bun_binary() {
+  command -v bun
+}
+
 resolve_bun_install() {
-  # BUN_INSTALL is the root that contains bin/ and install/global/
-  # Prefer the env var, then ~/.bun (standard self-install location),
-  # then resolve from the binary (fails if bun is in a read-only store like Nix).
+  # Writable root for bun's global installs (contains install/global/).
+  # Prefer BUN_INSTALL env var, then ~/.bun, then derive from the binary.
   if [ -n "${BUN_INSTALL:-}" ] && [ -d "${BUN_INSTALL}" ]; then
     printf '%s\n' "${BUN_INSTALL}"
     return
@@ -110,7 +113,7 @@ resolve_bun_install() {
   fi
 
   local bun_path
-  bun_path="$(readlink -f "$(command -v bun)")"
+  bun_path="$(readlink -f "$(resolve_bun_binary)")"
   dirname "$(dirname "${bun_path}")"
 }
 
@@ -280,12 +283,13 @@ write_global_package_manifest() {
 }
 
 install_global_packages() {
-  local tarball bun_install
+  local tarball bun_install bun_bin
   tarball="$1"
   bun_install="$(resolve_bun_install)"
+  bun_bin="$(resolve_bun_binary)"
 
   status "Installing PiClaw + pi-coding-agent globally"
-  sudo BUN_INSTALL="${bun_install}" "${bun_install}/bin/bun" install -g "${tarball}" --registry https://registry.npmjs.org --ignore-scripts
+  sudo BUN_INSTALL="${bun_install}" "${bun_bin}" install -g "${tarball}" --registry https://registry.npmjs.org --ignore-scripts
 }
 
 capture_tool_versions_before_updates() {
@@ -403,7 +407,8 @@ fix_permissions() {
   bun_install="$(resolve_bun_install)"
 
   status "Setting global Bun install permissions"
-  sudo chmod -R a+rX "${bun_install}/bin" "${bun_install}/install/global"
+  [ -d "${bun_install}/bin" ] && sudo chmod -R a+rX "${bun_install}/bin"
+  sudo chmod -R a+rX "${bun_install}/install/global"
 }
 
 ensure_piclaw_symlink() {
