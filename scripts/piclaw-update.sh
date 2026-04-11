@@ -97,6 +97,18 @@ require_command() {
 
 resolve_bun_install() {
   # BUN_INSTALL is the root that contains bin/ and install/global/
+  # Prefer the env var, then ~/.bun (standard self-install location),
+  # then resolve from the binary (fails if bun is in a read-only store like Nix).
+  if [ -n "${BUN_INSTALL:-}" ] && [ -d "${BUN_INSTALL}" ]; then
+    printf '%s\n' "${BUN_INSTALL}"
+    return
+  fi
+
+  if [ -d "${HOME}/.bun" ]; then
+    printf '%s\n' "${HOME}/.bun"
+    return
+  fi
+
   local bun_path
   bun_path="$(readlink -f "$(command -v bun)")"
   dirname "$(dirname "${bun_path}")"
@@ -428,8 +440,6 @@ main() {
   require_command sudo
   require_command patch
   require_command systemctl
-  require_command piclaw
-
   refresh_source_checkout
   compare_versions_or_exit
   apply_source_patches
