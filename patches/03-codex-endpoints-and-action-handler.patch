@@ -1,7 +1,5 @@
-diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
-index 93c9fb0..16d7a82 100644
---- a/runtime/src/channels/web/http/dispatch-agent.ts
-+++ b/runtime/src/channels/web/http/dispatch-agent.ts
+--- runtime/src/channels/web/http/dispatch-agent.ts
++++ runtime/src/channels/web/http/dispatch-agent.ts
 @@ -55,6 +55,93 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
      path: "/agent/autoresearch/dismiss",
      handle: (channel, req) => channel.handleAutoresearchDismiss(req),
@@ -96,10 +94,8 @@ index 93c9fb0..16d7a82 100644
    {
      method: "GET",
      path: "/agent/queue-state",
-diff --git a/runtime/web/src/ui/app-extension-status.ts b/runtime/web/src/ui/app-extension-status.ts
-index 640179a..33155be 100644
---- a/runtime/web/src/ui/app-extension-status.ts
-+++ b/runtime/web/src/ui/app-extension-status.ts
+--- runtime/web/src/ui/app-extension-status.ts
++++ runtime/web/src/ui/app-extension-status.ts
 @@ -14,6 +14,7 @@ export interface StatusPanelPayloadLike {
  
  export interface ExtensionPanelActionResult {
@@ -128,10 +124,8 @@ index 640179a..33155be 100644
 +
    throw new Error(`Unsupported panel action: ${actionType || actionKey}`);
  }
-diff --git a/runtime/web/src/ui/app-sidepanel-orchestration.ts b/runtime/web/src/ui/app-sidepanel-orchestration.ts
-index 8dc90d2..57f1be0 100644
---- a/runtime/web/src/ui/app-sidepanel-orchestration.ts
-+++ b/runtime/web/src/ui/app-sidepanel-orchestration.ts
+--- runtime/web/src/ui/app-sidepanel-orchestration.ts
++++ runtime/web/src/ui/app-sidepanel-orchestration.ts
 @@ -2,6 +2,7 @@ import { useCallback, useEffect } from '../vendor/preact-htm.js';
  import { parseBtwCommand, buildBtwInjectionText, resolveBtwChatJid } from './btw.js';
  import {

@@ -1,9 +1,9 @@
 --- runtime/src/db/connection.ts
 +++ runtime/src/db/connection.ts
-@@ -738,14 +738,18 @@
+@@ -738,13 +738,17 @@
  
- /**
-  * Return the singleton Database instance.
+-/**
+- * Return the singleton Database instance.
 - * Throws if called before initDatabase().
 - *
 - * Used by every db/* module to obtain the shared connection.
@@ -12,6 +12,10 @@
 -  if (!db) {
 -    throw new Error("Database not initialized");
 -  }
+-  return db;
+-}
++/**
++ * Return the singleton Database instance.
 + * Lazily initializes the database if this module graph has not done so yet.
 + *
 + * Used by every db/* module to obtain the shared connection.
@@ -24,6 +28,5 @@
 +    throw new Error("Database initialization failed");
 +  }
 +
-   return db;
- }
- 
++  return db;
++}

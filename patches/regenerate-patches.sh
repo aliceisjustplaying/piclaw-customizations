@@ -24,9 +24,9 @@ git clone --depth=1 --quiet "$REPO_URL" "$WORK_DIR/piclaw"
 declare -A PATCH_FILES=(
   ["01-session-system-prompt.patch"]="runtime/src/agent-pool/session.ts"
   ["02-bootstrap-broadcast-event.patch"]="runtime/src/runtime/bootstrap.ts"
-  ["03-dispatch-codex-endpoints.patch"]="runtime/src/channels/web/http/dispatch-agent.ts"
-  ["04-web-codex-action-handler.patch"]="runtime/web/src/ui/app-extension-status.ts"
-  # 07-dream-model-override.patch is multi-file (dream.ts + task-scheduler.ts), handled separately below
+  # 03-codex-endpoints-and-action-handler.patch is multi-file (dispatch-agent.ts + web UI), cannot be regenerated from installed bundle
+  # 06-dream-model-override.patch is multi-file (dream.ts + task-scheduler.ts), handled separately below
+  # 07-db-lazy-init-for-extension-module-graph.patch is single-file, handled separately below
 )
 
 cd "$WORK_DIR/piclaw"
@@ -56,9 +56,9 @@ for patch_name in $(echo "${!PATCH_FILES[@]}" | tr ' ' '\n' | sort); do
   fi
 done
 
-# --- Multi-file patch: 07-dream-model-override ---
+# --- Multi-file patch: 06-dream-model-override ---
 PATCH07_FILES=("runtime/src/dream.ts" "runtime/src/task-scheduler.ts")
-PATCH07_NAME="07-dream-model-override.patch"
+PATCH07_NAME="06-dream-model-override.patch"
 PATCH07_OUTPUT=""
 for rel_path in "${PATCH07_FILES[@]}"; do
   clean="$rel_path"
