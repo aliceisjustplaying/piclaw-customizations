@@ -14,6 +14,7 @@ They must be re-applied after every `git pull` / source update.
 | 05 | `runtime/web/src/panes/terminal-pane.ts`, `runtime/web/src/ui/app-main-shell-render.ts`, `runtime/web/src/ui/app-pane-runtime-orchestration.ts`, `runtime/web/static/css/editor.css` | Fix terminal dock sizing/rendering, make standalone dock fill the sidebar, and make popout→dock reattach reliable |
 | 06 | `runtime/src/dream.ts`, `runtime/src/task-scheduler.ts` | Read `PICLAW_DREAM_MODEL` env var to override the model used for nightly Dream maintenance; add model switching to internal task path so Dream actually runs on the specified model (defaults to session model when unset) |
 | 07 | `runtime/src/db/connection.ts` | Lazily initialize the DB on first `getDb()` access so Jiti-loaded extension module graphs share a working DB handle |
+| 08 | `runtime/src/channels/web/theming/ui-bridge.ts` | Fix TS2352 build error in upstream `4fcd82d` — `ExtensionError` is a concrete interface, not castable to `Record<string, unknown>`; access fields directly |
 
 ## Removed patches (merged upstream)
 
