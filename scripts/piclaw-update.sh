@@ -11,6 +11,7 @@ PATCH_DIR="$(cd "${SCRIPT_DIR}/../patches" && pwd)"
 DRY_RUN=0
 FORCE=0
 NO_RESTART=0
+VERBOSE=0
 
 PICLAW_VERSION_BEFORE=""
 PICLAW_VERSION_AFTER=""
@@ -37,14 +38,33 @@ error() {
   printf '[piclaw-update] ERROR: %s\n' "$*" >&2
 }
 
+# Run a command quietly unless --verbose is set.
+# Stdout is suppressed; stderr passes through. On failure the captured
+# stdout is dumped so you can still see what went wrong.
+quiet() {
+  if [ "${VERBOSE}" -eq 1 ]; then
+    "$@"
+  else
+    local out
+    out="$(mktemp)"
+    if ! "$@" >"${out}" 2>&1; then
+      cat "${out}" >&2
+      rm -f "${out}"
+      return 1
+    fi
+    rm -f "${out}"
+  fi
+}
+
 usage() {
   cat <<'EOF'
-Usage: piclaw-update.sh [--dry-run] [--force] [--no-restart]
+Usage: piclaw-update.sh [--dry-run] [--force] [--no-restart] [--verbose]
 
 Options:
   --dry-run     Clone or pull the source, compare versions, and exit.
   --force       Skip the version comparison and proceed with install.
   --no-restart  Do everything except restart (caller handles restart).
+  --verbose     Show full output from git, bun, tsc, npm, and patch.
   -h, --help    Show this help text.
 EOF
 }
@@ -75,6 +95,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --no-restart)
       NO_RESTART=1
+      ;;
+    --verbose|-v)
+      VERBOSE=1
       ;;
     -h|--help)
       usage
@@ -181,11 +204,11 @@ refresh_source_checkout() {
   fi
 
   if [ -d "${SOURCE_DIR}/.git" ]; then
-    git -C "${SOURCE_DIR}" fetch --prune origin
-    git -C "${SOURCE_DIR}" reset --hard origin/HEAD
+    quiet git -C "${SOURCE_DIR}" fetch --prune origin
+    quiet git -C "${SOURCE_DIR}" reset --hard origin/HEAD
   else
     rm -rf "${SOURCE_DIR}"
-    git clone "${REPO_URL}" "${SOURCE_DIR}"
+    quiet git clone "${REPO_URL}" "${SOURCE_DIR}"
   fi
 }
 
@@ -230,7 +253,7 @@ apply_source_patches() {
   for p in "${PATCH_DIR}"/[0-9]*.patch; do
     [ -f "${p}" ] || continue
     status "Applying patch $(basename "${p}")"
-    if ! sed 's/\.orig\t/\t/g; s/\.bak\t/\t/g' "${p}" | patch -p0; then
+    if ! sed 's/\.orig\t/\t/g; s/\.bak\t/\t/g' "${p}" | quiet patch -p0; then
       error "Failed to apply patch $(basename "${p}")"
       exit 1
     fi
@@ -248,18 +271,16 @@ apply_source_patches() {
 build_from_source() {
   status "Building PiClaw from source"
   cd "${SOURCE_DIR}"
-  BUN_INSTALL_CACHE_DIR="${SOURCE_DIR}/.bun-cache" bun install --ignore-scripts
-  bun run build
-  bun run build:web
+  quiet BUN_INSTALL_CACHE_DIR="${SOURCE_DIR}/.bun-cache" bun install --ignore-scripts
+  quiet bun run build
+  quiet bun run build:web
 
-  status "Removing browser sourcemaps"
   find runtime/web/static/dist -type f -name '*.map' -delete
 
-  status "Packing build artifacts"
   rm -rf "${PACK_DIR}"
   mkdir -p "${PACK_DIR}"
   rm -f piclaw-*.tgz
-  bun pm pack
+  quiet bun pm pack
   mv piclaw-*.tgz "${PACK_DIR}/" 2>/dev/null || true
 }
 
@@ -287,15 +308,11 @@ write_global_package_manifest() {
   tarball="$1"
   global_package_json="${piclaw_root}/package.json"
 
-  status "Writing global package manifest to ${global_package_json}"
   printf '{"dependencies":{"@mariozechner/pi-coding-agent":"%s","piclaw":"%s"}}\n' \
     "latest" "${tarball}" | sudo tee "${global_package_json}" >/dev/null
 
   for lockfile in "${piclaw_root}/bun.lock" "${piclaw_root}/bun.lockb"; do
-    if [ -e "${lockfile}" ]; then
-      status "Removing global lockfile ${lockfile}"
-      sudo rm -f "${lockfile}"
-    fi
+    [ -e "${lockfile}" ] && sudo rm -f "${lockfile}"
   done
 }
 
@@ -306,7 +323,7 @@ install_global_packages() {
   bun_bin="$(resolve_bun_binary)"
 
   status "Installing PiClaw + pi-coding-agent globally"
-  sudo BUN_INSTALL="${bun_install}" "${bun_bin}" install -g "${tarball}" --registry https://registry.npmjs.org --ignore-scripts
+  quiet sudo BUN_INSTALL="${bun_install}" "${bun_bin}" install -g "${tarball}" --registry https://registry.npmjs.org --ignore-scripts
 }
 
 capture_tool_versions_before_updates() {
@@ -324,7 +341,7 @@ update_codex_cli() {
   fi
 
   status "Updating Codex CLI"
-  npm update -g @openai/codex 2>/dev/null || npm install -g @openai/codex 2>/dev/null || true
+  quiet npm update -g @openai/codex 2>/dev/null || quiet npm install -g @openai/codex 2>/dev/null || true
   CODEX_VERSION_AFTER="$(get_codex_version)"
   CODEX_REPORT_LINE="$(update_report_line "Codex" "${CODEX_VERSION_BEFORE}" "${CODEX_VERSION_AFTER}")"
   status "${CODEX_REPORT_LINE}"
@@ -338,7 +355,7 @@ update_claude_cli() {
   fi
 
   status "Updating Claude CLI"
-  claude update --yes 2>/dev/null || true
+  quiet claude update --yes 2>/dev/null || true
   CLAUDE_VERSION_AFTER="$(get_claude_version)"
   CLAUDE_REPORT_LINE="$(update_report_line "Claude" "${CLAUDE_VERSION_BEFORE}" "${CLAUDE_VERSION_AFTER}")"
   status "${CLAUDE_REPORT_LINE}"
@@ -395,8 +412,6 @@ wire_extension_node_modules() {
   bun_install="$(resolve_bun_install)"
   global_node_modules="${bun_install}/install/global/node_modules"
 
-  status "Wiring extension node_modules symlinks"
-
   for extension_root in "${HOME}/.pi/agent/extensions" "/workspace/.pi/extensions"; do
     [ -d "${extension_root}" ] || continue
 
@@ -412,8 +427,6 @@ wire_runtime_extensions_node_modules() {
   bun_install="$(resolve_bun_install)"
   dest="${bun_install}/install/global/node_modules/piclaw"
 
-  status "Ensuring runtime/extensions/node_modules symlink is wired"
-
   if [ -d "${dest}/runtime/extensions" ] && [ -d "${dest}/node_modules" ]; then
     sudo ln -sfn "${dest}/node_modules" "${dest}/runtime/extensions/node_modules"
   fi
@@ -423,7 +436,6 @@ fix_permissions() {
   local bun_install
   bun_install="$(resolve_bun_install)"
 
-  status "Setting global Bun install permissions"
   [ -d "${bun_install}/bin" ] && sudo chmod -R a+rX "${bun_install}/bin"
   sudo chmod -R a+rX "${bun_install}/install/global"
 }
@@ -432,7 +444,6 @@ ensure_piclaw_symlink() {
   local piclaw_bin
   piclaw_bin="$(readlink -f "$(command -v piclaw)")"
 
-  status "Ensuring /usr/local/bin/piclaw symlink exists"
   if [ ! -L /usr/local/bin/piclaw ] || [ "$(readlink -f /usr/local/bin/piclaw 2>/dev/null || true)" != "${piclaw_bin}" ]; then
     sudo ln -sfn "${piclaw_bin}" /usr/local/bin/piclaw
   fi
@@ -440,7 +451,7 @@ ensure_piclaw_symlink() {
 
 regenerate_system_prompt() {
   status "Regenerating SYSTEM.md"
-  sudo "${SCRIPT_DIR}/piclaw-refresh-system-prompt"
+  quiet sudo "${SCRIPT_DIR}/piclaw-refresh-system-prompt"
 }
 
 restart_service() {
