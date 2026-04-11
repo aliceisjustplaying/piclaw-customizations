@@ -16,6 +16,7 @@ They must be re-applied after every `git pull` / source update.
 | 07 | `runtime/src/dream.ts`, `runtime/src/task-scheduler.ts` | Read `PICLAW_DREAM_MODEL` env var to override the model used for nightly Dream maintenance; add model switching to internal task path so Dream actually runs on the specified model (defaults to session model when unset) |
 | 08 | `runtime/src/channels/web/auth/webauthn-enrol-page.ts` | Fix regex syntax error in passkey enrolment inline script — `\+` and `\/` inside the template literal lose their backslash, producing invalid `/+/g` and `///g` in the browser |
 | 09 | `runtime/src/channels/web/terminal/terminal-session-service.ts` | Resolve `script` and `bash` from PATH instead of hardcoding `/usr/bin/` — fixes terminal on NixOS and other non-FHS distros |
+| 10 | `runtime/src/channels/web/theming/ui-bridge.ts` | Show structured extension UI errors as readable details instead of `[object Object]` |
 
 ## Apply all patches
 

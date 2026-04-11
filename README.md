@@ -15,6 +15,7 @@ patches/                          # Source patches applied before build
 ├── 07-dream-model-override.patch          # Dream model override via PICLAW_DREAM_MODEL env var
 ├── 08-webauthn-enrol-regex-fix.patch
 ├── 09-terminal-resolve-binaries-from-path.patch
+├── 10-extension-ui-error-details.patch
 ├── verify-patches.sh                   # Check patches against latest upstream
 ├── regenerate-patches.sh               # Regenerate patches from deployed files
 └── README.md                           # Patch documentation
@@ -54,6 +55,7 @@ Applied to the [rcarmo/piclaw](https://github.com/rcarmo/piclaw) source tree bef
 | 07 | `runtime/src/dream.ts`, `runtime/src/task-scheduler.ts` | `PICLAW_DREAM_MODEL` env var override for nightly Dream |
 | 08 | WebAuthn enrol regex fix | |
 | 09 | Terminal binary resolution from PATH | |
+| 10 | Extension UI error details | Show readable extension path/event/error instead of `[object Object]` |
 
 ### Post-install patches
 
