@@ -1,10 +1,16 @@
 --- runtime/src/channels/web/theming/ui-bridge.ts
 +++ runtime/src/channels/web/theming/ui-bridge.ts
-@@ -105,12 +105,24 @@
-         switchSession: async (sessionPath) => runtime.switchSession(sessionPath),
+@@ -106,13 +106,28 @@
          reload: () => session.reload(),
        },
        onError: (error) => {
+-        log.error("Extension UI error", {
+-          chatJid,
+-          err: error,
+-        });
+-        this.channel.broadcastEvent("extension_ui_error", {
+-          chat_jid: chatJid,
+-          error: error instanceof Error ? error.message : String(error),
 +        const formattedError = error instanceof Error
 +          ? error.message
 +          : error && typeof error === "object"
@@ -20,15 +26,13 @@
 +                  : null,
 +              ].filter(Boolean).join("\n") || "[unknown extension error]"
 +            : String(error);
-         log.error("Extension UI error", {
-           chatJid,
-           err: error,
-         });
-         this.channel.broadcastEvent("extension_ui_error", {
-           chat_jid: chatJid,
--          error: error instanceof Error ? error.message : String(error),
++        log.error("Extension UI error", {
++          chatJid,
++          err: error,
++        });
++        this.channel.broadcastEvent("extension_ui_error", {
++          chat_jid: chatJid,
 +          error: formattedError,
          });
        },
      });
-   }
