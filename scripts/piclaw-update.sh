@@ -315,7 +315,9 @@ write_global_package_manifest() {
     "latest" "${tarball}" | sudo tee "${global_package_json}" >/dev/null
 
   for lockfile in "${piclaw_root}/bun.lock" "${piclaw_root}/bun.lockb"; do
-    [ -e "${lockfile}" ] && sudo rm -f "${lockfile}"
+    if [ -e "${lockfile}" ]; then
+      sudo rm -f "${lockfile}"
+    fi
   done
 }
 
