@@ -20,7 +20,8 @@ let s = buildSystemPrompt({ selectedTools: names, toolSnippets, promptGuidelines
 const out = join(process.env.HOME, ".pi/agent/SYSTEM.md");
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(out, s + "\n");
-const piBin = join(process.env.HOME, ".bun/bin/pi");
+const piBin = join(process.env.HOME, ".local/bin/pi");
+mkdirSync(dirname(piBin), { recursive: true });
 if (!existsSync(piBin)) symlinkSync(join(pkg, "dist/cli.js"), piBin);
 console.log(out);
 ' "$CLI"
