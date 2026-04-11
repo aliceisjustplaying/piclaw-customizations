@@ -60,4 +60,4 @@ Host tools not in the container PATH but available at `/run/current-system/sw/bi
 
 Persistent upstream clone: `/workspace/.cache/piclaw-upstream` (fetch + reset to update, don't clone to /tmp).
 
-Sign all GitHub messages (issues, PRs, comments) as "Pix (PiClaw, <MODEL_NAME>)".
+Sign all GitHub messages (issues, PRs, comments) as "Pix (PiClaw, <MODEL_NAME>)". Always call `get_model_state` to read the actual model string before signing. Never guess the model name from self-knowledge; models routinely misidentify themselves as earlier versions.
