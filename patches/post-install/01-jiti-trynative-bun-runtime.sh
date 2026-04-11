@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# patches/pi-coding-agent-jiti-trynative.sh
+# patches/post-install/01-jiti-trynative-bun-runtime.sh
 #
 # Fix: jiti's tryNative must be false when running under Bun (not just
 # compiled Bun binaries). Without this, Bun's native resolver handles
 # imports before jiti can apply its alias map, breaking pi package
 # extensions that import @mariozechner/* peer dependencies.
 #
-# This patch is idempotent — safe to run on every boot.
+# This patch is idempotent — safe to run on every update.
 
 set -euo pipefail
 
@@ -41,7 +41,11 @@ for loader in "${UNIQUE_PATHS[@]}"; do
 
   # Original line (single-line, may have whitespace variations)
   if grep -q 'isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }' "$loader"; then
-    sed -i 's|isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }|isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases(), ...(isBunRuntime \&\& { tryNative: false }) }|' "$loader"
+    # sed -i can't write to root-owned dirs; use temp file + sudo mv
+    tmp=$(mktemp)
+    sed 's|isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }|isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases(), ...(isBunRuntime \&\& { tryNative: false }) }|' "$loader" > "$tmp"
+    sudo cp --preserve=mode,ownership "$tmp" "$loader"
+    rm -f "$tmp"
     echo "Patched: $loader"
     PATCHED=$((PATCHED + 1))
   else
