@@ -9,22 +9,16 @@ They must be re-applied after every `git pull` / source update.
 |---|------|---------|
 | 01 | `runtime/src/agent-pool/session.ts` | Load `~/.pi/agent/SYSTEM.md` as system prompt override |
 | 02 | `runtime/src/runtime/bootstrap.ts` | Wire `broadcastEvent` to `globalThis.__PICLAW_BROADCAST_EVENT__` for extension widgets |
-| 03 | `runtime/src/channels/web/http/dispatch-agent.ts`, `runtime/web/src/ui/app-extension-status.ts`, `runtime/web/src/ui/app-sidepanel-orchestration.ts` | Add `POST /agent/codex/stop` and `POST /agent/codex/dismiss` endpoints with correct chat targeting, NixOS-safe `tmux` lookup, and web UI action routing with local panel dismissal |
-| 04 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete (used by the installed `@benvargas/pi-openai-fast` package) |
-| 05 | `runtime/web/src/panes/terminal-pane.ts`, `runtime/web/src/ui/app-main-shell-render.ts`, `runtime/web/src/ui/app-pane-runtime-orchestration.ts`, `runtime/web/static/css/editor.css` | Fix terminal dock sizing/rendering, make standalone dock fill the sidebar, and make popout→dock reattach reliable |
-| 06 | `runtime/src/dream.ts`, `runtime/src/task-scheduler.ts` | Read `PICLAW_DREAM_MODEL` env var to override the model used for nightly Dream maintenance; add model switching to internal task path so Dream actually runs on the specified model (defaults to session model when unset) |
-| 07 | `runtime/src/db/connection.ts` | Lazily initialize the DB on first `getDb()` access so Jiti-loaded extension module graphs share a working DB handle |
-| 08 | `runtime/src/channels/web/theming/ui-bridge.ts` | Fix TS2352 build error in upstream `4fcd82d` — `ExtensionError` is a concrete interface, not castable to `Record<string, unknown>`; access fields directly |
-
-## Removed patches (merged upstream)
-
-The following patches were merged into upstream `main` and removed from this set:
-
-| Former # | PR/Commit | Description |
-|---|---|---|
-| 08 | PR #23, commit `44291b1` | Fix regex syntax error in passkey enrolment inline script |
-| 09 | PR #24, commit `48cb4c3` | Resolve terminal binaries from PATH instead of hardcoding `/usr/bin/` |
-| 10 | Commit `4fcd82d` | Show structured extension UI errors as readable details |
+| ~~03~~ | — | Removed (was a subset of 04) |
+| 04 | `runtime/src/channels/web/http/dispatch-agent.ts`, `runtime/web/src/ui/app-extension-status.ts`, `runtime/web/src/ui/app-sidepanel-orchestration.ts` | Add `POST /agent/codex/stop` and `POST /agent/codex/dismiss` endpoints with correct chat targeting, NixOS-safe `tmux` lookup, and web UI action routing with local panel dismissal |
+| 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete |
+| 06 | `runtime/web/src/panes/terminal-pane.ts`, `runtime/web/src/ui/app-main-shell-render.ts`, `runtime/web/src/ui/app-pane-runtime-orchestration.ts`, `runtime/web/static/css/editor.css` | Fix terminal dock sizing/rendering, make standalone dock fill the sidebar, and make popout→dock reattach reliable |
+| 07 | `runtime/src/dream.ts`, `runtime/src/task-scheduler.ts` | Read `PICLAW_DREAM_MODEL` env var to override the model used for nightly Dream maintenance |
+| ~~08~~ | — | Removed (merged upstream as PR #23) |
+| ~~09~~ | — | Removed (merged upstream as PR #24) |
+| ~~10~~ | — | Removed (merged upstream as commit `4fcd82d`) |
+| 11 | `runtime/src/db/connection.ts` | Lazily initialize the DB on first `getDb()` access so Jiti-loaded extension module graphs share a working DB handle |
+| 12 | `runtime/src/channels/web/theming/ui-bridge.ts` | Fix TS2352 build error in upstream `4fcd82d` — `ExtensionError` is a concrete interface, not castable to `Record<string, unknown>` |
 
 ## Apply all patches
 
@@ -47,7 +41,7 @@ done
 /workspace/patches/regenerate-patches.sh
 ```
 
-Note: web-source patches (like 03, 04, 05) are verified against upstream source but cannot be regenerated from the compiled installed bundle.
+Note: web-source patches (like 04, 05, 06) are verified against upstream source but cannot be regenerated from the compiled installed bundle.
 
 ## Workflow
 
