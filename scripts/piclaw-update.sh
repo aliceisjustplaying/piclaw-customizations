@@ -148,8 +148,10 @@ get_claude_version() {
 }
 
 get_pi_agent_version() {
-  if command -v pi >/dev/null 2>&1; then
-    pi --version 2>/dev/null || echo "unknown"
+  local pkg_json
+  pkg_json="$(resolve_global_dir)/node_modules/@mariozechner/pi-coding-agent/package.json"
+  if [ -f "${pkg_json}" ]; then
+    jq -r '.version' "${pkg_json}" 2>/dev/null || echo "unknown"
   else
     echo "not installed"
   fi
