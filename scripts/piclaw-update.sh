@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_URL="https://github.com/rcarmo/piclaw.git"
 SOURCE_DIR="/tmp/piclaw-source"
 PACK_DIR="/tmp/piclaw-pack"
@@ -422,10 +423,8 @@ ensure_piclaw_symlink() {
 }
 
 regenerate_system_prompt() {
-  local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   status "Regenerating SYSTEM.md"
-  sudo "${script_dir}/piclaw-refresh-system-prompt"
+  sudo "${SCRIPT_DIR}/piclaw-refresh-system-prompt"
 }
 
 restart_service() {
