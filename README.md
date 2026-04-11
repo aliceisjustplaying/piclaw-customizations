@@ -13,9 +13,14 @@ patches/                          # Source patches applied before build
 ├── 05-web-update-autocomplete.patch    # /update and /fast in slash command autocomplete
 ├── 06-terminal-dock-and-popout-fixes.patch # Terminal dock sizing/rendering/reattach fixes
 ├── 07-dream-model-override.patch          # Dream model override via PICLAW_DREAM_MODEL env var
+├── 08-webauthn-enrol-regex-fix.patch
+├── 09-terminal-resolve-binaries-from-path.patch
 ├── verify-patches.sh                   # Check patches against latest upstream
 ├── regenerate-patches.sh               # Regenerate patches from deployed files
 └── README.md                           # Patch documentation
+
+patches/post-install/             # Post-install patches (applied after bun install -g)
+└── 01-jiti-trynative-bun-runtime.sh  # Fix jiti extension loading under Bun runtime
 
 extensions/codex-delegate/        # PiClaw extension
 └── index.ts                          # Multi-task Codex delegation with live widgets
@@ -34,6 +39,8 @@ scripts/                          # Maintenance scripts
 
 ## Patches
 
+### Source patches
+
 Applied to the [rcarmo/piclaw](https://github.com/rcarmo/piclaw) source tree before building. The update script handles this automatically.
 
 | # | File | Purpose |
@@ -42,17 +49,31 @@ Applied to the [rcarmo/piclaw](https://github.com/rcarmo/piclaw) source tree bef
 | 02 | `runtime/src/runtime/bootstrap.ts` | Wire `broadcastEvent` on `globalThis` for extensions |
 | 03 | `runtime/src/channels/web/http/dispatch-agent.ts` | Add `/agent/codex/stop` and `/agent/codex/dismiss` HTTP endpoints |
 | 04 | `runtime/web/src/ui/app-extension-status.ts` | Handle `codex.stop` and `codex.dismiss` actions in web UI |
-| 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete (used by the installed `@benvargas/pi-openai-fast` package) |
-| 06 | `runtime/web/src/panes/terminal-pane.ts`, `runtime/web/src/ui/app-main-shell-render.ts`, `runtime/web/src/ui/app-pane-runtime-orchestration.ts`, `runtime/web/static/css/editor.css` | Fix terminal dock sizing/rendering, make standalone dock fill the sidebar, and make popout→dock reattach reliable |
-| 07 | `runtime/src/dream.ts`, `runtime/src/task-scheduler.ts` | Read `PICLAW_DREAM_MODEL` env var to override the model used for nightly Dream maintenance; add model switching to internal task path so Dream actually runs on the specified model (defaults to session model when unset) |
+| 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete |
+| 06 | Terminal dock/popout fixes | Fix terminal dock sizing/rendering, standalone dock fill, popout→dock reattach |
+| 07 | `runtime/src/dream.ts`, `runtime/src/task-scheduler.ts` | `PICLAW_DREAM_MODEL` env var override for nightly Dream |
+| 08 | WebAuthn enrol regex fix | |
+| 09 | Terminal binary resolution from PATH | |
+
+### Post-install patches
+
+Applied after `bun install -g` to the installed `node_modules` tree. These patch dependencies rather than PiClaw source.
+
+| # | Script | Purpose |
+|---|--------|---------|
+| 01 | `01-jiti-trynative-bun-runtime.sh` | Fix `pi-coding-agent` extension loader for Bun runtime |
+
+**The jiti patch:** When PiClaw runs under Bun (non-binary), jiti's `tryNative` defaults to `true`, causing Bun's native resolver to handle imports before jiti can apply its alias map. Extensions that import `@mariozechner/*` peer dependencies fail with `Cannot find module`. The patch:
+1. Adds `isBunRuntime` to the import from `config.js`
+2. Sets `tryNative: false` when `isBunRuntime` is true
+
+Patches all copies: top-level `node_modules`, `piclaw/node_modules` (nested), and bun install cache. Idempotent — safe to run on every update. Remove once fixed upstream in `pi-coding-agent`.
 
 ### Environment variables
 
 | Variable | Default | Purpose |
 |----------|---------|----------|
 | `PICLAW_DREAM_MODEL` | *(unset — inherits session model)* | Model identifier for the nightly Dream task, e.g. `claude-sonnet-4-6` |
-
-Set in `/etc/piclaw/piclaw.env` for systemd deployments.
 
 ### Verifying patches
 
@@ -88,65 +109,38 @@ A PiClaw extension that delegates coding tasks to [OpenAI Codex CLI](https://git
 | `codex_status` | Check running/completed task status |
 | `codex_stop` | Stop a specific task or all tasks |
 
-### Installation
-
-Copy to the PiClaw extensions directory:
-
-```bash
-mkdir -p /workspace/.pi/extensions/codex-delegate
-cp extensions/codex-delegate/index.ts /workspace/.pi/extensions/codex-delegate/
-cd /workspace/.pi/extensions/codex-delegate
-ln -sf /home/agent/.bun/install/global/node_modules node_modules
-```
-
 ## Fast Mode
 
-Fast mode is currently provided by the third-party Pi package [`@benvargas/pi-openai-fast`](https://github.com/ben-vargas/pi-packages/tree/main/packages/pi-openai-fast), installed as a workspace extension under `/workspace/.pi/extensions/pi-openai-fast`.
+Provided by [`@benvargas/pi-openai-fast`](https://github.com/ben-vargas/pi-packages/tree/main/packages/pi-openai-fast), deployed as a workspace extension.
 
-### What is deployed
+- Slash command: `/fast on`, `/fast off`, `/fast status`
+- Config: `/workspace/.pi/extensions/pi-openai-fast.json`
+- Supported models: `openai/gpt-5.4`, `openai-codex/gpt-5.4`
+- Uses `service_tier=priority`
 
-- Package: `@benvargas/pi-openai-fast@1.0.2`
-- Slash command: `/fast`
-- Config path: `/workspace/.pi/extensions/pi-openai-fast.json`
-- Supported models:
-  - `openai/gpt-5.4`
-  - `openai-codex/gpt-5.4`
+## Pi packages (npm)
 
-### Observed behavior on this instance
+Additional pi packages installed via `pi install`:
 
-Although the Codex docs talk about `service_tier = "fast"` plus `features.fast_mode = true`, the package uses `service_tier=priority` and **this empirically worked as fast mode on `pi.mosphere.at`** with the ChatGPT/Codex OAuth setup.
+| Package | Purpose |
+|---------|---------|
+| `pi-web-access` | Web search via Exa, content fetching, code search |
 
-So the current documented setup is:
+These are managed separately from the extensions in this repo. They install to `~/.local/lib/node_modules/` (npm global prefix) and are loaded by pi-coding-agent's package resolver from `~/.pi/agent/settings.json`.
 
-- `/fast on` → enables the package
-- `/fast off` → disables it
-- `/fast status` → reports status
-- when active, requests for the configured GPT-5.4 models get `service_tier=priority`
+## Extension deployment
 
-### Files in this repo
+Extensions and configs are **automatically deployed** by `piclaw-update.sh`. The `deploy_custom_extensions` step:
 
-This repo vendors the package files for reproducibility:
+1. Syncs each `extensions/<name>/` dir to `/workspace/.pi/extensions/<name>/` via rsync
+2. Copies matching `configs/<name>.json` to `/workspace/.pi/extensions/<name>.json`
+3. `wire_extension_node_modules` then symlinks `node_modules` into each extension dir
 
-```bash
-extensions/pi-openai-fast/
-configs/pi-openai-fast.json
-```
-
-### Install / wire-up
-
-```bash
-rm -rf /workspace/.pi/extensions/codex-fast-mode
-mkdir -p /workspace/.pi/extensions/pi-openai-fast
-cp -R extensions/pi-openai-fast/. /workspace/.pi/extensions/pi-openai-fast/
-cp configs/pi-openai-fast.json /workspace/.pi/extensions/pi-openai-fast.json
-ln -sf /home/agent/.bun/install/global/node_modules /workspace/.pi/extensions/pi-openai-fast/node_modules
-```
-
-After copying, restart PiClaw so the package loads.
+No manual `cp` or `ln` commands needed.
 
 ## Update Script
 
-`scripts/piclaw-update.sh` pulls the latest PiClaw source, applies patches, builds, and installs globally.
+`scripts/piclaw-update.sh` handles the full lifecycle:
 
 ```bash
 # Full update with restart
@@ -159,7 +153,22 @@ bash scripts/piclaw-update.sh --force --no-restart
 bash scripts/piclaw-update.sh --dry-run
 ```
 
-Also updates Codex CLI and Claude CLI, and prints a summary report at the end.
+### Update flow
+
+1. `refresh_source_checkout` — clone/pull piclaw source
+2. `compare_versions_or_exit` — skip if up-to-date (unless `--force`)
+3. `apply_source_patches` — apply numbered `.patch` files
+4. `build_from_source` — compile server + web UI
+5. `install_global_packages` — `bun install -g` the tarball
+6. `deploy_custom_extensions` — sync extensions + configs to workspace
+7. `wire_extension_node_modules` — symlink `node_modules` into extensions
+8. `wire_runtime_extensions_node_modules` — symlink for runtime extensions
+9. `apply_post_install_patches` — run `patches/post-install/*.sh` scripts
+10. `fix_permissions` — chmod the bun install tree
+11. `ensure_piclaw_symlink` — wire `/usr/local/bin/piclaw`
+12. `regenerate_system_prompt` — refresh `SYSTEM.md`
+13. `update_codex_cli` / `update_claude_cli` — update companion tools
+14. `restart_service` + `verify_installation`
 
 ## System Prompt Script
 

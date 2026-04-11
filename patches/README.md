@@ -49,4 +49,14 @@ Note: web-source patches (like 04, 05, 06) are verified against upstream source 
 5. `bun run build:web`
 6. `bun pm pack` → install globally
 
-The update script at `/workspace/migrated/piclaw-update.sh` automates this.
+The update script at `scripts/piclaw-update.sh` automates this.
+
+## Post-install patches
+
+Scripts in `post-install/` run **after** `bun install -g` to patch installed dependencies.
+
+| # | Script | Purpose |
+|---|--------|---------|
+| 01 | `01-jiti-trynative-bun-runtime.sh` | Fix `pi-coding-agent` jiti extension loader for Bun runtime — adds missing `isBunRuntime` import and sets `tryNative: false` |
+
+These are idempotent and run automatically via `apply_post_install_patches()` in the update script.

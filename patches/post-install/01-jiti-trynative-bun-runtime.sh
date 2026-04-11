@@ -73,7 +73,8 @@ for loader in "${UNIQUE_PATHS[@]}"; do
   # Patch 2: Add tryNative:false for isBunRuntime
   sed -i 's|isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }|isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases(), ...(isBunRuntime \&\& { tryNative: false }) }|' "$tmp"
 
-  sudo cp --preserve=mode,ownership "$tmp" "$loader"
+  # Try direct cp first (agent-owned files), fall back to sudo (root-owned)
+  cp "$tmp" "$loader" 2>/dev/null || sudo cp --preserve=mode,ownership "$tmp" "$loader"
   rm -f "$tmp"
   echo "Patched: $loader"
   PATCHED=$((PATCHED + 1))
