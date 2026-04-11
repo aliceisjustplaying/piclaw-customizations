@@ -1,19 +1,26 @@
 --- runtime/src/db/connection.ts
 +++ runtime/src/db/connection.ts
-@@ -738,11 +738,13 @@
+@@ -738,14 +738,15 @@
  
  /**
   * Return the singleton Database instance.
 - * Throws if called before initDatabase().
-+ * Lazily initializes the database if this module graph has not done so yet.
-  *
-  * Used by every db/* module to obtain the shared connection.
-  */
- export function getDb(): Database {
-   if (!db) {
+- *
+- * Used by every db/* module to obtain the shared connection.
+- */
+-export function getDb(): Database {
+-  if (!db) {
 -    throw new Error("Database not initialized");
+-  }
++ * Lazily initializes the database if this module graph has not done so yet.
++ *
++ * Used by every db/* module to obtain the shared connection.
++ */
++export function getDb(): Database {
++  if (!db) {
 +    initDatabase();
-   }
++  }
 +
    return db;
  }
+ 
