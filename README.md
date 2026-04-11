@@ -33,6 +33,7 @@ extensions/pi-openai-fast/       # Installed third-party Pi extension package
 └── README.md
 
 configs/pi-openai-fast.json      # Project config for the fast-mode package
+SYSTEM.append.md                 # Durable custom instructions appended to generated SYSTEM.md
 
 scripts/                          # Maintenance scripts
 ├── piclaw-update.sh                  # Full update: git pull → patch → build → install
@@ -49,8 +50,8 @@ Applied to the [rcarmo/piclaw](https://github.com/rcarmo/piclaw) source tree bef
 |---|------|---------|
 | 01 | `runtime/src/agent-pool/session.ts` | Load `~/.pi/agent/SYSTEM.md` as the agent system prompt |
 | 02 | `runtime/src/runtime/bootstrap.ts` | Wire `broadcastEvent` on `globalThis` for extensions |
-| 03 | `runtime/src/channels/web/http/dispatch-agent.ts` | Add `/agent/codex/stop` and `/agent/codex/dismiss` HTTP endpoints |
-| 04 | `runtime/web/src/ui/app-extension-status.ts` | Handle `codex.stop` and `codex.dismiss` actions in web UI |
+| 03 | `runtime/src/channels/web/http/dispatch-agent.ts` | Add `/agent/codex/stop` and `/agent/codex/dismiss` HTTP endpoints with correct chat targeting and NixOS-safe `tmux` resolution |
+| 04 | `runtime/web/src/ui/app-extension-status.ts`, `runtime/web/src/ui/app-sidepanel-orchestration.ts` | Handle Codex panel actions in the web UI, send `chat_jid` on cancel, and dismiss panels locally |
 | 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete |
 | 06 | Terminal dock/popout fixes | Fix terminal dock sizing/rendering, standalone dock fill, popout→dock reattach |
 | 07 | `runtime/src/dream.ts`, `runtime/src/task-scheduler.ts` | `PICLAW_DREAM_MODEL` env var override for nightly Dream |
@@ -101,7 +102,9 @@ A PiClaw extension that delegates coding tasks to [OpenAI Codex CLI](https://git
 
 - **Multi-task**: Run multiple Codex tasks concurrently with independent widgets
 - **Live streaming**: JSONL polling every 2s, item counts (cmds/files/msgs), token usage
-- **Cancel & dismiss**: Stop running tasks or dismiss completed widgets from the UI
+- **Correct chat targeting**: Widgets attach to the active branch chat instead of falling back to `web:default`
+- **NixOS-friendly binary resolution**: finds `codex`, `tmux`, and `bash` without relying on `which`
+- **Cancel & dismiss**: Cancel goes through the backend; dismiss is handled locally in the web UI
 - **Reattach**: Picks up running tmux sessions after restart
 - **`/update` command**: One-click PiClaw update from the web UI
 
@@ -109,7 +112,7 @@ A PiClaw extension that delegates coding tasks to [OpenAI Codex CLI](https://git
 
 | Tool | Description |
 |------|-------------|
-| `delegate_codex` | Launch a Codex task in a tmux session |
+| `delegate_codex` | Launch a Codex task in a tmux session (defaults: `gpt-5.4`, reasoning `high`, service tier `fast`) |
 | `codex_status` | Check running/completed task status |
 | `codex_stop` | Stop a specific task or all tasks |
 
@@ -177,6 +180,14 @@ bash scripts/piclaw-update.sh --dry-run
 ## System Prompt Script
 
 `scripts/piclaw-refresh-system-prompt` regenerates `~/.pi/agent/SYSTEM.md` from pi-coding-agent's `buildSystemPrompt()`. Runs as `ExecStartPre` in `piclaw.service` to ensure the prompt is fresh on every restart.
+
+After generating the base prompt, it appends any non-empty overlay files it finds, in this order:
+
+1. `SYSTEM.append.md` in this repo
+2. `~/.pi/agent/SYSTEM.local.md`
+3. `/workspace/.pi/SYSTEM.local.md`
+
+Use `SYSTEM.append.md` for durable custom instructions you want to keep under version control in this customization repo.
 
 ## License
 

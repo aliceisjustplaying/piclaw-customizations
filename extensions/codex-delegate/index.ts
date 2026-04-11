@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { Type } from "@sinclair/typebox";
-import type { AgentToolResult, ExtensionAPI, ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext, ExtensionFactory } from "@mariozechner/pi-coding-agent";
 
 type TaskState = "running" | "completed" | "failed" | "stopped";
 
@@ -140,8 +141,34 @@ function buildResult(text: string, details: Record<string, unknown> = {}): Agent
   };
 }
 
-function resolveStatusChatJid(explicitChatJid?: string | null): string {
+const MESSAGES_DB_PATH = "/workspace/.piclaw/store/messages.db";
+
+function sanitizeChatJid(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function resolveChatJidFromContext(ctx?: ExtensionContext): string | null {
+  if (!ctx) return null;
+  try {
+    const sessionDir = basename(ctx.sessionManager.getSessionDir()).split("__")[0]?.trim();
+    if (!sessionDir || !existsSync(MESSAGES_DB_PATH)) return null;
+    const db = new Database(MESSAGES_DB_PATH, { readonly: true });
+    try {
+      const rows = db.query("SELECT jid FROM chats").all() as Array<{ jid?: string }>;
+      const match = rows.find((row) => typeof row.jid === "string" && sanitizeChatJid(row.jid) === sessionDir);
+      return typeof match?.jid === "string" ? match.jid : null;
+    } finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
+  } catch {
+    return null;
+  }
+}
+
+function resolveStatusChatJid(explicitChatJid?: string | null, ctx?: ExtensionContext): string {
   if (explicitChatJid?.trim()) return explicitChatJid.trim();
+  const contextChatJid = resolveChatJidFromContext(ctx);
+  if (contextChatJid) return contextChatJid;
   if (process.env.PICLAW_CHAT_JID?.trim()) return process.env.PICLAW_CHAT_JID.trim();
   return "web:default";
 }
@@ -178,13 +205,44 @@ function shellQuote(value: string): string {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
+const EXTRA_BIN_DIRS = [
+  "/run/current-system/sw/bin",
+  "/etc/profiles/per-user/agent/bin",
+  "/home/agent/.nix-profile/bin",
+  "/nix/profile/bin",
+  "/home/agent/.local/bin",
+  "/home/agent/.bun/bin",
+];
+
+function buildSpawnPath(): string {
+  return [...new Set([...(process.env.PATH || "").split(":").filter(Boolean), ...EXTRA_BIN_DIRS])].join(":");
+}
+
+function resolveExecutable(name: string): string | null {
+  for (const dir of buildSpawnPath().split(":").filter(Boolean)) {
+    const candidate = `${dir}/${name}`;
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // continue
+    }
+  }
+  return null;
+}
+
+const SPAWN_ENV = { ...process.env, PATH: buildSpawnPath() };
+const TMUX_BIN = resolveExecutable("tmux");
+const BASH_BIN = resolveExecutable("bash") || "bash";
+const CODEX_BIN = resolveExecutable("codex");
+
 function toolExists(name: string): boolean {
-  const result = spawnSync("which", [name], { stdio: "ignore" });
-  return result.status === 0;
+  return resolveExecutable(name) !== null;
 }
 
 function tmuxSessionExists(name: string): boolean {
-  const result = spawnSync("tmux", ["has-session", "-t", name], { stdio: "ignore" });
+  if (!TMUX_BIN) return false;
+  const result = spawnSync(TMUX_BIN, ["has-session", "-t", name], { stdio: "ignore", env: SPAWN_ENV });
   return result.status === 0;
 }
 
@@ -627,7 +685,7 @@ function finalizeTask(
     }
   }
   if (tmuxSessionExists(task.tmuxSession)) {
-    spawnSync("tmux", ["kill-session", "-t", task.tmuxSession], { stdio: "ignore" });
+    spawnSync(TMUX_BIN || "tmux", ["kill-session", "-t", task.tmuxSession], { stdio: "ignore", env: SPAWN_ENV });
   }
   activeTasks.delete(task.id);
 }
@@ -729,7 +787,19 @@ function collectTaskDetails(task: ActiveCodexTask): Record<string, unknown> {
 function defaultModel(): string {
   return process.env.PICLAW_CODEX_DELEGATE_MODEL?.trim()
     || process.env.CODEX_DELEGATE_MODEL?.trim()
-    || "o3";
+    || "gpt-5.4";
+}
+
+function defaultReasoningEffort(): string {
+  return process.env.PICLAW_CODEX_DELEGATE_REASONING_EFFORT?.trim()
+    || process.env.CODEX_DELEGATE_REASONING_EFFORT?.trim()
+    || "high";
+}
+
+function defaultServiceTier(): string {
+  return process.env.PICLAW_CODEX_DELEGATE_SERVICE_TIER?.trim()
+    || process.env.CODEX_DELEGATE_SERVICE_TIER?.trim()
+    || "fast";
 }
 
 function startPollingTask(taskId: string, broadcastEvent: (type: string, data: unknown) => void): void {
@@ -763,6 +833,7 @@ function startPollingTask(taskId: string, broadcastEvent: (type: string, data: u
 async function delegateCodex(
   params: { task: string; working_dir?: string; model?: string },
   broadcastEvent: (type: string, data: unknown) => void,
+  ctx?: ExtensionContext,
 ): Promise<AgentToolResult<Record<string, unknown>>> {
   if (!toolExists("codex")) return buildResult("❌ codex CLI not found.");
   if (!toolExists("tmux")) return buildResult("❌ tmux not found.");
@@ -777,15 +848,19 @@ async function delegateCodex(
   const jsonlPath = outputPath(id);
   const taskMetadataPath = metadataPath(id);
   const model = params.model?.trim() || defaultModel();
-  const chatJid = resolveStatusChatJid();
+  const reasoningEffort = defaultReasoningEffort();
+  const serviceTier = defaultServiceTier();
+  const chatJid = resolveStatusChatJid(null, ctx);
   const startedAt = new Date().toISOString();
   const displayName = summarizeTask(params.task);
 
   ensureDir(taskDir(id));
 
   const shellCommand = [
-    "codex exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check",
+    `${shellQuote(CODEX_BIN || "codex")} exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check`,
     `-m ${shellQuote(model)}`,
+    `-c ${shellQuote(`model_reasoning_effort=${reasoningEffort}`)}`,
+    `-c ${shellQuote(`service_tier=${serviceTier}`)}`,
     `-C ${shellQuote(workingDir)}`,
     shellQuote(params.task),
     `> ${shellQuote(jsonlPath)} 2>&1`,
@@ -825,9 +900,9 @@ async function delegateCodex(
   writeMetadata(task);
 
   const tmuxResult = spawnSync(
-    "tmux",
-    ["new-session", "-d", "-s", tmuxSession, "bash", "-lc", shellCommand],
-    { stdio: "ignore" },
+    TMUX_BIN || "tmux",
+    ["new-session", "-d", "-s", tmuxSession, BASH_BIN, "-lc", shellCommand],
+    { stdio: "ignore", env: SPAWN_ENV },
   );
 
   if (tmuxResult.status !== 0) {
@@ -847,6 +922,8 @@ async function delegateCodex(
       `tmux: ${tmuxSession}`,
       `Working dir: ${workingDir}`,
       `Model: ${model}`,
+      `Reasoning: ${reasoningEffort}`,
+      `Service tier: ${serviceTier}`,
       `Log: ${jsonlPath}`,
     ].join("\n"),
     {
@@ -855,6 +932,8 @@ async function delegateCodex(
       tmux_session: tmuxSession,
       working_dir: workingDir,
       model,
+      reasoning_effort: reasoningEffort,
+      service_tier: serviceTier,
       log_path: jsonlPath,
     },
   );
@@ -916,11 +995,11 @@ async function stopCodex(
     stopPolling(task);
 
     if (tmuxSessionExists(task.tmuxSession)) {
-      spawnSync("tmux", ["send-keys", "-t", task.tmuxSession, "C-c", ""], { stdio: "ignore" });
+      spawnSync(TMUX_BIN || "tmux", ["send-keys", "-t", task.tmuxSession, "C-c", ""], { stdio: "ignore", env: SPAWN_ENV });
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_500));
       flushTaskLog(task, broadcastEvent, false);
       if (tmuxSessionExists(task.tmuxSession)) {
-        spawnSync("tmux", ["kill-session", "-t", task.tmuxSession], { stdio: "ignore" });
+        spawnSync(TMUX_BIN || "tmux", ["kill-session", "-t", task.tmuxSession], { stdio: "ignore", env: SPAWN_ENV });
       }
     }
 
@@ -968,7 +1047,7 @@ function reattachExistingTask(broadcastEvent: (type: string, data: unknown) => v
   if (!toolExists("tmux")) return;
 
   try {
-    const result = spawnSync("tmux", ["list-sessions", "-F", "#{session_name}"], { encoding: "utf8" });
+    const result = spawnSync(TMUX_BIN || "tmux", ["list-sessions", "-F", "#{session_name}"], { encoding: "utf8", env: SPAWN_ENV });
     if (result.status !== 0) return;
     const tmuxSessions = result.stdout
       .split("\n")
@@ -980,7 +1059,7 @@ function reattachExistingTask(broadcastEvent: (type: string, data: unknown) => v
       if (activeTasks.has(id)) continue;
 
       const metadata = readMetadata(id);
-      const cwdResult = spawnSync("tmux", ["display-message", "-t", tmuxSession, "-p", "#{pane_current_path}"], { encoding: "utf8" });
+      const cwdResult = spawnSync(TMUX_BIN || "tmux", ["display-message", "-t", tmuxSession, "-p", "#{pane_current_path}"], { encoding: "utf8", env: SPAWN_ENV });
       const workingDir = metadata?.working_dir || cwdResult.stdout?.trim() || process.cwd();
       const jsonlPath = metadata?.jsonl_path || outputPath(id);
 
@@ -1030,8 +1109,8 @@ export const codexDelegate: ExtensionFactory = (pi: ExtensionAPI) => {
     description: "Launch a Codex coding task in a tmux session, stream JSONL progress to the chat timeline, and update a live status widget.",
     promptSnippet: "delegate_codex: launch Codex in tmux and return immediately with a task ID.",
     parameters: StartSchema,
-    async execute(_toolCallId, params) {
-      return delegateCodex(params, broadcastEvent);
+    async execute(_toolCallId, params, _signal, _update, ctx) {
+      return delegateCodex(params, broadcastEvent, ctx);
     },
   });
 

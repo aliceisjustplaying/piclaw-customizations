@@ -1,16 +1,38 @@
---- runtime/src/channels/web/http/dispatch-agent.ts
-+++ runtime/src/channels/web/http/dispatch-agent.ts
-@@ -56,6 +56,43 @@
+diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
+index 93c9fb0..16d7a82 100644
+--- a/runtime/src/channels/web/http/dispatch-agent.ts
++++ b/runtime/src/channels/web/http/dispatch-agent.ts
+@@ -55,6 +55,93 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+     path: "/agent/autoresearch/dismiss",
      handle: (channel, req) => channel.handleAutoresearchDismiss(req),
    },
-   {
++  {
 +    method: "POST" as const,
 +    path: "/agent/codex/dismiss",
 +    handle: async (_channel: any, req: Request) => {
 +      try {
++        let taskId = "";
++        let chatJid = "web:default";
++        try {
++          const body = await req.json();
++          if (typeof body?.key === "string") taskId = body.key.replace("codex.dismiss.", "");
++          if (typeof body?.chat_jid === "string" && body.chat_jid.trim()) chatJid = body.chat_jid.trim();
++        } catch {}
++        if (taskId) {
++          try {
++            const { existsSync, readFileSync } = await import("node:fs");
++            const { join } = await import("node:path");
++            const metaPath = join("/workspace/.piclaw/data/extensions/codex-delegate/tasks", taskId, "task.json");
++            if (existsSync(metaPath)) {
++              const meta = JSON.parse(readFileSync(metaPath, "utf8"));
++              if (typeof meta?.chat_jid === "string" && meta.chat_jid.trim()) chatJid = meta.chat_jid.trim();
++            }
++          } catch {}
++        }
 +        const broadcast = (globalThis as any).__PICLAW_BROADCAST_EVENT__;
 +        if (typeof broadcast === "function") {
-+          let wkey = "codex-delegate"; try { const body = await req.json(); console.error("[codex-dismiss] body:", JSON.stringify(body)); if (typeof body?.key === "string") wkey = body.key.replace("codex.dismiss.", "codex-"); } catch (e) { console.error("[codex-dismiss] parse error:", e); } console.error("[codex-dismiss] resolved wkey:", wkey); broadcast("extension_ui_widget", { chat_jid: "web:default", key: wkey, content: [], options: { surface: "status-panel", remove: true } });
++          const wkey = taskId ? `codex-${taskId}` : "codex-delegate";
++          broadcast("extension_ui_widget", { chat_jid: chatJid, key: wkey, content: [], options: { surface: "status-panel", remove: true } });
 +        }
 +        return Response.json({ ok: true });
 +      } catch (err) {
@@ -24,15 +46,46 @@
 +    handle: async (_channel: any, req: Request) => {
 +      try {
 +        let taskId = "";
-+        try { const body = await req.json(); if (typeof body?.key === "string") taskId = body.key.replace("codex.stop.", ""); } catch {}
++        let chatJid = "web:default";
++        try {
++          const body = await req.json();
++          if (typeof body?.key === "string") taskId = body.key.replace("codex.stop.", "");
++          if (typeof body?.chat_jid === "string" && body.chat_jid.trim()) chatJid = body.chat_jid.trim();
++        } catch {}
 +        const { spawnSync } = await import("node:child_process");
++        const { accessSync, constants, existsSync, readFileSync } = await import("node:fs");
++        const { join } = await import("node:path");
++        const searchPath = [
++          ...(process.env.PATH || "").split(":"),
++          "/run/current-system/sw/bin",
++          "/etc/profiles/per-user/agent/bin",
++          "/home/agent/.nix-profile/bin",
++          "/nix/profile/bin",
++          "/home/agent/.local/bin",
++          "/home/agent/.bun/bin",
++        ].filter(Boolean);
++        let tmuxBin = "tmux";
++        for (const dir of searchPath) {
++          const candidate = `${dir}/tmux`;
++          try { accessSync(candidate, constants.X_OK); tmuxBin = candidate; break; } catch {}
++        }
++        const env = { ...process.env, PATH: Array.from(new Set(searchPath)).join(":") };
 +        const tmuxSession = "codex-" + taskId;
-+        spawnSync("tmux", ["send-keys", "-t", tmuxSession, "C-c", ""], { stdio: "ignore" });
-+        setTimeout(() => spawnSync("tmux", ["kill-session", "-t", tmuxSession], { stdio: "ignore" }), 2000);
++        spawnSync(tmuxBin, ["send-keys", "-t", tmuxSession, "C-c", ""], { stdio: "ignore", env });
++        setTimeout(() => spawnSync(tmuxBin, ["kill-session", "-t", tmuxSession], { stdio: "ignore", env }), 2000);
++        if (taskId) {
++          try {
++            const metaPath = join("/workspace/.piclaw/data/extensions/codex-delegate/tasks", taskId, "task.json");
++            if (existsSync(metaPath)) {
++              const meta = JSON.parse(readFileSync(metaPath, "utf8"));
++              if (typeof meta?.chat_jid === "string" && meta.chat_jid.trim()) chatJid = meta.chat_jid.trim();
++            }
++          } catch {}
++        }
 +        const broadcast = (globalThis as any).__PICLAW_BROADCAST_EVENT__;
 +        if (typeof broadcast === "function") {
 +          const wkey = "codex-" + taskId;
-+          broadcast("extension_ui_widget", { chat_jid: "web:default", key: wkey, content: [], options: { surface: "status-panel", remove: true } });
++          broadcast("extension_ui_widget", { chat_jid: chatJid, key: wkey, content: [], options: { surface: "status-panel", remove: true } });
 +        }
 +        return Response.json({ ok: true });
 +      } catch (err) {
@@ -40,7 +93,6 @@
 +      }
 +    },
 +  },
-+  {
+   {
      method: "GET",
      path: "/agent/queue-state",
-     handle: (channel, req) => channel.handleAgentQueueState(req),

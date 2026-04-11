@@ -9,8 +9,8 @@ They must be re-applied after every `git pull` / source update.
 |---|------|---------|
 | 01 | `runtime/src/agent-pool/session.ts` | Load `~/.pi/agent/SYSTEM.md` as system prompt override |
 | 02 | `runtime/src/runtime/bootstrap.ts` | Wire `broadcastEvent` to `globalThis.__PICLAW_BROADCAST_EVENT__` for extension widgets |
-| 03 | `runtime/src/channels/web/http/dispatch-agent.ts` | Add `POST /agent/codex/stop` and `POST /agent/codex/dismiss` endpoints |
-| 04 | `runtime/web/src/ui/app-extension-status.ts` | Route `codex.stop` and `codex.dismiss` panel actions to the web endpoints |
+| 03 | `runtime/src/channels/web/http/dispatch-agent.ts` | Add `POST /agent/codex/stop` and `POST /agent/codex/dismiss` endpoints with correct chat targeting and NixOS-safe `tmux` lookup |
+| 04 | `runtime/web/src/ui/app-extension-status.ts`, `runtime/web/src/ui/app-sidepanel-orchestration.ts` | Route Codex panel actions in the web UI, send `chat_jid` on cancel, and dismiss panels locally |
 | 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete (used by the installed `@benvargas/pi-openai-fast` package) |
 | 06 | `runtime/web/src/panes/terminal-pane.ts`, `runtime/web/src/ui/app-main-shell-render.ts`, `runtime/web/src/ui/app-pane-runtime-orchestration.ts`, `runtime/web/static/css/editor.css` | Fix terminal dock sizing/rendering, make standalone dock fill the sidebar, and make popout→dock reattach reliable |
 | 07 | `runtime/src/dream.ts`, `runtime/src/task-scheduler.ts` | Read `PICLAW_DREAM_MODEL` env var to override the model used for nightly Dream maintenance; add model switching to internal task path so Dream actually runs on the specified model (defaults to session model when unset) |

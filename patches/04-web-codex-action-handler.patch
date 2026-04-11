@@ -1,19 +1,169 @@
---- runtime/web/src/ui/app-extension-status.ts.bak	2026-04-10 12:51:25.615493477 +0000
-+++ runtime/web/src/ui/app-extension-status.ts	2026-04-10 12:51:25.627493624 +0000
-@@ -137,5 +137,16 @@
+diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
+index 93c9fb0..16d7a82 100644
+--- a/runtime/src/channels/web/http/dispatch-agent.ts
++++ b/runtime/src/channels/web/http/dispatch-agent.ts
+@@ -55,6 +55,93 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+     path: "/agent/autoresearch/dismiss",
+     handle: (channel, req) => channel.handleAutoresearchDismiss(req),
+   },
++  {
++    method: "POST" as const,
++    path: "/agent/codex/dismiss",
++    handle: async (_channel: any, req: Request) => {
++      try {
++        let taskId = "";
++        let chatJid = "web:default";
++        try {
++          const body = await req.json();
++          if (typeof body?.key === "string") taskId = body.key.replace("codex.dismiss.", "");
++          if (typeof body?.chat_jid === "string" && body.chat_jid.trim()) chatJid = body.chat_jid.trim();
++        } catch {}
++        if (taskId) {
++          try {
++            const { existsSync, readFileSync } = await import("node:fs");
++            const { join } = await import("node:path");
++            const metaPath = join("/workspace/.piclaw/data/extensions/codex-delegate/tasks", taskId, "task.json");
++            if (existsSync(metaPath)) {
++              const meta = JSON.parse(readFileSync(metaPath, "utf8"));
++              if (typeof meta?.chat_jid === "string" && meta.chat_jid.trim()) chatJid = meta.chat_jid.trim();
++            }
++          } catch {}
++        }
++        const broadcast = (globalThis as any).__PICLAW_BROADCAST_EVENT__;
++        if (typeof broadcast === "function") {
++          const wkey = taskId ? `codex-${taskId}` : "codex-delegate";
++          broadcast("extension_ui_widget", { chat_jid: chatJid, key: wkey, content: [], options: { surface: "status-panel", remove: true } });
++        }
++        return Response.json({ ok: true });
++      } catch (err) {
++        return Response.json({ error: String(err) }, { status: 500 });
++      }
++    },
++  },
++  {
++    method: "POST" as const,
++    path: "/agent/codex/stop",
++    handle: async (_channel: any, req: Request) => {
++      try {
++        let taskId = "";
++        let chatJid = "web:default";
++        try {
++          const body = await req.json();
++          if (typeof body?.key === "string") taskId = body.key.replace("codex.stop.", "");
++          if (typeof body?.chat_jid === "string" && body.chat_jid.trim()) chatJid = body.chat_jid.trim();
++        } catch {}
++        const { spawnSync } = await import("node:child_process");
++        const { accessSync, constants, existsSync, readFileSync } = await import("node:fs");
++        const { join } = await import("node:path");
++        const searchPath = [
++          ...(process.env.PATH || "").split(":"),
++          "/run/current-system/sw/bin",
++          "/etc/profiles/per-user/agent/bin",
++          "/home/agent/.nix-profile/bin",
++          "/nix/profile/bin",
++          "/home/agent/.local/bin",
++          "/home/agent/.bun/bin",
++        ].filter(Boolean);
++        let tmuxBin = "tmux";
++        for (const dir of searchPath) {
++          const candidate = `${dir}/tmux`;
++          try { accessSync(candidate, constants.X_OK); tmuxBin = candidate; break; } catch {}
++        }
++        const env = { ...process.env, PATH: Array.from(new Set(searchPath)).join(":") };
++        const tmuxSession = "codex-" + taskId;
++        spawnSync(tmuxBin, ["send-keys", "-t", tmuxSession, "C-c", ""], { stdio: "ignore", env });
++        setTimeout(() => spawnSync(tmuxBin, ["kill-session", "-t", tmuxSession], { stdio: "ignore", env }), 2000);
++        if (taskId) {
++          try {
++            const metaPath = join("/workspace/.piclaw/data/extensions/codex-delegate/tasks", taskId, "task.json");
++            if (existsSync(metaPath)) {
++              const meta = JSON.parse(readFileSync(metaPath, "utf8"));
++              if (typeof meta?.chat_jid === "string" && meta.chat_jid.trim()) chatJid = meta.chat_jid.trim();
++            }
++          } catch {}
++        }
++        const broadcast = (globalThis as any).__PICLAW_BROADCAST_EVENT__;
++        if (typeof broadcast === "function") {
++          const wkey = "codex-" + taskId;
++          broadcast("extension_ui_widget", { chat_jid: chatJid, key: wkey, content: [], options: { surface: "status-panel", remove: true } });
++        }
++        return Response.json({ ok: true });
++      } catch (err) {
++        return Response.json({ error: String(err) }, { status: 500 });
++      }
++    },
++  },
+   {
+     method: "GET",
+     path: "/agent/queue-state",
+diff --git a/runtime/web/src/ui/app-extension-status.ts b/runtime/web/src/ui/app-extension-status.ts
+index 640179a..33155be 100644
+--- a/runtime/web/src/ui/app-extension-status.ts
++++ b/runtime/web/src/ui/app-extension-status.ts
+@@ -14,6 +14,7 @@ export interface StatusPanelPayloadLike {
+ 
+ export interface ExtensionPanelActionResult {
+   refreshAutoresearchStatus: boolean;
++  dismissPanelKey?: string;
+   toast?: {
+     title: string;
+     detail: string | null;
+@@ -137,5 +138,19 @@ export async function runExtensionStatusPanelAction(
      };
    }
  
-+
 +  if (actionType.startsWith('codex.stop')) {
-+    await fetch('/agent/codex/stop', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: actionType }) });
-+    return { refreshAutoresearchStatus: false };
++    await fetch('/agent/codex/stop', {
++      method: 'POST',
++      credentials: 'include',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ key: actionType, chat_jid: options.currentChatJid }),
++    });
++    return { refreshAutoresearchStatus: false, dismissPanelKey: typeof options.panel?.key === 'string' ? options.panel.key : undefined };
 +  }
 +
 +  if (actionType.startsWith('codex.dismiss')) {
-+    await fetch('/agent/codex/dismiss', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: actionType }) });
-+    return { refreshAutoresearchStatus: false };
++    return { refreshAutoresearchStatus: false, dismissPanelKey: typeof options.panel?.key === 'string' ? options.panel.key : undefined };
 +  }
 +
    throw new Error(`Unsupported panel action: ${actionType || actionKey}`);
  }
+diff --git a/runtime/web/src/ui/app-sidepanel-orchestration.ts b/runtime/web/src/ui/app-sidepanel-orchestration.ts
+index 8dc90d2..57f1be0 100644
+--- a/runtime/web/src/ui/app-sidepanel-orchestration.ts
++++ b/runtime/web/src/ui/app-sidepanel-orchestration.ts
+@@ -2,6 +2,7 @@ import { useCallback, useEffect } from '../vendor/preact-htm.js';
+ import { parseBtwCommand, buildBtwInjectionText, resolveBtwChatJid } from './btw.js';
+ import {
+   addPendingPanelAction,
++  applyStatusPanelWidgetEvent,
+   createPendingPanelActionKey,
+   removePendingPanelAction,
+   runExtensionStatusPanelAction,
+@@ -93,6 +94,7 @@ export function useSidepanelOrchestration(options: UseSidepanelOrchestrationOpti
+     isComposeBoxAgentActive,
+     showIntentToast,
+ 
++    setExtensionStatusPanels,
+     setPendingExtensionPanelActions,
+     refreshAutoresearchStatus,
+     stopAutoresearch,
+@@ -144,6 +146,9 @@ export function useSidepanelOrchestration(options: UseSidepanelOrchestrationOpti
+       if (result.refreshAutoresearchStatus) {
+         void refreshAutoresearchStatus();
+       }
++      if (result.dismissPanelKey) {
++        setExtensionStatusPanels((prev) => applyStatusPanelWidgetEvent(prev, { key: result.dismissPanelKey, content: [], options: { remove: true, surface: 'status-panel' } }));
++      }
+       if (result.toast) {
+         showIntentToast(result.toast.title, result.toast.detail, result.toast.kind, result.toast.durationMs);
+       }
+@@ -152,7 +157,7 @@ export function useSidepanelOrchestration(options: UseSidepanelOrchestrationOpti
+     } finally {
+       setPendingExtensionPanelActions((prev) => removePendingPanelAction(prev, pendingKey));
+     }
+-  }, [currentChatJid, dismissAutoresearch, refreshAutoresearchStatus, setPendingExtensionPanelActions, showIntentToast, stopAutoresearch]);
++  }, [currentChatJid, dismissAutoresearch, refreshAutoresearchStatus, setExtensionStatusPanels, setPendingExtensionPanelActions, showIntentToast, stopAutoresearch]);
+ 
+   const closeBtwPanel = useCallback(() => {
+     closeBtwPanelSession({
