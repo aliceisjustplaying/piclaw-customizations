@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 export HOME=/home/agent
 CLI=/home/agent/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/cli.js
-exec sudo -u agent -H env HOME=/home/agent node --input-type=module -e '
-import { mkdirSync, realpathSync, writeFileSync, symlinkSync, existsSync } from "node:fs";
+exec sudo -u agent -H env HOME=/home/agent PICLAW_CUSTOMIZATIONS_DIR="${REPO_DIR}" node --input-type=module -e '
+import { mkdirSync, realpathSync, writeFileSync, symlinkSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 const cli = realpathSync(process.argv[1]);
@@ -17,6 +19,20 @@ const promptGuidelines = names.flatMap((n) => defs[n]?.promptGuidelines ?? []);
 let s = buildSystemPrompt({ selectedTools: names, toolSnippets, promptGuidelines, cwd: process.cwd() })
   .replace(/\nCurrent date:.*\nCurrent working directory:.*$/s, "")
   .replace("Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):", "Pi documentation (read this only for pi-specific questions):");
+
+const overlayPaths = [
+  join(process.env.PICLAW_CUSTOMIZATIONS_DIR, "SYSTEM.append.md"),
+  join(process.env.HOME, ".pi/agent/SYSTEM.local.md"),
+  "/workspace/.pi/SYSTEM.local.md",
+];
+
+for (const path of overlayPaths) {
+  if (!existsSync(path)) continue;
+  const content = readFileSync(path, "utf-8").trim();
+  if (!content) continue;
+  s += `\n\n---\n\n${content}`;
+}
+
 const out = join(process.env.HOME, ".pi/agent/SYSTEM.md");
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(out, s + "\n");
