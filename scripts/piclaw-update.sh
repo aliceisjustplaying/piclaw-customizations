@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_URL="https://github.com/rcarmo/piclaw.git"
 SOURCE_DIR="/tmp/piclaw-source"
 PACK_DIR="/tmp/piclaw-pack"
-PATCH_DIR="/workspace/patches"
+PATCH_DIR="$(cd "${SCRIPT_DIR}/../patches" && pwd)"
 
 DRY_RUN=0
 FORCE=0
@@ -217,6 +217,12 @@ compare_versions_or_exit() {
 
 apply_source_patches() {
   local p
+  local count=0
+
+  if [ ! -d "${PATCH_DIR}" ]; then
+    error "Patch directory does not exist: ${PATCH_DIR}"
+    exit 1
+  fi
 
   status "Applying source patches from ${PATCH_DIR}"
   cd "${SOURCE_DIR}"
@@ -228,7 +234,15 @@ apply_source_patches() {
       error "Failed to apply patch $(basename "${p}")"
       exit 1
     fi
+    count=$((count + 1))
   done
+
+  if [ "${count}" -eq 0 ]; then
+    error "No patches found in ${PATCH_DIR}"
+    exit 1
+  fi
+
+  status "Applied ${count} patch(es)"
 }
 
 build_from_source() {
