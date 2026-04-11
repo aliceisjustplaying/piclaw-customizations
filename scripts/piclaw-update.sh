@@ -412,6 +412,38 @@ print_summary_report() {
   printf '═══════════════════════════════════════════════════════\n'
 }
 
+deploy_custom_extensions() {
+  local ext_src="${SCRIPT_DIR}/../extensions"
+  local ext_dest="/workspace/.pi/extensions"
+  local configs_src="${SCRIPT_DIR}/../configs"
+
+  [ -d "${ext_src}" ] || return 0
+
+  status "Deploying custom extensions"
+  mkdir -p "${ext_dest}"
+
+  local count=0
+  for ext_dir in "${ext_src}"/*/; do
+    [ -d "${ext_dir}" ] || continue
+    local name
+    name="$(basename "${ext_dir}")"
+    local dest="${ext_dest}/${name}"
+
+    # Sync extension files (exclude node_modules — wired separately)
+    mkdir -p "${dest}"
+    rsync -a --delete --exclude='node_modules' "${ext_dir}" "${dest}/"
+
+    # Deploy matching config if it exists
+    if [ -f "${configs_src}/${name}.json" ]; then
+      cp "${configs_src}/${name}.json" "${ext_dest}/${name}.json"
+    fi
+
+    count=$((count + 1))
+  done
+
+  status "Deployed ${count} custom extension(s)"
+}
+
 wire_extension_node_modules() {
   local bun_install global_node_modules extension_root extension_dir
   bun_install="$(resolve_bun_install)"
@@ -498,6 +530,7 @@ main() {
   require_command jq
   require_command sudo
   require_command patch
+  require_command rsync
   require_command systemctl
   refresh_source_checkout
   compare_versions_or_exit
@@ -512,6 +545,7 @@ main() {
   install_global_packages "${tarball}"
   capture_piclaw_versions_after_install
   capture_pi_agent_version_after_install
+  deploy_custom_extensions
   wire_extension_node_modules
   wire_runtime_extensions_node_modules
   apply_post_install_patches
