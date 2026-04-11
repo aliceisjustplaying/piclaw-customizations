@@ -422,8 +422,10 @@ ensure_piclaw_symlink() {
 }
 
 regenerate_system_prompt() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   status "Regenerating SYSTEM.md"
-  sudo /usr/local/bin/piclaw-refresh-system-prompt
+  sudo "${script_dir}/piclaw-refresh-system-prompt"
 }
 
 restart_service() {
