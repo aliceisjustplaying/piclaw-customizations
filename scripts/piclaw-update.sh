@@ -4,8 +4,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_URL="https://github.com/rcarmo/piclaw.git"
-SOURCE_DIR="/tmp/piclaw-source"
-PACK_DIR="/tmp/piclaw-pack"
+CACHE_DIR="/workspace/.cache/piclaw-upstream"
+WORK_DIR=""
+SOURCE_DIR=""
+PACK_DIR=""
 PATCH_DIR="$(cd "${SCRIPT_DIR}/../patches" && pwd)"
 
 DRY_RUN=0
@@ -16,19 +18,15 @@ VERBOSE=0
 PICLAW_VERSION_BEFORE=""
 PICLAW_VERSION_AFTER=""
 PICLAW_COMMIT_AFTER=""
-PICLAW_REPORT_LINE=""
 
 CODEX_VERSION_BEFORE=""
 CODEX_VERSION_AFTER=""
-CODEX_REPORT_LINE=""
 
 CLAUDE_VERSION_BEFORE=""
 CLAUDE_VERSION_AFTER=""
-CLAUDE_REPORT_LINE=""
 
 PI_AGENT_VERSION_BEFORE=""
 PI_AGENT_VERSION_AFTER=""
-PI_AGENT_REPORT_LINE=""
 
 status() {
   printf '[piclaw-update] %s\n' "$*"
@@ -38,22 +36,26 @@ error() {
   printf '[piclaw-update] ERROR: %s\n' "$*" >&2
 }
 
-# Run a command quietly unless --verbose is set.
-# Stdout is suppressed; stderr passes through. On failure the captured
-# stdout is dumped so you can still see what went wrong.
+# Capture stdout+stderr unless --verbose is set.
+# On failure, replay the captured output and preserve the command's exit code.
 quiet() {
   if [ "${VERBOSE}" -eq 1 ]; then
     "$@"
-  else
-    local out
-    out="$(mktemp)"
-    if ! "$@" >"${out}" 2>&1; then
-      cat "${out}" >&2
-      rm -f "${out}"
-      return 1
-    fi
-    rm -f "${out}"
+    return 0
   fi
+
+  local out status_code
+  out="$(mktemp)"
+
+  if "$@" >"${out}" 2>&1; then
+    rm -f "${out}"
+    return 0
+  fi
+
+  status_code=$?
+  cat "${out}" >&2
+  rm -f "${out}"
+  return "${status_code}"
 }
 
 usage() {
@@ -61,7 +63,7 @@ usage() {
 Usage: piclaw-update.sh [--dry-run] [--force] [--no-restart] [--verbose]
 
 Options:
-  --dry-run     Clone or pull the source, compare versions, and exit.
+  --dry-run     Refresh the upstream cache, compare versions, and exit.
   --force       Skip the version comparison and proceed with install.
   --no-restart  Do everything except restart (caller handles restart).
   --verbose     Show full output from git, bun, tsc, npm, and patch.
@@ -69,15 +71,19 @@ Options:
 EOF
 }
 
+setup_work_dirs() {
+  WORK_DIR="$(mktemp -d -t piclaw-update.XXXXXX)"
+  SOURCE_DIR="${WORK_DIR}/source"
+  PACK_DIR="${WORK_DIR}/pack"
+
+  mkdir -p "$(dirname "${CACHE_DIR}")" "${PACK_DIR}"
+}
+
 cleanup() {
   local exit_code=$?
 
-  if [ -e "${SOURCE_DIR}" ]; then
-    rm -rf "${SOURCE_DIR}"
-  fi
-
-  if [ -e "${PACK_DIR}" ]; then
-    rm -rf "${PACK_DIR}"
+  if [ -n "${WORK_DIR}" ] && [ -e "${WORK_DIR}" ]; then
+    rm -rf "${WORK_DIR}"
   fi
 
   exit "${exit_code}"
@@ -117,6 +123,13 @@ require_command() {
     error "Required command not found: $1"
     exit 1
   fi
+}
+
+require_commands() {
+  local cmd
+  for cmd in "$@"; do
+    require_command "${cmd}"
+  done
 }
 
 resolve_bun_binary() {
@@ -196,20 +209,23 @@ update_report_line() {
 }
 
 refresh_source_checkout() {
-  status "Refreshing source checkout in ${SOURCE_DIR}"
+  status "Refreshing upstream cache in ${CACHE_DIR}"
 
-  if [ -e "${SOURCE_DIR}" ] && [ ! -d "${SOURCE_DIR}/.git" ]; then
-    status "Removing non-git directory at ${SOURCE_DIR}"
-    rm -rf "${SOURCE_DIR}"
+  if [ -e "${CACHE_DIR}" ] && [ ! -d "${CACHE_DIR}/.git" ]; then
+    status "Removing non-git directory at ${CACHE_DIR}"
+    rm -rf "${CACHE_DIR}"
   fi
 
-  if [ -d "${SOURCE_DIR}/.git" ]; then
-    quiet git -C "${SOURCE_DIR}" fetch --prune origin
-    quiet git -C "${SOURCE_DIR}" reset --hard origin/HEAD
+  if [ -d "${CACHE_DIR}/.git" ]; then
+    quiet git -C "${CACHE_DIR}" fetch --prune origin
+    quiet git -C "${CACHE_DIR}" reset --hard origin/HEAD
   else
-    rm -rf "${SOURCE_DIR}"
-    quiet git clone "${REPO_URL}" "${SOURCE_DIR}"
+    rm -rf "${CACHE_DIR}"
+    quiet git clone "${REPO_URL}" "${CACHE_DIR}"
   fi
+
+  status "Creating working checkout in ${SOURCE_DIR}"
+  quiet git clone --no-hardlinks "${CACHE_DIR}" "${SOURCE_DIR}"
 }
 
 compare_versions_or_exit() {
@@ -312,7 +328,7 @@ write_global_package_manifest() {
   global_package_json="${piclaw_root}/package.json"
 
   printf '{"dependencies":{"@mariozechner/pi-coding-agent":"%s","piclaw":"%s"}}\n' \
-    "latest" "${tarball}" | sudo tee "${global_package_json}" >/dev/null
+    "${agent_version}" "${tarball}" | sudo tee "${global_package_json}" >/dev/null
 
   for lockfile in "${piclaw_root}/bun.lock" "${piclaw_root}/bun.lockb"; do
     if [ -e "${lockfile}" ]; then
@@ -340,43 +356,46 @@ capture_tool_versions_before_updates() {
 update_codex_cli() {
   if ! command -v npm >/dev/null 2>&1; then
     CODEX_VERSION_AFTER="${CODEX_VERSION_BEFORE}"
-    CODEX_REPORT_LINE="Codex update skipped (npm not installed)"
-    status "${CODEX_REPORT_LINE}"
+    status "Codex update skipped (npm not installed)"
     return 0
   fi
 
   status "Updating Codex CLI"
-  quiet npm update -g @openai/codex 2>/dev/null || quiet npm install -g @openai/codex 2>/dev/null || true
+  if ! quiet npm update -g @openai/codex; then
+    if ! quiet npm install -g @openai/codex; then
+      status "Codex CLI update failed; continuing"
+    fi
+  fi
+
   CODEX_VERSION_AFTER="$(get_codex_version)"
-  CODEX_REPORT_LINE="$(update_report_line "Codex" "${CODEX_VERSION_BEFORE}" "${CODEX_VERSION_AFTER}")"
-  status "${CODEX_REPORT_LINE}"
+  status "$(update_report_line "Codex" "${CODEX_VERSION_BEFORE}" "${CODEX_VERSION_AFTER}")"
 }
 
 update_claude_cli() {
   if ! command -v claude >/dev/null 2>&1; then
     CLAUDE_VERSION_AFTER="${CLAUDE_VERSION_BEFORE}"
-    CLAUDE_REPORT_LINE="$(update_report_line "Claude" "${CLAUDE_VERSION_BEFORE}" "${CLAUDE_VERSION_AFTER}")"
+    status "$(update_report_line "Claude" "${CLAUDE_VERSION_BEFORE}" "${CLAUDE_VERSION_AFTER}")"
     return 0
   fi
 
   status "Updating Claude CLI"
-  quiet claude update --yes 2>/dev/null || true
+  if ! quiet claude update --yes; then
+    status "Claude CLI update failed; continuing"
+  fi
+
   CLAUDE_VERSION_AFTER="$(get_claude_version)"
-  CLAUDE_REPORT_LINE="$(update_report_line "Claude" "${CLAUDE_VERSION_BEFORE}" "${CLAUDE_VERSION_AFTER}")"
-  status "${CLAUDE_REPORT_LINE}"
+  status "$(update_report_line "Claude" "${CLAUDE_VERSION_BEFORE}" "${CLAUDE_VERSION_AFTER}")"
 }
 
 capture_piclaw_versions_after_install() {
   PICLAW_VERSION_AFTER="$(get_installed_version)"
   PICLAW_COMMIT_AFTER="$(get_source_commit)"
-  PICLAW_REPORT_LINE="$(update_report_line "PiClaw" "${PICLAW_VERSION_BEFORE}" "${PICLAW_VERSION_AFTER}")"
-  status "${PICLAW_REPORT_LINE}"
+  status "$(update_report_line "PiClaw" "${PICLAW_VERSION_BEFORE}" "${PICLAW_VERSION_AFTER}")"
 }
 
 capture_pi_agent_version_after_install() {
   PI_AGENT_VERSION_AFTER="$(get_pi_agent_version)"
-  PI_AGENT_REPORT_LINE="$(update_report_line "pi-coding-agent" "${PI_AGENT_VERSION_BEFORE}" "${PI_AGENT_VERSION_AFTER}")"
-  status "${PI_AGENT_REPORT_LINE}"
+  status "$(update_report_line "pi-coding-agent" "${PI_AGENT_VERSION_BEFORE}" "${PI_AGENT_VERSION_AFTER}")"
 }
 
 format_summary_version() {
@@ -454,7 +473,7 @@ wire_extension_node_modules() {
 
     for extension_dir in "${extension_root}"/*/; do
       [ -d "${extension_dir}" ] || continue
-      [ -e "${extension_dir}/node_modules" ] || ln -sf "${global_node_modules}" "${extension_dir}/node_modules" 2>/dev/null
+      ln -sfn "${global_node_modules}" "${extension_dir}/node_modules" 2>/dev/null
     done
   done
 }
@@ -518,22 +537,20 @@ restart_service() {
 }
 
 verify_installation() {
-  status "Verifying service and SYSTEM.md"
+  status "Verifying service, CLI, and SYSTEM.md"
   systemctl is-active piclaw.service >/dev/null
+  piclaw --version >/dev/null
   test -s "${HOME}/.pi/agent/SYSTEM.md"
   echo "Update complete"
 }
 
 main() {
   require_command git
-  require_command bun
-  require_command jq
-  require_command sudo
-  require_command patch
-  require_command rsync
-  require_command systemctl
+  setup_work_dirs
   refresh_source_checkout
   compare_versions_or_exit
+
+  require_commands bun jq sudo patch rsync
   apply_source_patches
   build_from_source
 
@@ -559,6 +576,7 @@ main() {
   if [ "${NO_RESTART}" -eq 1 ]; then
     status "Skipping restart (--no-restart). Caller should restart piclaw."
   else
+    require_command systemctl
     restart_service
     verify_installation
   fi
