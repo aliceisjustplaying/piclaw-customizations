@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_HOME="/home/agent"
-AGENT_PATH="${AGENT_HOME}/.local/bin:${AGENT_HOME}/.bun/bin:/usr/local/bin:/run/wrappers/bin:/run/current-system/sw/bin"
+AGENT_PATH="${AGENT_HOME}/.local/bin:${AGENT_HOME}/.bun/bin:/etc/profiles/per-user/agent/bin:/usr/local/bin:/run/wrappers/bin:/run/current-system/sw/bin"
 
 status() {
   printf '[piclaw-rollback-host] %s\n' "$*"
