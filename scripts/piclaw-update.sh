@@ -532,7 +532,7 @@ update_claude_cli() {
   fi
 
   status "Updating Claude CLI"
-  if ! quiet claude update --yes; then
+  if ! quiet claude update; then
     status "Claude CLI update failed; continuing"
   fi
 
