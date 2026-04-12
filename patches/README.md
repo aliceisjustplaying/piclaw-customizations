@@ -20,6 +20,7 @@ They must be re-applied after every `git pull` / source update.
 | 11 | `runtime/src/db/connection.ts` | Lazily initialize the DB on first `getDb()` access so Jiti-loaded extension module graphs share a working DB handle |
 | ~~12~~ | — | Removed (merged upstream as commit `071e2f4c`) |
 | ~~13~~ | — | Removed (merged upstream as PR #27) |
+| 14 | `runtime/src/workspace-search.ts` | Hoist `rel` outside the `try` block so workspace indexing still logs the path on read failures and the source checkout builds cleanly |
 
 ## Apply all patches
 

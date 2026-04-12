@@ -17,6 +17,7 @@ patches/                          # Source patches applied before build
 ├── 09-terminal-resolve-binaries-from-path.patch
 ├── 10-extension-ui-error-details.patch
 ├── 11-db-lazy-init-for-extension-module-graph.patch
+├── 14-workspace-search-rel-scope.patch       # Keep workspace indexing path logging in scope and fix source build
 ├── verify-patches.sh                   # Check patches against latest upstream
 ├── regenerate-patches.sh               # Regenerate patches from deployed files
 └── README.md                           # Patch documentation
@@ -62,6 +63,7 @@ Applied to the [rcarmo/piclaw](https://github.com/rcarmo/piclaw) source tree bef
 | 11 | DB lazy init for extension module graph | Ensure Jiti-loaded extension code can initialize and use the DB singleton on first access |
 | ~~12~~ | *(merged upstream — commit `071e2f4c`)* | |
 | ~~13~~ | *(merged upstream — PR #27)* | |
+| 14 | `runtime/src/workspace-search.ts` | Hoist `rel` outside the `try` block so unreadable-file logging still has the path and source builds do not fail |
 
 ### Post-install patches
 
@@ -169,13 +171,16 @@ bash scripts/piclaw-update.sh --dry-run
 2. `compare_versions_or_exit` — skip if up-to-date (unless `--force`)
 3. `apply_source_patches` — apply numbered `.patch` files to the candidate
 4. `build_from_source` — install deps and compile server + web UI in the candidate
-5. `apply_post_install_patches` — patch the candidate's local `node_modules`
-6. `activate_candidate` — move the old live checkout to `piclaw-live.previous` and replace it with the new one
-7. `deploy_custom_extensions` — sync extensions + configs to workspace
-8. `wire_extension_node_modules` — symlink extension `node_modules` to `/workspace/src/piclaw-live/node_modules`
-9. `regenerate_system_prompt` — refresh `SYSTEM.md` from the live checkout
-10. `update_codex_cli` / `update_claude_cli` — update companion tools
-11. `restart_service` + `verify_installation`
+5. `validate_candidate` — confirm the built assets and bundled `pi-coding-agent` files exist before activation
+6. `apply_post_install_patches` — patch the candidate's local `node_modules`
+7. `activate_candidate` — move the old live checkout to `piclaw-live.previous` and replace it with the new one
+8. `deploy_custom_extensions` — sync extensions + configs to workspace
+9. `wire_extension_node_modules` — symlink extension `node_modules` to `/workspace/src/piclaw-live/node_modules`
+10. `regenerate_system_prompt` — refresh `SYSTEM.md` from the live checkout
+11. `update_codex_cli` / `update_claude_cli` — update companion tools
+12. `restart_service` + `verify_installation`
+
+If dependency install, server build, or web build fails, the update script aborts before activation and leaves the current live checkout in place.
 
 ## System Prompt Script
 
