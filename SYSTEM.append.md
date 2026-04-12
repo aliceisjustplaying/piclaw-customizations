@@ -91,9 +91,11 @@ Helper scripts in `~/.local/bin/` (managed by home-manager):
 - `prestart` — queue a detached host-side piclaw restart
 - `backup` — trigger and follow restic R2 backup
 
-Host tools not in the container PATH but available at `/run/current-system/sw/bin/`:
+The Piclaw service PATH already includes:
 - `gh` (GitHub CLI, authenticated as aliceisjustplaying)
 - `patch`, `diff`, `python3`
+
+Host-side helper scripts still use `/run/current-system/sw/bin/` and `/run/wrappers/bin/` when they need host-only tools or setuid wrappers.
 
 Persistent upstream clone: `/workspace/.cache/piclaw-upstream` (fetch + reset to update, don't clone to /tmp).
 
