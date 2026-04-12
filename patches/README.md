@@ -10,7 +10,7 @@ They must be re-applied after every `git pull` / source update.
 | 01 | `runtime/src/agent-pool/session.ts` | Load `~/.pi/agent/SYSTEM.md` as system prompt override |
 | 02 | `runtime/src/runtime/bootstrap.ts` | Wire `broadcastEvent` to `globalThis.__PICLAW_BROADCAST_EVENT__` for extension widgets |
 | ~~03~~ | — | Removed (was a subset of 04) |
-| 04 | `runtime/src/channels/web/http/dispatch-agent.ts`, `runtime/web/src/ui/app-extension-status.ts`, `runtime/web/src/ui/app-sidepanel-orchestration.ts` | Add `POST /agent/codex/stop` and `POST /agent/codex/dismiss` endpoints with correct chat targeting, NixOS-safe `tmux` lookup, and web UI action routing with local panel dismissal |
+| 04 | `runtime/src/channels/web/http/dispatch-agent.ts`, `runtime/web/src/ui/app-extension-status.ts`, `runtime/web/src/ui/app-sidepanel-orchestration.ts`, `runtime/web/src/ui/app-main-action-composition.ts` | Add `POST /agent/codex/stop` and `POST /agent/codex/dismiss` endpoints with correct chat targeting, NixOS-safe `tmux` lookup, web UI action routing with local panel dismissal, and thread `setExtensionStatusPanels` through the action composition layer |
 | 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete |
 | 06 | `runtime/web/src/panes/terminal-pane.ts`, `runtime/web/src/ui/app-main-shell-render.ts`, `runtime/web/src/ui/app-pane-runtime-orchestration.ts`, `runtime/web/static/css/editor.css` | Fix terminal dock sizing/rendering, make standalone dock fill the sidebar, and make popout→dock reattach reliable |
 | ~~07~~ | — | Removed (merged upstream as PR #25) |

@@ -175,3 +175,23 @@ index 313cf15..2da4dac 100644
  
    const closeBtwPanel = useCallback(() => {
      closeBtwPanelSession({
+diff --git a/runtime/web/src/ui/app-main-action-composition.ts b/runtime/web/src/ui/app-main-action-composition.ts
+index 3f6b1df8..b27048ff 100644
+--- a/runtime/web/src/ui/app-main-action-composition.ts
++++ b/runtime/web/src/ui/app-main-action-composition.ts
+@@ -55,6 +55,7 @@ interface ComposeSidepanelActionOptionsInput {
+   currentChatJid: string;
+   currentRootChatJid: string;
+   isComposeBoxAgentActive: boolean;
++  setExtensionStatusPanels: StateSetter<Map<string, unknown>>;
+   setPendingExtensionPanelActions: StateSetter<Set<string>>;
+   refreshAutoresearchStatus: () => Promise<void>;
+   stopAutoresearch: (chatJid: string) => Promise<any>;
+@@ -92,6 +93,7 @@ export function composeSidepanelActionOptions(input: ComposeSidepanelActionOptio
+     currentRootChatJid: input.currentRootChatJid,
+     isComposeBoxAgentActive: input.isComposeBoxAgentActive,
+     showIntentToast: input.showIntentToast,
++    setExtensionStatusPanels: input.setExtensionStatusPanels,
+     setPendingExtensionPanelActions: input.setPendingExtensionPanelActions,
+     refreshAutoresearchStatus: input.refreshAutoresearchStatus,
+     stopAutoresearch: input.stopAutoresearch,
