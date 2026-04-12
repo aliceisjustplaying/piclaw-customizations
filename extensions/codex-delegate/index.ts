@@ -679,6 +679,7 @@ function finalizeTask(
   broadcastEvent: (type: string, data: unknown) => void,
   options: { reason?: string | null; postTimeline?: boolean } = {},
 ): void {
+  stopPolling(task);
   task.state = state;
   emitStatus(broadcastEvent, task, state, options.reason ?? null);
   if (options.postTimeline !== false) {
@@ -808,6 +809,10 @@ function startPollingTask(taskId: string, broadcastEvent: (type: string, data: u
   const logPoll = (msg: string) => { try { console.error(`[codex-delegate:poll] ${msg}`); } catch {} };
   const initialTask = activeTasks.get(taskId);
   if (!initialTask) return;
+  if (initialTask.pollInterval) {
+    logPoll(`Poller already active for ${initialTask.id}, skipping`);
+    return;
+  }
   logPoll(`Starting poller for ${initialTask.id}, jsonl=${initialTask.jsonlPath}`);
   initialTask.pollInterval = setInterval(() => {
     const task = activeTasks.get(taskId);
