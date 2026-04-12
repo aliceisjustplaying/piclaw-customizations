@@ -1,6 +1,8 @@
---- runtime/web/src/panes/terminal-pane.ts
-+++ runtime/web/src/panes/terminal-pane.ts
-@@ -237,6 +237,7 @@
+diff --git a/runtime/web/src/panes/terminal-pane.ts b/runtime/web/src/panes/terminal-pane.ts
+index c961768..aedef59 100644
+--- a/runtime/web/src/panes/terminal-pane.ts
++++ b/runtime/web/src/panes/terminal-pane.ts
+@@ -288,6 +288,7 @@ class TerminalPaneInstance implements PaneInstance {
      private dockResizeListener = null;
      private windowResizeListener = null;
      private resizeFrame = 0;
@@ -8,7 +10,7 @@
      private lastAppliedThemeSignature = null;
      private lastResizeSignature: string | null = null;
      private pendingHandoffToken: string | null = null;
-@@ -263,6 +264,9 @@
+@@ -314,6 +315,9 @@ class TerminalPaneInstance implements PaneInstance {
  
          this.bodyEl = this.ownerDocument.createElement('div');
          this.bodyEl.className = 'terminal-pane-body';
@@ -18,7 +20,7 @@
          this.bodyEl.innerHTML = '<div class="terminal-placeholder">Bootstrapping ghostty-web…</div>';
  
          this.termEl.append(this.bodyEl);
-@@ -295,12 +299,22 @@
+@@ -346,12 +350,22 @@ class TerminalPaneInstance implements PaneInstance {
          const host = this.bodyEl.querySelector('.terminal-live-host');
          if (!(host instanceof HTMLElement)) return;
  
@@ -41,14 +43,10 @@
              primaryChild.style.display = 'block';
          }
  
-@@ -308,14 +322,40 @@
+@@ -359,14 +373,40 @@ class TerminalPaneInstance implements PaneInstance {
          if (canvas instanceof HTMLElement) {
              canvas.style.display = 'block';
              canvas.style.maxWidth = 'none';
--        }
--    }
--
--    private scheduleResize(): void {
 +            canvas.style.maxHeight = 'none';
 +        }
 +    }
@@ -63,9 +61,10 @@
 +                this.scheduleResize(true);
 +            }, delay);
 +            this.resizeRetryTimers.add(timer);
-+        }
-+    }
-+
+         }
+     }
+ 
+-    private scheduleResize(): void {
 +    private clearResizeRetries(): void {
 +        if (!this.ownerWindow || this.resizeRetryTimers.size === 0) return;
 +        for (const timer of Array.from(this.resizeRetryTimers)) {
@@ -87,7 +86,7 @@
              return;
          }
  
-@@ -336,8 +376,14 @@
+@@ -387,8 +427,14 @@ class TerminalPaneInstance implements PaneInstance {
              if (this.disposed) return;
  
              this.bodyEl.innerHTML = '';
@@ -103,7 +102,7 @@
              this.bodyEl.appendChild(terminalHost);
  
              const terminal = new mod.Terminal({
-@@ -364,7 +410,8 @@
+@@ -415,7 +461,8 @@ class TerminalPaneInstance implements PaneInstance {
              this.fitAddon = fitAddon;
              this.installThemeSync();
              this.installResizeSync();
@@ -113,7 +112,7 @@
  
              await this.connectBackend();
          } catch (error) {
-@@ -502,6 +549,8 @@
+@@ -491,6 +538,8 @@ class TerminalPaneInstance implements PaneInstance {
                  this.scheduleResize();
              });
              observer.observe(this.container);
@@ -122,7 +121,7 @@
              this.resizeObserver = observer;
          }
      }
-@@ -544,7 +593,8 @@
+@@ -533,7 +582,8 @@ class TerminalPaneInstance implements PaneInstance {
                      this.transferHandoffToken = handoffToken;
                  }
                  this.setStatus('Connected');
@@ -132,7 +131,7 @@
              });
  
              socket.addEventListener('message', (event) => {
-@@ -649,7 +699,8 @@
+@@ -613,7 +663,8 @@ class TerminalPaneInstance implements PaneInstance {
          } else if (this.socket?.readyState === WebSocket.CONNECTING) {
              this.setStatus('Connecting…');
          }
@@ -142,16 +141,18 @@
          requestAnimationFrame(() => this.focus());
      }
  
-@@ -730,6 +781,7 @@
-         } catch {
-             /* expected: resize frame may already be cancelled during teardown. */
-         }
+@@ -674,6 +725,7 @@ class TerminalPaneInstance implements PaneInstance {
+     dispose(): void {
+         if (this.disposed) return;
+         this.disposed = true;
 +        this.clearResizeRetries();
          this.detachHostListeners();
-         try {
-             this.socket?.close?.();
---- runtime/web/static/css/editor.css
-+++ runtime/web/static/css/editor.css
+         this.resizeFrame = disposeTerminalRuntimeBestEffort({
+             resizeFrame: this.resizeFrame,
+diff --git a/runtime/web/static/css/editor.css b/runtime/web/static/css/editor.css
+index d098aad..99fb8c7 100644
+--- a/runtime/web/static/css/editor.css
++++ b/runtime/web/static/css/editor.css
 @@ -749,6 +749,14 @@
      overflow: hidden;
  }
@@ -183,9 +184,11 @@
  }
  
  .dock-panel-body-detached {
---- runtime/web/src/ui/app-main-shell-render.ts
-+++ runtime/web/src/ui/app-main-shell-render.ts
-@@ -378,7 +378,7 @@
+diff --git a/runtime/web/src/ui/app-main-shell-render.ts b/runtime/web/src/ui/app-main-shell-render.ts
+index 144650e..3373053 100644
+--- a/runtime/web/src/ui/app-main-shell-render.ts
++++ b/runtime/web/src/ui/app-main-shell-render.ts
+@@ -379,7 +379,7 @@ export function renderMainShell(options: MainShellRenderOptions): any {
              />
            `}
            ${hasDockPanes && dockVisible && html`<div class="dock-splitter" onMouseDown=${handleDockSplitterMouseDown} onTouchStart=${handleDockSplitterTouchStart}></div>`}
@@ -194,95 +197,3 @@
              <div class="dock-panel-header">
                <span class="dock-panel-title">Terminal</span>
                <div class="dock-panel-actions">
---- runtime/web/src/ui/app-pane-runtime-orchestration.ts
-+++ runtime/web/src/ui/app-pane-runtime-orchestration.ts
-@@ -1202,23 +1202,74 @@
-       return;
-     }
- 
--    const instance = ext.mount(container, { mode: 'view' });
--    dockInstanceRef.current = instance;
--    void invokePaneAfterAttachToHost(instance, {
--      path: terminalTabPath,
--      hostMode: panePopoutMode ? 'popout' : 'main',
--      transferState: pendingPaneHostTransferRef.current?.path === terminalTabPath
--        ? (pendingPaneHostTransferRef.current.payload || null)
--        : null,
--    }).catch((error) => {
--      console.warn('[pane-attach] afterAttachToHost failed:', error);
--    });
--    if (pendingPaneHostTransferRef.current?.path === terminalTabPath) {
--      pendingPaneHostTransferRef.current = null;
--    }
--    requestAnimationFrame(() => instance.focus?.());
-+    const pendingPopoutHostTransfer = pendingPaneHostTransferRef.current?.path === terminalTabPath
-+      ? pendingPaneHostTransferRef.current
-+      : null;
-+    const pendingReattachHostTransfer = pendingReattachPaneHostTransfersRef.current.get(terminalTabPath) || null;
-+    const pendingHostTransfer = pendingPopoutHostTransfer || pendingReattachHostTransfer;
-+    const resolvedTransferState = pendingHostTransfer?.payload || null;
-+    const liveTransferClaim = pendingReattachPaneClaimsRef.current.get(terminalTabPath) || null;
-+    const liveTransferSourceWindow = pendingReattachPaneSourceWindowsRef.current.get(terminalTabPath) || null;
-+    const hostMode = panePopoutMode ? 'popout' : 'main';
-+
-+    let instance: any = null;
-+    let disposed = false;
-+
-+    const bindInstance = (nextInstance: any) => {
-+      instance = nextInstance;
-+      dockInstanceRef.current = nextInstance;
-+      void invokePaneAfterAttachToHost(nextInstance, {
-+        path: terminalTabPath,
-+        hostMode,
-+        transferState: resolvedTransferState,
-+      }).catch((error) => {
-+        console.warn('[pane-attach] afterAttachToHost failed:', error);
-+      });
-+      requestAnimationFrame(() => nextInstance.focus?.());
-+    };
-+
-+    void (async () => {
-+      if (pendingHostTransfer && liveTransferClaim && liveTransferSourceWindow) {
-+        try {
-+          const claimedInstance = await claimPaneLiveTransfer(liveTransferSourceWindow, liveTransferClaim, container, {
-+            path: terminalTabPath,
-+            hostMode,
-+            transferState: resolvedTransferState,
-+          });
-+          if (!disposed && claimedInstance) {
-+            bindInstance(claimedInstance);
-+            if (pendingPopoutHostTransfer) {
-+              pendingPaneHostTransferRef.current = null;
-+            }
-+            if (pendingReattachHostTransfer) {
-+              pendingReattachPaneHostTransfersRef.current.delete(terminalTabPath);
-+            }
-+            pendingReattachPaneSourceWindowsRef.current.delete(terminalTabPath);
-+            pendingReattachPaneClaimsRef.current.delete(terminalTabPath);
-+            return;
-+          }
-+        } catch (error) {
-+          console.warn('[pane-live-transfer] Failed to claim live dock pane instance:', error);
-+        }
-+      }
-+
-+      if (disposed) return;
-+      bindInstance(ext.mount(container, {
-+        mode: 'view',
-+        ...(resolvedTransferState ? { transferState: resolvedTransferState } : {}),
-+      }));
-+      if (pendingPopoutHostTransfer) {
-+        pendingPaneHostTransferRef.current = null;
-+      }
-+      if (pendingReattachHostTransfer) {
-+        pendingReattachPaneHostTransfersRef.current.delete(terminalTabPath);
-+      }
-+      pendingReattachPaneSourceWindowsRef.current.delete(terminalTabPath);
-+      pendingReattachPaneClaimsRef.current.delete(terminalTabPath);
-+    })();
- 
-     return () => {
-+      disposed = true;
-       if (dockInstanceRef.current === instance) {
-         instance.dispose();
-         dockInstanceRef.current = null;

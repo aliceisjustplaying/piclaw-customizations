@@ -1,0 +1,10 @@
+--- runtime/web/src/panes/terminal-pane.ts
++++ runtime/web/src/panes/terminal-pane.ts
+@@ -738,6 +738,7 @@
+     }
+ 
+     afterAttachToHost(): void {
++        this.detachHostListeners();
+         this.installThemeSync();
+         this.installResizeSync();
+         if (this.socket?.readyState === WebSocket.OPEN) {

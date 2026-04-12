@@ -1,0 +1,12 @@
+diff --git a/runtime/web/src/components/compose-box.ts b/runtime/web/src/components/compose-box.ts
+index 6ee6dca..b0b0f0e 100644
+--- a/runtime/web/src/components/compose-box.ts
++++ b/runtime/web/src/components/compose-box.ts
+@@ -68,6 +68,7 @@ export const SLASH_COMMANDS = [
+   { name: "/logout", description: "Logout from an AI model provider" },
+   { name: "/commands", description: "List available commands" },
+   { name: "/update", description: "Update PiClaw to latest git main" },
++  { name: "/rebuild", description: "Rebuild the NixOS host" },
+   { name: "/fast", description: "Show or set Codex Fast mode" },
+ ];
+ 

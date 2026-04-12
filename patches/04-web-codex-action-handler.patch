@@ -1,6 +1,8 @@
---- runtime/src/channels/web/http/dispatch-agent.ts
-+++ runtime/src/channels/web/http/dispatch-agent.ts
-@@ -55,6 +55,93 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
+index b6fb365..95ff947 100644
+--- a/runtime/src/channels/web/http/dispatch-agent.ts
++++ b/runtime/src/channels/web/http/dispatch-agent.ts
+@@ -60,6 +60,93 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
      path: "/agent/autoresearch/dismiss",
      handle: (channel, req) => channel.handleAutoresearchDismiss(req),
    },
@@ -94,8 +96,10 @@
    {
      method: "GET",
      path: "/agent/queue-state",
---- runtime/web/src/ui/app-extension-status.ts
-+++ runtime/web/src/ui/app-extension-status.ts
+diff --git a/runtime/web/src/ui/app-extension-status.ts b/runtime/web/src/ui/app-extension-status.ts
+index 640179a..33155be 100644
+--- a/runtime/web/src/ui/app-extension-status.ts
++++ b/runtime/web/src/ui/app-extension-status.ts
 @@ -14,6 +14,7 @@ export interface StatusPanelPayloadLike {
  
  export interface ExtensionPanelActionResult {
@@ -124,8 +128,10 @@
 +
    throw new Error(`Unsupported panel action: ${actionType || actionKey}`);
  }
---- runtime/web/src/ui/app-sidepanel-orchestration.ts
-+++ runtime/web/src/ui/app-sidepanel-orchestration.ts
+diff --git a/runtime/web/src/ui/app-sidepanel-orchestration.ts b/runtime/web/src/ui/app-sidepanel-orchestration.ts
+index 313cf15..2da4dac 100644
+--- a/runtime/web/src/ui/app-sidepanel-orchestration.ts
++++ b/runtime/web/src/ui/app-sidepanel-orchestration.ts
 @@ -2,6 +2,7 @@ import { useCallback, useEffect } from '../vendor/preact-htm.js';
  import { parseBtwCommand, buildBtwInjectionText, resolveBtwChatJid } from './btw.js';
  import {
@@ -134,7 +140,15 @@
    createPendingPanelActionKey,
    removePendingPanelAction,
    runExtensionStatusPanelAction,
-@@ -93,6 +94,7 @@ export function useSidepanelOrchestration(options: UseSidepanelOrchestrationOpti
+@@ -76,6 +77,7 @@ interface UseSidepanelOrchestrationOptions {
+   showIntentToast: (title: string, detail?: string | null, kind?: string, durationMs?: number) => void;
+ 
+   // Extension status panel actions
++  setExtensionStatusPanels: StateSetter<Map<string, unknown>>;
+   setPendingExtensionPanelActions: StateSetter<Set<string>>;
+   refreshAutoresearchStatus: () => Promise<void>;
+   stopAutoresearch: (chatJid: string) => Promise<any>;
+@@ -124,6 +126,7 @@ export function useSidepanelOrchestration(options: UseSidepanelOrchestrationOpti
      isComposeBoxAgentActive,
      showIntentToast,
  
@@ -142,7 +156,7 @@
      setPendingExtensionPanelActions,
      refreshAutoresearchStatus,
      stopAutoresearch,
-@@ -144,6 +146,9 @@ export function useSidepanelOrchestration(options: UseSidepanelOrchestrationOpti
+@@ -178,6 +181,9 @@ export function useSidepanelOrchestration(options: UseSidepanelOrchestrationOpti
        if (result.refreshAutoresearchStatus) {
          void refreshAutoresearchStatus();
        }
@@ -152,7 +166,7 @@
        if (result.toast) {
          showIntentToast(result.toast.title, result.toast.detail, result.toast.kind, result.toast.durationMs);
        }
-@@ -152,7 +157,7 @@ export function useSidepanelOrchestration(options: UseSidepanelOrchestrationOpti
+@@ -186,7 +192,7 @@ export function useSidepanelOrchestration(options: UseSidepanelOrchestrationOpti
      } finally {
        setPendingExtensionPanelActions((prev) => removePendingPanelAction(prev, pendingKey));
      }

@@ -19,7 +19,10 @@ patches/                          # Source patches applied before build
 ├── 09-terminal-resolve-binaries-from-path.patch
 ├── 10-extension-ui-error-details.patch
 ├── 11-db-lazy-init-for-extension-module-graph.patch
-├── 14-workspace-search-rel-scope.patch       # Keep workspace indexing path logging in scope and fix source build
+├── 15-web-rebuild-autocomplete.patch         # Add /rebuild to slash command autocomplete
+├── 16-terminal-dock-reopen-cleanly.patch     # Preserve dock terminal frontend state across hide/reopen
+├── 17-terminal-detach-listeners-on-reopen.patch # Detach event listeners before reinstalling them on dock reopen
+├── 18-agent-debug-handler-count-types.patch   # Fix upstream /agent/debug type inference for current TypeScript
 ├── verify-patches.sh                   # Check patches against latest upstream
 ├── regenerate-patches.sh               # Regenerate patches from deployed files
 └── README.md                           # Patch documentation
@@ -65,7 +68,11 @@ Applied to the [rcarmo/piclaw](https://github.com/rcarmo/piclaw) source tree bef
 | 11 | DB lazy init for extension module graph | Ensure Jiti-loaded extension code can initialize and use the DB singleton on first access |
 | ~~12~~ | *(merged upstream — commit `071e2f4c`)* | |
 | ~~13~~ | *(merged upstream — PR #27)* | |
-| 14 | `runtime/src/workspace-search.ts` | Hoist `rel` outside the `try` block so unreadable-file logging still has the path and source builds do not fail |
+| ~~14~~ | *(merged upstream)* | |
+| 15 | `runtime/web/src/components/compose-box.ts` | Add `/rebuild` to slash command autocomplete |
+| 16 | `runtime/web/src/ui/app-pane-runtime-orchestration.ts` | Keep the dock terminal pane mounted while hidden so reopening stays clean |
+| 17 | `runtime/web/src/panes/terminal-pane.ts` | Detach event listeners before reinstalling on dock reopen (prevents duplicate observers) |
+| 18 | `runtime/src/channels/web/agent/agent-debug.ts` | Fix current upstream TypeScript inference so `/agent/debug` builds cleanly |
 
 ### Post-install patches
 
@@ -93,13 +100,15 @@ Patches the staged checkout's top-level `node_modules` copy and a nested `piclaw
 ./patches/verify-patches.sh
 ```
 
+This uses strict `git apply --check`, so the first reject is a real drift signal rather than a fuzzy apply.
+
 ### Regenerating patches from deployed code
 
 ```bash
 ./patches/regenerate-patches.sh
 ```
 
-> **Note:** Patch 04, 05, and 06 modify web source that ships only as a compiled bundle — they can't be regenerated from deployed files, only verified against upstream.
+> **Note:** Patch 04, 05, 06, 15, 16, and 17 modify web source that ships only as a compiled bundle — they can't be regenerated from deployed files, only verified against upstream.
 
 ## Codex Delegate Extension
 
@@ -114,6 +123,7 @@ A PiClaw extension that delegates coding tasks to [OpenAI Codex CLI](https://git
 - **Cancel & dismiss**: Cancel goes through the backend; dismiss is handled locally in the web UI
 - **Reattach**: Picks up running tmux sessions after restart
 - **`/update` command**: One-click PiClaw update from the web UI
+- **`/rebuild` command**: One-click host rebuild from the web UI
 
 ### Tools
 
@@ -171,7 +181,7 @@ bash scripts/piclaw-update.sh --dry-run
 
 1. `refresh_source_checkout` — refresh the cached upstream clone and create a temp candidate checkout
 2. `compare_versions_or_exit` — skip if up-to-date (unless `--force`)
-3. `apply_source_patches` — apply numbered `.patch` files to the candidate
+3. `apply_source_patches` — apply numbered `.patch` files to the candidate with strict `git apply`
 4. `build_from_source` — install deps and compile server + web UI in the candidate
 5. `validate_candidate` — confirm the built assets and bundled `pi-coding-agent` files exist before activation
 6. `apply_post_install_patches` — patch the candidate's local `node_modules`

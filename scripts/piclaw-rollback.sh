@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIVE_DIR="/workspace/src/piclaw-live"
 PREVIOUS_DIR="/workspace/src/piclaw-live.previous"
 STATE_DIR="/workspace/.state"
@@ -46,22 +47,13 @@ acquire_lock() {
   exit 1
 }
 
-wait_for_health() {
-  local attempt
-  for attempt in $(seq 1 30); do
-    if sudo systemctl is-active piclaw.service >/dev/null 2>&1 && curl -fsS http://127.0.0.1:8080/login >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 2
-  done
-
-  return 1
+regenerate_system_prompt() {
+  status "Restoring SYSTEM.md for the rolled-back checkout"
+  env PICLAW_LIVE_ROOT="${LIVE_DIR}" "${SCRIPT_DIR}/piclaw-refresh-system-prompt"
 }
 
 main() {
-  require_command sudo
-  require_command curl
-  require_command systemctl
+  require_command mv
   acquire_lock
 
   if [ ! -d "${PREVIOUS_DIR}" ]; then
@@ -81,15 +73,8 @@ main() {
     mv "${swap_dir}" "${PREVIOUS_DIR}"
   fi
 
-  status "Restarting piclaw service"
-  sudo systemctl restart piclaw.service
-
-  if ! wait_for_health; then
-    error "PiClaw failed health checks after rollback"
-    exit 1
-  fi
-
-  status "Rollback complete"
+  regenerate_system_prompt
+  status "Rollback tree swap complete"
 }
 
 main "$@"

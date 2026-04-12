@@ -235,6 +235,8 @@ const SPAWN_ENV = { ...process.env, PATH: buildSpawnPath() };
 const TMUX_BIN = resolveExecutable("tmux");
 const BASH_BIN = resolveExecutable("bash") || "bash";
 const CODEX_BIN = resolveExecutable("codex");
+const UPDATE_HELPER_BIN = resolveExecutable("update") || "/home/agent/.local/bin/update";
+const REBUILD_HELPER_BIN = resolveExecutable("rebuild") || "/home/agent/.local/bin/rebuild";
 
 function toolExists(name: string): boolean {
   return resolveExecutable(name) !== null;
@@ -1137,26 +1139,61 @@ export const codexDelegate: ExtensionFactory = (pi: ExtensionAPI) => {
   });
 
   pi.registerCommand("update", {
-    description: "Update PiClaw to latest git main (runs piclaw-update.sh --force --no-restart, then restarts)",
+    description: "Update PiClaw via the managed host helper (runs update --force --no-restart, then restarts)",
     handler: async (_args, ctx) => {
-      const script = "/workspace/migrated/piclaw-update.sh";
-      if (!existsSync(script)) {
-        ctx.ui.notify("Update script not found at " + script, "error");
+      const updateHelper = UPDATE_HELPER_BIN;
+      if (!updateHelper || !existsSync(updateHelper)) {
+        ctx.ui.notify("Update helper not found at " + String(updateHelper || "update"), "error");
         return;
       }
       ctx.ui.notify("Starting PiClaw update...", "info");
-      const { execSync } = await import("node:child_process");
-      try {
-        const output = execSync(`bash ${script} --force --no-restart 2>&1`, { encoding: "utf-8", timeout: 300_000 });
-        postTimelineMessage("web:default", "PiClaw update completed:\n" + output.slice(-2000));
+      const result = spawnSync(updateHelper, ["--force", "--no-restart"], {
+        encoding: "utf8",
+        env: SPAWN_ENV,
+        timeout: 300_000,
+      });
+      const combinedOutput = `${result.stdout || ""}${result.stderr || ""}`.trim();
+      if (result.status === 0) {
+        postTimelineMessage("web:default", "PiClaw update completed:\n" + combinedOutput.slice(-2000));
         ctx.ui.notify("Update complete — restarting PiClaw...", "success");
-        // Graceful restart
         ctx.shutdown();
-      } catch (err: any) {
-        const msg = err?.stdout || err?.stderr || String(err);
-        postTimelineMessage("web:default", "PiClaw update FAILED:\n" + msg.slice(-2000));
-        ctx.ui.notify("Update failed — check timeline", "error");
+        return;
       }
+
+      const msg = combinedOutput
+        || result.error?.message
+        || `update exited with code ${result.status ?? "unknown"}`;
+      postTimelineMessage("web:default", "PiClaw update FAILED:\n" + msg.slice(-2000));
+      ctx.ui.notify("Update failed — check timeline", "error");
+    },
+  });
+
+  pi.registerCommand("rebuild", {
+    description: "Rebuild the NixOS host via the managed rebuild helper",
+    handler: async (_args, ctx) => {
+      const rebuildHelper = REBUILD_HELPER_BIN;
+      if (!rebuildHelper || !existsSync(rebuildHelper)) {
+        ctx.ui.notify("Rebuild helper not found at " + String(rebuildHelper || "rebuild"), "error");
+        return;
+      }
+      ctx.ui.notify("Starting host rebuild...", "info");
+      const result = spawnSync(rebuildHelper, [], {
+        encoding: "utf8",
+        env: SPAWN_ENV,
+        timeout: 1_800_000,
+      });
+      const combinedOutput = `${result.stdout || ""}${result.stderr || ""}`.trim();
+      if (result.status === 0) {
+        postTimelineMessage("web:default", "Host rebuild completed:\n" + combinedOutput.slice(-2000));
+        ctx.ui.notify("Host rebuild completed", "success");
+        return;
+      }
+
+      const msg = combinedOutput
+        || result.error?.message
+        || `rebuild exited with code ${result.status ?? "unknown"}`;
+      postTimelineMessage("web:default", "Host rebuild FAILED:\n" + msg.slice(-2000));
+      ctx.ui.notify("Host rebuild failed — check timeline", "error");
     },
   });
 

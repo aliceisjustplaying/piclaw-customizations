@@ -84,8 +84,9 @@ The piclaw systemd service runs with `ProtectSystem=strict`. Host-level commands
 
 Helper scripts in `~/.local/bin/` (managed by home-manager):
 - `rebuild` — pull pix config, then queue a detached host-side nixos-rebuild switch job
-- `update` — pull piclaw-customizations, then queue a detached host-side piclaw-update job
-- `rollback` — queue a detached host-side piclaw rollback job
+- `update` — pull piclaw-customizations, then queue a detached host-side piclaw update wrapper that stages, activates, restarts, health-checks `/agent/models`, and auto-rolls back on failure
+- `rollback` — queue a detached host-side piclaw rollback wrapper that swaps `piclaw-live.previous` back into place, regenerates `SYSTEM.md`, restarts, and health-checks `/agent/models`
+- `verify-deploy` — build and verify a candidate Piclaw deploy locally without activating it
 - `pstatus` — service status for tailscaled, cloudflared, piclaw
 - `plogs` — tail piclaw journal
 - `prestart` — queue a detached host-side piclaw restart
@@ -93,9 +94,11 @@ Helper scripts in `~/.local/bin/` (managed by home-manager):
 
 The Piclaw service PATH already includes:
 - `gh` (GitHub CLI, authenticated as aliceisjustplaying)
-- `patch`, `diff`, `python3`
+- `git`, `patch`, `diff`, `python3`
 
 Host-side helper scripts still use `/run/current-system/sw/bin/` and `/run/wrappers/bin/` when they need host-only tools or setuid wrappers.
+
+The deploy patch stack is verified and applied with strict `git apply`, not fuzzy GNU `patch`. Treat any `.rej` or `.orig` file in a candidate tree as deployment debris from an old/manual patch attempt, not as an expected part of the current flow.
 
 Persistent upstream clone: `/workspace/.cache/piclaw-upstream` (fetch + reset to update, don't clone to /tmp).
 

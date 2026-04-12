@@ -1,0 +1,169 @@
+diff --git a/runtime/web/src/ui/app-pane-runtime-orchestration.ts b/runtime/web/src/ui/app-pane-runtime-orchestration.ts
+index bcccd45..9488319 100644
+--- a/runtime/web/src/ui/app-pane-runtime-orchestration.ts
++++ b/runtime/web/src/ui/app-pane-runtime-orchestration.ts
+@@ -323,6 +323,7 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+   const editorInstanceRef = useRef<any>(null);
+   const dockContainerRef = useRef<any>(null);
+   const dockInstanceRef = useRef<any>(null);
++  const dockMountCleanupRef = useRef<(() => void) | null>(null);
+ 
+   const pendingEditorPopoutTransferRef = useRef<EditorPopoutTransferState | null>((() => {
+     if (!panePopoutMode) return null;
+@@ -1165,15 +1166,10 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+     }
+   }, [getWorkspaceFile, tabStripActiveId]);
+ 
+-  useEffect(() => {
++  const ensureDockInstanceMounted = useCallback(() => {
+     const container = dockContainerRef.current;
+-
+-    if (dockInstanceRef.current) {
+-      dockInstanceRef.current.dispose();
+-      dockInstanceRef.current = null;
+-    }
+-
+-    if (!container || !hasDockPanes || !dockVisible) return;
++    if (!container || !hasDockPanes) return;
++    if (dockMountCleanupRef.current || dockInstanceRef.current) return;
+     if (!panePopoutMode && dockPaneDetached?.panePath === terminalTabPath) {
+       container.innerHTML = '';
+       return;
+@@ -1185,29 +1181,123 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+       return;
+     }
+ 
+-    const instance = ext.mount(container, { mode: 'view' });
+-    dockInstanceRef.current = instance;
++    const pendingPopoutHostTransfer = pendingPaneHostTransferRef.current?.path === terminalTabPath
++      ? pendingPaneHostTransferRef.current
++      : null;
++    const pendingReattachHostTransfer = pendingReattachPaneHostTransfersRef.current.get(terminalTabPath) || null;
++    const pendingHostTransfer = pendingPopoutHostTransfer || pendingReattachHostTransfer;
++    const resolvedTransferState = pendingHostTransfer?.payload || null;
++    const liveTransferClaim = pendingReattachPaneClaimsRef.current.get(terminalTabPath) || null;
++    const liveTransferSourceWindow = pendingReattachPaneSourceWindowsRef.current.get(terminalTabPath) || null;
++    const hostMode = panePopoutMode ? 'popout' : 'main';
++
++    let instance: any = null;
++    let disposed = false;
++
++    const cleanup = () => {
++      disposed = true;
++      if (dockInstanceRef.current === instance) {
++        instance?.dispose?.();
++        dockInstanceRef.current = null;
++      }
++      if (dockMountCleanupRef.current === cleanup) {
++        dockMountCleanupRef.current = null;
++      }
++    };
++
++    const bindInstance = (nextInstance: any) => {
++      instance = nextInstance;
++      dockInstanceRef.current = nextInstance;
++      void invokePaneAfterAttachToHost(nextInstance, {
++        path: terminalTabPath,
++        hostMode,
++        transferState: resolvedTransferState,
++      }).catch((error) => {
++        console.warn('[pane-attach] afterAttachToHost failed:', error);
++      });
++      requestAnimationFrame(() => nextInstance.focus?.());
++    };
++
++    dockMountCleanupRef.current = cleanup;
++
++    void (async () => {
++      if (pendingHostTransfer && liveTransferClaim && liveTransferSourceWindow) {
++        try {
++          const claimedInstance = await claimPaneLiveTransfer(liveTransferSourceWindow, liveTransferClaim, container, {
++            path: terminalTabPath,
++            hostMode,
++            transferState: resolvedTransferState,
++          });
++          if (!disposed && claimedInstance) {
++            bindInstance(claimedInstance);
++            if (pendingPopoutHostTransfer) {
++              pendingPaneHostTransferRef.current = null;
++            }
++            if (pendingReattachHostTransfer) {
++              pendingReattachPaneHostTransfersRef.current.delete(terminalTabPath);
++            }
++            pendingReattachPaneSourceWindowsRef.current.delete(terminalTabPath);
++            pendingReattachPaneClaimsRef.current.delete(terminalTabPath);
++            return;
++          }
++        } catch (error) {
++          console.warn('[pane-live-transfer] Failed to claim live dock pane instance:', error);
++        }
++      }
++
++      if (disposed) return;
++      bindInstance(ext.mount(container, {
++        mode: 'view',
++        ...(resolvedTransferState ? { transferState: resolvedTransferState } : {}),
++      }));
++      if (pendingPopoutHostTransfer) {
++        pendingPaneHostTransferRef.current = null;
++      }
++      if (pendingReattachHostTransfer) {
++        pendingReattachPaneHostTransfersRef.current.delete(terminalTabPath);
++      }
++      pendingReattachPaneSourceWindowsRef.current.delete(terminalTabPath);
++      pendingReattachPaneClaimsRef.current.delete(terminalTabPath);
++    })();
++  }, [dockPaneDetached, hasDockPanes, panePopoutMode, terminalTabPath]);
++
++  useEffect(() => {
++    const container = dockContainerRef.current;
++    const dockDetached = !panePopoutMode && dockPaneDetached?.panePath === terminalTabPath;
++    if (!hasDockPanes || dockDetached) {
++      dockMountCleanupRef.current?.();
++      if (dockDetached && container) {
++        container.innerHTML = '';
++      }
++    }
++  }, [dockPaneDetached, hasDockPanes, panePopoutMode, terminalTabPath]);
++
++  useEffect(() => {
++    if (!dockVisible) return;
++    const hadInstance = Boolean(dockInstanceRef.current);
++    ensureDockInstanceMounted();
++    const instance = dockInstanceRef.current;
++    if (!hadInstance || !instance) return;
++
+     void invokePaneAfterAttachToHost(instance, {
+       path: terminalTabPath,
+       hostMode: panePopoutMode ? 'popout' : 'main',
+-      transferState: pendingPaneHostTransferRef.current?.path === terminalTabPath
+-        ? (pendingPaneHostTransferRef.current.payload || null)
+-        : null,
++      transferState: null,
+     }).catch((error) => {
+       console.warn('[pane-attach] afterAttachToHost failed:', error);
+     });
+-    if (pendingPaneHostTransferRef.current?.path === terminalTabPath) {
+-      pendingPaneHostTransferRef.current = null;
+-    }
+-    requestAnimationFrame(() => instance.focus?.());
+ 
++    requestAnimationFrame(() => {
++      instance.resize?.();
++      instance.focus?.();
++    });
++  }, [dockVisible, ensureDockInstanceMounted, panePopoutMode, terminalTabPath]);
++
++  useEffect(() => {
+     return () => {
+-      if (dockInstanceRef.current === instance) {
+-        instance.dispose();
+-        dockInstanceRef.current = null;
+-      }
++      dockMountCleanupRef.current?.();
+     };
+-  }, [dockPaneDetached, dockVisible, hasDockPanes, panePopoutMode, terminalTabPath]);
++  }, []);
+ 
+   return {
+     editorContainerRef,

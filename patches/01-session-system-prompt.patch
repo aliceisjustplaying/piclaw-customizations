@@ -1,15 +1,17 @@
---- runtime/src/agent-pool/session.ts
-+++ runtime/src/agent-pool/session.ts
+diff --git a/runtime/src/agent-pool/session.ts b/runtime/src/agent-pool/session.ts
+index 51a0aef..c1f6817 100644
+--- a/runtime/src/agent-pool/session.ts
++++ b/runtime/src/agent-pool/session.ts
 @@ -13,7 +13,7 @@
   *   - ensureSessionDir() is also used by agent-control/handlers/session.ts.
   */
  
--import { mkdirSync, existsSync, symlinkSync } from "fs";
-+import { mkdirSync, existsSync, readFileSync, symlinkSync } from "fs";
+-import { mkdirSync, existsSync } from "fs";
++import { mkdirSync, existsSync, readFileSync } from "fs";
  import { join, resolve, dirname } from "path";
  import { fileURLToPath } from "url";
  import {
-@@ -116,6 +116,14 @@
+@@ -113,6 +113,13 @@ function getBundledExtensionPaths(): string[] {
    return paths;
  }
  
@@ -24,7 +26,7 @@
  /** Ensure the session directory exists for a chat and return its path. */
  export function ensureSessionDir(chatJid: string): string {
    const chatSessionDir = join(SESSIONS_DIR, sanitiseJid(chatJid));
-@@ -146,6 +154,7 @@
+@@ -145,6 +152,7 @@ export async function createSessionInDir(
    }
  ): Promise<AgentSessionRuntime> {
    const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
@@ -32,7 +34,7 @@
      const services = await createAgentSessionServices({
        cwd,
        agentDir: getAgentDir(),
-@@ -155,6 +164,7 @@
+@@ -154,6 +162,7 @@ export async function createSessionInDir(
        resourceLoaderOptions: {
          extensionFactories: [...builtinExtensionFactories, ...(options.extensionFactories ?? [])],
          additionalExtensionPaths: getBundledExtensionPaths(),

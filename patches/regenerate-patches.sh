@@ -8,6 +8,24 @@ PATCH_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
+patch_strip_level() {
+  local patch_file="$1"
+  if grep -qE '^(diff --git a/|--- a/)' "$patch_file"; then
+    echo 1
+  else
+    echo 0
+  fi
+}
+
+git_apply_patch() {
+  local patch_file="$1"
+  shift
+
+  local strip_level
+  strip_level="$(patch_strip_level "$patch_file")"
+  git apply -p"$strip_level" --recount --unidiff-zero "$@" "$patch_file"
+}
+
 # Resolve installed piclaw package root
 piclaw_bin="$(readlink -f "$(command -v piclaw)")"
 INSTALLED="$(dirname "$(dirname "$(dirname "$piclaw_bin")")")"
@@ -27,6 +45,10 @@ declare -A PATCH_FILES=(
   # 04-web-codex-action-handler.patch is multi-file (dispatch-agent.ts + web UI), cannot be regenerated from installed bundle
   # 05-web-update-autocomplete.patch is web-source only, cannot be regenerated from installed bundle
   # 06-terminal-dock-and-popout-fixes.patch is web-source only, cannot be regenerated from installed bundle
+  # 15-web-rebuild-autocomplete.patch is web-source only, cannot be regenerated from installed bundle
+  # 16-terminal-dock-reopen-cleanly.patch is web-source only, cannot be regenerated from installed bundle
+  # 17-terminal-detach-listeners-on-reopen.patch is web-source only, cannot be regenerated from installed bundle
+  ["18-agent-debug-handler-count-types.patch"]="runtime/src/channels/web/agent/agent-debug.ts"
   ["11-db-lazy-init-for-extension-module-graph.patch"]="runtime/src/db/connection.ts"
   ["12-fix-extension-error-cast.patch"]="runtime/src/channels/web/theming/ui-bridge.ts"
 )
@@ -90,10 +112,11 @@ all_ok=true
 for p in "$PATCH_DIR"/[0-9]*.patch; do
   [ -f "$p" ] || continue
   name="$(basename "$p")"
-  if patch -p0 --dry-run --quiet < "$p" 2>/dev/null; then
+  if git_apply_patch "$p" --check >/dev/null 2>&1; then
     echo "  ✅ $name"
   else
     echo "  ❌ $name — FAILED"
+    git_apply_patch "$p" --check 2>&1 | head -5
     all_ok=false
   fi
 done

@@ -13,11 +13,15 @@ LOCK_DIR="${STATE_DIR}/piclaw-live.update.lock"
 WORK_ROOT="/workspace/.tmp"
 WORK_DIR=""
 SOURCE_DIR=""
+STAGED_SYSTEM_PROMPT=""
 LOCK_ACQUIRED=0
+ACTIVATED=0
+ROLLBACK_IN_PROGRESS=0
 
 DRY_RUN=0
 FORCE=0
 NO_RESTART=0
+VERIFY_ONLY=0
 VERBOSE=0
 
 PICLAW_VERSION_BEFORE=""
@@ -44,18 +48,19 @@ error() {
 quiet() {
   if [ "${VERBOSE}" -eq 1 ]; then
     "$@"
-    return 0
+    return $?
   fi
 
   local out status_code
   out="$(mktemp)"
+  "$@" >"${out}" 2>&1
+  status_code=$?
 
-  if "$@" >"${out}" 2>&1; then
+  if [ "${status_code}" -eq 0 ]; then
     rm -f "${out}"
     return 0
   fi
 
-  status_code=$?
   cat "${out}" >&2
   rm -f "${out}"
   return "${status_code}"
@@ -63,14 +68,15 @@ quiet() {
 
 usage() {
   cat <<'EOF'
-Usage: piclaw-update.sh [--dry-run] [--force] [--no-restart] [--verbose]
+Usage: piclaw-update.sh [--dry-run] [--force] [--verify-only] [--no-restart] [--verbose]
 
 Options:
-  --dry-run     Refresh the upstream cache, compare versions, and exit.
-  --force       Skip the version comparison and proceed with deployment.
-  --no-restart  Do everything except restart (caller handles restart).
-  --verbose     Show full output from git, bun, patch, and helper tools.
-  -h, --help    Show this help text.
+  --dry-run      Refresh the upstream cache, compare versions, and exit.
+  --force        Skip the version comparison and proceed with candidate prep.
+  --verify-only  Build and validate a candidate without activating it.
+  --no-restart   Compatibility flag. Activation still skips restart; caller handles restart.
+  --verbose      Show full output from git, bun, and helper tools.
+  -h, --help     Show this help text.
 EOF
 }
 
@@ -78,6 +84,7 @@ setup_work_dirs() {
   mkdir -p "$(dirname "${CACHE_DIR}")" "${STATE_DIR}" "${WORK_ROOT}" "/workspace/src"
   WORK_DIR="$(mktemp -d "${WORK_ROOT}/piclaw-update.XXXXXX")"
   SOURCE_DIR="${WORK_DIR}/piclaw-source"
+  STAGED_SYSTEM_PROMPT="${WORK_DIR}/SYSTEM.md"
 }
 
 acquire_lock() {
@@ -92,8 +99,43 @@ acquire_lock() {
   exit 1
 }
 
+regenerate_system_prompt_from_root() {
+  local root="$1"
+  local output_path="${2:-${HOME}/.pi/agent/SYSTEM.md}"
+  quiet env PICLAW_LIVE_ROOT="${root}" PICLAW_SYSTEM_PROMPT_OUT="${output_path}" "${SCRIPT_DIR}/piclaw-refresh-system-prompt"
+}
+
+rollback_failed_activation() {
+  ROLLBACK_IN_PROGRESS=1
+  status "Rolling back failed activation"
+
+  local failed_live="${WORK_DIR}/failed-live"
+
+  if [ -e "${LIVE_DIR}" ]; then
+    mv "${LIVE_DIR}" "${failed_live}"
+  fi
+
+  if [ ! -e "${PREVIOUS_DIR}" ]; then
+    error "Rollback failed: ${PREVIOUS_DIR} is missing"
+    return 1
+  fi
+
+  mv "${PREVIOUS_DIR}" "${LIVE_DIR}"
+  ACTIVATED=0
+
+  if [ -e "${failed_live}" ]; then
+    SOURCE_DIR="${failed_live}"
+  fi
+
+  regenerate_system_prompt_from_root "${LIVE_DIR}" || true
+}
+
 cleanup() {
   local exit_code=$?
+
+  if [ "${exit_code}" -ne 0 ] && [ "${ACTIVATED}" -eq 1 ] && [ "${ROLLBACK_IN_PROGRESS}" -eq 0 ]; then
+    rollback_failed_activation || true
+  fi
 
   if [ -n "${WORK_DIR}" ] && [ -e "${WORK_DIR}" ]; then
     rm -rf "${WORK_DIR}"
@@ -118,6 +160,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --no-restart)
       NO_RESTART=1
+      ;;
+    --verify-only)
+      VERIFY_ONLY=1
       ;;
     --verbose|-v)
       VERBOSE=1
@@ -147,6 +192,25 @@ require_commands() {
   for cmd in "$@"; do
     require_command "${cmd}"
   done
+}
+
+patch_strip_level() {
+  local patch_file="$1"
+  if grep -qE '^(diff --git a/|--- a/)' "${patch_file}"; then
+    echo 1
+  else
+    echo 0
+  fi
+}
+
+git_apply_patch() {
+  local repo_dir="$1"
+  local patch_file="$2"
+  shift 2
+
+  local strip_level
+  strip_level="$(patch_strip_level "${patch_file}")"
+  git -C "${repo_dir}" apply -p"${strip_level}" --recount --unidiff-zero "$@" "${patch_file}"
 }
 
 get_global_pi_agent_version() {
@@ -200,10 +264,6 @@ get_live_piclaw_commit() {
 
 get_source_version() {
   git -C "${SOURCE_DIR}" describe --always --dirty --tags
-}
-
-get_source_commit() {
-  git -C "${SOURCE_DIR}" rev-parse HEAD
 }
 
 get_current_pi_agent_version() {
@@ -271,8 +331,12 @@ compare_versions_or_exit() {
     exit 0
   fi
 
-  if [ "${FORCE}" -eq 1 ]; then
-    status "Force requested; skipping version equality check"
+  if [ "${FORCE}" -eq 1 ] || [ "${VERIFY_ONLY}" -eq 1 ]; then
+    if [ "${FORCE}" -eq 1 ]; then
+      status "Force requested; skipping version equality check"
+    else
+      status "Verify-only requested; skipping version equality check"
+    fi
     return 0
   fi
 
@@ -302,16 +366,25 @@ apply_source_patches() {
   for p in "${PATCH_DIR}"/[0-9]*.patch; do
     [ -f "${p}" ] || continue
     status "Checking patch $(basename "${p}")"
-    if ! sed 's/\.orig\t/\t/g; s/\.bak\t/\t/g' "${p}" | quiet patch --dry-run -p0; then
-      error "Patch dry-run failed for $(basename "${p}")"
+    if ! quiet git_apply_patch "${SOURCE_DIR}" "${p}" --check; then
+      error "git apply --check failed for $(basename "${p}")"
       exit 1
     fi
 
     status "Applying patch $(basename "${p}")"
-    if ! sed 's/\.orig\t/\t/g; s/\.bak\t/\t/g' "${p}" | quiet patch -p0; then
-      error "Failed to apply patch $(basename "${p}")"
+    if ! quiet git_apply_patch "${SOURCE_DIR}" "${p}"; then
+      error "git apply failed for $(basename "${p}")"
       exit 1
     fi
+
+    local leftover
+    leftover="$(find "${SOURCE_DIR}" \( -name '*.rej' -o -name '*.orig' \) -print)"
+    if [ -n "${leftover}" ]; then
+      printf '%s\n' "${leftover}" >&2
+      error "Patch $(basename "${p}") produced .rej/.orig files"
+      exit 1
+    fi
+
     count=$((count + 1))
   done
 
@@ -321,6 +394,70 @@ apply_source_patches() {
   fi
 
   status "Applied ${count} patch(es)"
+}
+
+verify_session_system_prompt_patch() {
+  local session_file="${SOURCE_DIR}/runtime/src/agent-pool/session.ts"
+  [ -f "${session_file}" ] || return 0
+
+  if grep -q 'getSystemPromptOverride' "${session_file}" && ! grep -Eq 'import \{[^}]*readFileSync' "${session_file}"; then
+    error "session.ts references getSystemPromptOverride without importing readFileSync"
+    exit 1
+  fi
+}
+
+verify_candidate_patch_integrity() {
+  local check_reverse_patches="${1:-1}"
+  status "Verifying patch integrity"
+
+  local leftover
+  leftover="$(find "${SOURCE_DIR}" \( -name '*.rej' -o -name '*.orig' \) -print)"
+  if [ -n "${leftover}" ]; then
+    printf '%s\n' "${leftover}" >&2
+    error "Patch application left .rej/.orig files in the candidate tree"
+    exit 1
+  fi
+
+  if [ "${check_reverse_patches}" -eq 1 ]; then
+    if ! quiet git -C "${SOURCE_DIR}" diff --check; then
+      error "Candidate checkout failed git diff --check after patch application"
+      exit 1
+    fi
+  fi
+
+  if grep -R -n -E '^(<<<<<<<|=======|>>>>>>>)' "${SOURCE_DIR}" >/dev/null 2>&1; then
+    grep -R -n -E '^(<<<<<<<|=======|>>>>>>>)' "${SOURCE_DIR}" >&2 || true
+    error "Candidate checkout contains conflict markers after patch application"
+    exit 1
+  fi
+
+  if [ "${check_reverse_patches}" -eq 1 ]; then
+    local reverse_check_dir="${WORK_DIR}/reverse-check-source"
+    rm -rf "${reverse_check_dir}"
+    rsync -a --delete "${SOURCE_DIR}/" "${reverse_check_dir}/"
+
+    local patches=()
+    local p
+    for p in "${PATCH_DIR}"/[0-9]*.patch; do
+      [ -f "${p}" ] || continue
+      patches+=("${p}")
+    done
+
+    local idx
+    for (( idx=${#patches[@]}-1; idx>=0; idx-- )); do
+      p="${patches[$idx]}"
+      if ! quiet git_apply_patch "${reverse_check_dir}" "${p}" --check --reverse; then
+        error "git apply reverse-check failed for $(basename "${p}")"
+        exit 1
+      fi
+      if ! quiet git_apply_patch "${reverse_check_dir}" "${p}" --reverse; then
+        error "git apply reverse failed for $(basename "${p}")"
+        exit 1
+      fi
+    done
+  fi
+
+  verify_session_system_prompt_patch
 }
 
 build_from_source() {
@@ -351,6 +488,16 @@ validate_candidate() {
   test -s "${SOURCE_DIR}/runtime/web/static/dist/login.bundle.js"
   test -s "${SOURCE_DIR}/runtime/web/static/dist/login.bundle.css"
   test -f "${SOURCE_DIR}/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
+}
+
+stage_system_prompt() {
+  status "Staging SYSTEM.md from candidate"
+  if ! regenerate_system_prompt_from_root "${SOURCE_DIR}" "${STAGED_SYSTEM_PROMPT}"; then
+    error "Failed to stage SYSTEM.md from the candidate checkout"
+    exit 1
+  fi
+
+  test -s "${STAGED_SYSTEM_PROMPT}"
 }
 
 capture_tool_versions_before_updates() {
@@ -429,6 +576,7 @@ activate_candidate() {
 
   mv "${SOURCE_DIR}" "${LIVE_DIR}"
   SOURCE_DIR=""
+  ACTIVATED=1
 }
 
 capture_piclaw_versions_after_activation() {
@@ -447,7 +595,7 @@ format_summary_version() {
   local after="$2"
 
   if [ "${before}" != "${after}" ]; then
-    printf '%s → %s' "${before}" "${after}"
+    printf '%s -> %s' "${before}" "${after}"
   elif [ "${after}" = "not installed" ]; then
     printf 'not installed'
   else
@@ -521,37 +669,10 @@ wire_extension_node_modules() {
   done
 }
 
-regenerate_system_prompt() {
-  status "Regenerating SYSTEM.md"
-  quiet sudo env PICLAW_LIVE_ROOT="${LIVE_DIR}" "${SCRIPT_DIR}/piclaw-refresh-system-prompt"
-}
-
-restart_service() {
-  status "Restarting piclaw service"
-  sudo systemctl restart piclaw.service
-}
-
-wait_for_health() {
-  local attempt
-  for attempt in $(seq 1 30); do
-    if sudo systemctl is-active piclaw.service >/dev/null 2>&1 && curl -fsS http://127.0.0.1:8080/login >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 2
-  done
-
-  return 1
-}
-
-verify_installation() {
-  status "Verifying service health and SYSTEM.md"
-  if ! wait_for_health; then
-    error "PiClaw failed health checks after restart"
-    return 1
-  fi
-
-  test -s "${HOME}/.pi/agent/SYSTEM.md"
-  echo "Update complete"
+install_staged_system_prompt() {
+  status "Installing staged SYSTEM.md"
+  mkdir -p "$(dirname "${HOME}/.pi/agent/SYSTEM.md")"
+  install -m 0644 "${STAGED_SYSTEM_PROMPT}" "${HOME}/.pi/agent/SYSTEM.md"
 }
 
 main() {
@@ -561,32 +682,40 @@ main() {
   refresh_source_checkout
   compare_versions_or_exit
 
-  require_commands bun jq sudo patch rsync curl
-  if [ "${NO_RESTART}" -eq 0 ]; then
-    require_command systemctl
-  fi
+  require_commands bun jq rsync curl python3
 
   apply_source_patches
+  verify_candidate_patch_integrity 1
   build_from_source
   validate_candidate
   capture_tool_versions_before_updates
   apply_post_install_patches "${SOURCE_DIR}"
+  verify_candidate_patch_integrity 0
+  stage_system_prompt
+
+  if [ "${VERIFY_ONLY}" -eq 1 ]; then
+    status "Candidate verified; no activation performed"
+    echo "Deployability verification complete"
+    return 0
+  fi
+
   activate_candidate
   capture_piclaw_versions_after_activation
   capture_pi_agent_version_after_activation
   deploy_custom_extensions
   wire_extension_node_modules
-  regenerate_system_prompt
+  install_staged_system_prompt
   update_codex_cli
   update_claude_cli
   print_summary_report
 
   if [ "${NO_RESTART}" -eq 1 ]; then
-    status "Skipping restart (--no-restart). Caller should restart piclaw."
+    status "Activation complete. Restart skipped (--no-restart). Caller should restart and verify piclaw."
   else
-    restart_service
-    verify_installation
+    status "Activation complete. Restart and health verification are handled by the host wrapper."
   fi
+
+  echo "Activation complete"
 }
 
 main "$@"

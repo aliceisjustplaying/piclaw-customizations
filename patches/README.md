@@ -20,7 +20,11 @@ They must be re-applied after every `git pull` / source update.
 | 11 | `runtime/src/db/connection.ts` | Lazily initialize the DB on first `getDb()` access so Jiti-loaded extension module graphs share a working DB handle |
 | ~~12~~ | — | Removed (merged upstream as commit `071e2f4c`) |
 | ~~13~~ | — | Removed (merged upstream as PR #27) |
-| 14 | `runtime/src/workspace-search.ts` | Hoist `rel` outside the `try` block so workspace indexing still logs the path on read failures and the source checkout builds cleanly |
+| ~~14~~ | — | Removed (merged upstream) |
+| 15 | `runtime/web/src/components/compose-box.ts` | Add `/rebuild` to slash command autocomplete |
+| 16 | `runtime/web/src/ui/app-pane-runtime-orchestration.ts` | Keep the dock terminal pane mounted while hidden so reopening stays clean |
+| 17 | `runtime/web/src/panes/terminal-pane.ts` | Detach event listeners before reinstalling on dock reopen (prevents duplicate observers) |
+| 18 | `runtime/src/channels/web/agent/agent-debug.ts` | Fix current upstream TypeScript inference so `/agent/debug` builds cleanly |
 
 ## Apply all patches
 
@@ -43,7 +47,7 @@ done
 /workspace/patches/regenerate-patches.sh
 ```
 
-Note: web-source patches (like 04, 05, 06) are verified against upstream source but cannot be regenerated from the compiled installed bundle.
+Note: web-source patches (like 04, 05, 06, 15, 16, and 17) are verified against upstream source but cannot be regenerated from the compiled installed bundle.
 
 ## Workflow
 
