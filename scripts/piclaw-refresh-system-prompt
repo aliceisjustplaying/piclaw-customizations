@@ -34,6 +34,12 @@ let s = buildSystemPrompt({ selectedTools: names, toolSnippets, promptGuidelines
   .replace(/\nCurrent date:.*\nCurrent working directory:.*$/s, "")
   .replace("Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):", "Pi documentation (read this only for pi-specific questions):");
 
+const stableDocsRoot = join(process.env.PICLAW_LIVE_ROOT, "node_modules/@mariozechner/pi-coding-agent");
+s = s
+  .replace(/- Main documentation: .*/g, `- Main documentation: ${join(stableDocsRoot, "README.md")}`)
+  .replace(/- Additional docs: .*/g, `- Additional docs: ${join(stableDocsRoot, "docs")}`)
+  .replace(/- Examples: .* \(extensions, custom tools, SDK\)/g, `- Examples: ${join(stableDocsRoot, "examples")} (extensions, custom tools, SDK)`);
+
 const overlayPaths = [
   join(process.env.PICLAW_CUSTOMIZATIONS_DIR, "SYSTEM.append.md"),
   join(process.env.HOME, ".pi/agent/SYSTEM.local.md"),
