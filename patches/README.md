@@ -13,13 +13,13 @@ They must be re-applied after every `git pull` / source update.
 | 04 | `runtime/src/channels/web/http/dispatch-agent.ts`, `runtime/web/src/ui/app-extension-status.ts`, `runtime/web/src/ui/app-sidepanel-orchestration.ts` | Add `POST /agent/codex/stop` and `POST /agent/codex/dismiss` endpoints with correct chat targeting, NixOS-safe `tmux` lookup, and web UI action routing with local panel dismissal |
 | 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete |
 | 06 | `runtime/web/src/panes/terminal-pane.ts`, `runtime/web/src/ui/app-main-shell-render.ts`, `runtime/web/src/ui/app-pane-runtime-orchestration.ts`, `runtime/web/static/css/editor.css` | Fix terminal dock sizing/rendering, make standalone dock fill the sidebar, and make popout→dock reattach reliable |
-| 07 | `runtime/src/dream.ts`, `runtime/src/task-scheduler.ts` | Read `PICLAW_DREAM_MODEL` env var to override the model used for nightly Dream maintenance |
+| ~~07~~ | — | Removed (merged upstream as PR #25) |
 | ~~08~~ | — | Removed (merged upstream as PR #23) |
 | ~~09~~ | — | Removed (merged upstream as PR #24) |
 | ~~10~~ | — | Removed (merged upstream as commit `4fcd82d`) |
 | 11 | `runtime/src/db/connection.ts` | Lazily initialize the DB on first `getDb()` access so Jiti-loaded extension module graphs share a working DB handle |
-| 12 | `runtime/src/channels/web/theming/ui-bridge.ts` | Fix TS2352 build error in upstream `4fcd82d` — `ExtensionError` is a concrete interface, not castable to `Record<string, unknown>` |
-| 13 | `runtime/web/src/markdown.ts` | Make external links (http/https) in rendered markdown open in a new tab (`target="_blank"`) |
+| ~~12~~ | — | Removed (merged upstream as commit `071e2f4c`) |
+| ~~13~~ | — | Removed (merged upstream as PR #27) |
 
 ## Apply all patches
 
