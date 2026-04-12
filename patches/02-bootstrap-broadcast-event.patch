@@ -1,5 +1,6 @@
---- runtime/src/runtime/bootstrap.ts
-+++ runtime/src/runtime/bootstrap.ts
+diff --git a/runtime/src/runtime/bootstrap.ts b/runtime/src/runtime/bootstrap.ts
+--- a/runtime/src/runtime/bootstrap.ts
++++ b/runtime/src/runtime/bootstrap.ts
 @@ -152,6 +152,7 @@
    deps.log("=== Piclaw - Pi Coding Agent Assistant ===");
  

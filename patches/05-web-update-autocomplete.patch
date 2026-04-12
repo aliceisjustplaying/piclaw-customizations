@@ -1,5 +1,6 @@
---- runtime/web/src/components/compose-box.ts
-+++ runtime/web/src/components/compose-box.ts
+diff --git a/runtime/web/src/components/compose-box.ts b/runtime/web/src/components/compose-box.ts
+--- a/runtime/web/src/components/compose-box.ts
++++ b/runtime/web/src/components/compose-box.ts
 @@ -67,6 +67,8 @@
    { name: "/login", description: "Login to an AI model provider (OAuth or API key)" },
    { name: "/logout", description: "Logout from an AI model provider" },

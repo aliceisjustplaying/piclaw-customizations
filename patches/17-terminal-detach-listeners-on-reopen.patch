@@ -1,5 +1,6 @@
---- runtime/web/src/panes/terminal-pane.ts
-+++ runtime/web/src/panes/terminal-pane.ts
+diff --git a/runtime/web/src/panes/terminal-pane.ts b/runtime/web/src/panes/terminal-pane.ts
+--- a/runtime/web/src/panes/terminal-pane.ts
++++ b/runtime/web/src/panes/terminal-pane.ts
 @@ -738,6 +738,7 @@
      }
  

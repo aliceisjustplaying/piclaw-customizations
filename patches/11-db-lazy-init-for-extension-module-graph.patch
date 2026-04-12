@@ -1,5 +1,6 @@
---- runtime/src/db/connection.ts
-+++ runtime/src/db/connection.ts
+diff --git a/runtime/src/db/connection.ts b/runtime/src/db/connection.ts
+--- a/runtime/src/db/connection.ts
++++ b/runtime/src/db/connection.ts
 @@ -738,13 +738,17 @@
  
 -/**

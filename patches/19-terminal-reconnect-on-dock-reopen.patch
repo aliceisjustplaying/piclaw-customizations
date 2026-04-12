@@ -1,13 +1,7 @@
 diff --git a/runtime/web/src/panes/terminal-pane.ts b/runtime/web/src/panes/terminal-pane.ts
-index c9617687..c9068256 100644
 --- a/runtime/web/src/panes/terminal-pane.ts
 +++ b/runtime/web/src/panes/terminal-pane.ts
-@@ -288,10 +288,13 @@ class TerminalPaneInstance implements PaneInstance {
-     private dockResizeListener = null;
-     private windowResizeListener = null;
-     private resizeFrame = 0;
-+    private resizeRetryTimers = new Set<number>();
-     private lastAppliedThemeSignature = null;
+@@ -293,6 +293,8 @@
      private lastResizeSignature: string | null = null;
      private pendingHandoffToken: string | null = null;
      private transferHandoffToken: string | null = null;
@@ -16,115 +10,7 @@ index c9617687..c9068256 100644
  
      constructor(container: HTMLElement, context: PaneContext) {
          this.container = container;
-@@ -314,6 +317,9 @@ class TerminalPaneInstance implements PaneInstance {
- 
-         this.bodyEl = this.ownerDocument.createElement('div');
-         this.bodyEl.className = 'terminal-pane-body';
-+        this.bodyEl.style.display = 'flex';
-+        this.bodyEl.style.flex = '1 1 auto';
-+        this.bodyEl.style.minHeight = '0';
-         this.bodyEl.innerHTML = '<div class="terminal-placeholder">Bootstrapping ghostty-web…</div>';
- 
-         this.termEl.append(this.bodyEl);
-@@ -346,12 +352,22 @@ class TerminalPaneInstance implements PaneInstance {
-         const host = this.bodyEl.querySelector('.terminal-live-host');
-         if (!(host instanceof HTMLElement)) return;
- 
-+        host.style.display = 'flex';
-+        host.style.flex = '1 1 auto';
-+        host.style.width = '100%';
-+        host.style.height = '100%';
-+        host.style.minWidth = '0';
-+        host.style.minHeight = '0';
-+        host.style.overflow = 'hidden';
-+
-         const primaryChild = host.firstElementChild;
-         if (primaryChild instanceof HTMLElement) {
-             primaryChild.style.width = '100%';
-             primaryChild.style.height = '100%';
-             primaryChild.style.maxWidth = '100%';
-             primaryChild.style.minWidth = '0';
-+            primaryChild.style.minHeight = '0';
-+            primaryChild.style.flex = '1 1 auto';
-             primaryChild.style.display = 'block';
-         }
- 
-@@ -359,14 +375,40 @@ class TerminalPaneInstance implements PaneInstance {
-         if (canvas instanceof HTMLElement) {
-             canvas.style.display = 'block';
-             canvas.style.maxWidth = 'none';
-+            canvas.style.maxHeight = 'none';
-+        }
-+    }
-+
-+    private queueResizeRetries(delays: number[] = [32, 96, 180, 320, 520, 900]): void {
-+        if (this.disposed || !this.ownerWindow) return;
-+        this.clearResizeRetries();
-+        for (const delay of delays) {
-+            const timer = this.ownerWindow.setTimeout(() => {
-+                this.resizeRetryTimers.delete(timer);
-+                if (this.disposed) return;
-+                this.scheduleResize(true);
-+            }, delay);
-+            this.resizeRetryTimers.add(timer);
-+        }
-+    }
-+
-+    private clearResizeRetries(): void {
-+        if (!this.ownerWindow || this.resizeRetryTimers.size === 0) return;
-+        for (const timer of Array.from(this.resizeRetryTimers)) {
-+            try {
-+                this.ownerWindow.clearTimeout(timer);
-+            } catch {
-+                /* expected: timeout may already be cleared while a resize retry is draining. */
-+            }
-         }
-+        this.resizeRetryTimers.clear();
-     }
- 
--    private scheduleResize(): void {
-+    private scheduleResize(force = false): void {
-         if (this.disposed) return;
- 
-         const signature = this.getResizeSignature();
--        if (this.lastResizeSignature === signature) {
-+        if (!force && this.lastResizeSignature === signature) {
-             return;
-         }
- 
-@@ -387,8 +429,14 @@ class TerminalPaneInstance implements PaneInstance {
-             if (this.disposed) return;
- 
-             this.bodyEl.innerHTML = '';
--            const terminalHost = document.createElement('div');
-+            const terminalHost = this.ownerDocument.createElement('div');
-             terminalHost.className = 'terminal-live-host';
-+            terminalHost.style.display = 'flex';
-+            terminalHost.style.flex = '1 1 auto';
-+            terminalHost.style.width = '100%';
-+            terminalHost.style.height = '100%';
-+            terminalHost.style.minWidth = '0';
-+            terminalHost.style.minHeight = '0';
-             this.bodyEl.appendChild(terminalHost);
- 
-             const terminal = new mod.Terminal({
-@@ -415,7 +463,8 @@ class TerminalPaneInstance implements PaneInstance {
-             this.fitAddon = fitAddon;
-             this.installThemeSync();
-             this.installResizeSync();
--            this.scheduleResize();
-+            this.scheduleResize(true);
-+            this.queueResizeRetries([32, 96, 180, 320, 520, 900, 1400, 2000]);
- 
-             await this.connectBackend();
-         } catch (error) {
-@@ -491,82 +540,137 @@ class TerminalPaneInstance implements PaneInstance {
-                 this.scheduleResize();
-             });
-             observer.observe(this.container);
-+            observer.observe(this.termEl);
-+            observer.observe(this.bodyEl);
-             this.resizeObserver = observer;
+@@ -544,79 +546,131 @@
          }
      }
  
@@ -170,6 +56,12 @@ index c9617687..c9068256 100644
 -            const socket = new WebSocket(buildTerminalWebSocketUrl(session.ws_path || '/terminal/ws', handoffToken));
 -            this.socket = socket;
 -            this.setStatus(handoffToken ? 'Transferring…' : 'Connecting…');
+-
+-            terminal.onData?.((data) => {
+-                if (socket.readyState === WebSocket.OPEN) {
+-                    socket.send(JSON.stringify({ type: 'input', data }));
+-                }
+-            });
 +        terminal.onResize?.(({ cols, rows }) => {
 +            const socket = this.socket;
 +            if (socket?.readyState === WebSocket.OPEN) {
@@ -177,23 +69,13 @@ index c9617687..c9068256 100644
 +            }
 +        });
  
--            terminal.onData?.((data) => {
--                if (socket.readyState === WebSocket.OPEN) {
--                    socket.send(JSON.stringify({ type: 'input', data }));
--                }
--            });
-+        this.terminalEventHandlersBound = true;
-+    }
- 
 -            terminal.onResize?.(({ cols, rows }) => {
 -                if (socket.readyState === WebSocket.OPEN) {
 -                    socket.send(JSON.stringify({ type: 'resize', cols, rows }));
 -                }
 -            });
-+    private async connectBackend() {
-+        const terminal = this.terminal;
-+        if (!terminal || this.disposed) return;
-+        this.bindTerminalEventHandlers();
++        this.terminalEventHandlersBound = true;
++    }
  
 -            socket.addEventListener('open', () => {
 -                if (this.disposed) return;
@@ -202,8 +84,15 @@ index c9617687..c9068256 100644
 -                    this.transferHandoffToken = handoffToken;
 -                }
 -                this.setStatus('Connected');
--                this.scheduleResize();
+-                this.scheduleResize(true);
+-                this.queueResizeRetries([24, 72, 160, 320, 640, 1200]);
 -            });
++    private async connectBackend() {
++        const terminal = this.terminal;
++        if (!terminal || this.disposed) return;
++        this.bindTerminalEventHandlers();
+ 
+-            socket.addEventListener('message', (event) => {
 +        if (this.hasLiveSocket()) {
 +            return;
 +        }
@@ -214,8 +103,7 @@ index c9617687..c9068256 100644
 +
 +        const connectPromise = (async () => {
 +            this.clearSocketReference();
- 
--            socket.addEventListener('message', (event) => {
++
 +            try {
 +                const session = await fetchTerminalSession();
                  if (this.disposed) return;
@@ -313,12 +201,7 @@ index c9617687..c9068256 100644
          }
      }
  
-@@ -604,16 +708,20 @@ class TerminalPaneInstance implements PaneInstance {
-     }
- 
-     afterAttachToHost(): void {
-+        this.detachHostListeners();
-         this.installThemeSync();
+@@ -659,10 +713,12 @@
          this.installResizeSync();
          if (this.socket?.readyState === WebSocket.OPEN) {
              this.setStatus('Connected');
@@ -332,17 +215,5 @@ index c9617687..c9068256 100644
 +            this.setStatus(this.pendingHandoffToken ? 'Transferring…' : 'Connecting…');
 +            void this.connectBackend();
          }
--        this.scheduleResize();
-+        this.scheduleResize(true);
-+        this.queueResizeRetries([32, 96, 180, 320, 520, 900, 1400]);
-         requestAnimationFrame(() => this.focus());
-     }
- 
-@@ -674,6 +782,7 @@ class TerminalPaneInstance implements PaneInstance {
-     dispose(): void {
-         if (this.disposed) return;
-         this.disposed = true;
-+        this.clearResizeRetries();
-         this.detachHostListeners();
-         this.resizeFrame = disposeTerminalRuntimeBestEffort({
-             resizeFrame: this.resizeFrame,
+         this.scheduleResize(true);
+         this.queueResizeRetries([32, 96, 180, 320, 520, 900, 1400]);
