@@ -21,7 +21,7 @@ patches/                          # Source patches applied before build
 ├── regenerate-patches.sh               # Regenerate patches from deployed files
 └── README.md                           # Patch documentation
 
-patches/post-install/             # Post-install patches (applied after bun install -g)
+patches/post-install/             # Post-install patches (applied inside the staged source checkout)
 └── 01-jiti-trynative-bun-runtime.sh  # Fix jiti extension loading under Bun runtime
 
 extensions/codex-delegate/        # PiClaw extension
@@ -36,8 +36,9 @@ configs/pi-openai-fast.json      # Project config for the fast-mode package
 SYSTEM.append.md                 # Durable custom instructions appended to generated SYSTEM.md
 
 scripts/                          # Maintenance scripts
-├── piclaw-update.sh                  # Full update: refresh cache → patch → build → install
-└── piclaw-refresh-system-prompt      # Regenerate SYSTEM.md (ExecStartPre)
+├── piclaw-update.sh                  # Full update: refresh cache → patch → build → activate live checkout
+├── piclaw-rollback.sh                # Swap piclaw-live.previous back into place and restart
+└── piclaw-refresh-system-prompt      # Regenerate SYSTEM.md from the live checkout
 ```
 
 ## Patches
@@ -64,7 +65,7 @@ Applied to the [rcarmo/piclaw](https://github.com/rcarmo/piclaw) source tree bef
 
 ### Post-install patches
 
-Applied after `bun install -g` to the installed `node_modules` tree. These patch dependencies rather than PiClaw source.
+Applied after `bun install --ignore-scripts` inside the staged source checkout. These patch dependencies rather than PiClaw source.
 
 | # | Script | Purpose |
 |---|--------|---------|
@@ -74,7 +75,7 @@ Applied after `bun install -g` to the installed `node_modules` tree. These patch
 1. Adds `isBunRuntime` to the import from `config.js`
 2. Sets `tryNative: false` when `isBunRuntime` is true
 
-Patches all copies: top-level `node_modules`, `piclaw/node_modules` (nested), and bun install cache. Idempotent — safe to run on every update. Remove once fixed upstream in `pi-coding-agent`.
+Patches the staged checkout's top-level `node_modules` copy and a nested `piclaw/node_modules` copy if one exists. Idempotent — safe to run on every update. Remove once fixed upstream in `pi-coding-agent`.
 
 ### Environment variables
 
@@ -164,24 +165,21 @@ bash scripts/piclaw-update.sh --dry-run
 
 ### Update flow
 
-1. `refresh_source_checkout` — refresh the cached upstream clone and create a temp working checkout
+1. `refresh_source_checkout` — refresh the cached upstream clone and create a temp candidate checkout
 2. `compare_versions_or_exit` — skip if up-to-date (unless `--force`)
-3. `apply_source_patches` — apply numbered `.patch` files
-4. `build_from_source` — compile server + web UI
-5. `install_global_packages` — `bun install -g` the tarball
-6. `deploy_custom_extensions` — sync extensions + configs to workspace
-7. `wire_extension_node_modules` — symlink `node_modules` into extensions
-8. `wire_runtime_extensions_node_modules` — symlink for runtime extensions
-9. `apply_post_install_patches` — run `patches/post-install/*.sh` scripts
-10. `fix_permissions` — chmod the bun install tree
-11. `ensure_piclaw_symlink` — wire `/usr/local/bin/piclaw`
-12. `regenerate_system_prompt` — refresh `SYSTEM.md`
-13. `update_codex_cli` / `update_claude_cli` — update companion tools
-14. `restart_service` + `verify_installation`
+3. `apply_source_patches` — apply numbered `.patch` files to the candidate
+4. `build_from_source` — install deps and compile server + web UI in the candidate
+5. `apply_post_install_patches` — patch the candidate's local `node_modules`
+6. `activate_candidate` — move the old live checkout to `piclaw-live.previous` and replace it with the new one
+7. `deploy_custom_extensions` — sync extensions + configs to workspace
+8. `wire_extension_node_modules` — symlink extension `node_modules` to `/workspace/src/piclaw-live/node_modules`
+9. `regenerate_system_prompt` — refresh `SYSTEM.md` from the live checkout
+10. `update_codex_cli` / `update_claude_cli` — update companion tools
+11. `restart_service` + `verify_installation`
 
 ## System Prompt Script
 
-`scripts/piclaw-refresh-system-prompt` regenerates `~/.pi/agent/SYSTEM.md` from pi-coding-agent's `buildSystemPrompt()`. Runs as `ExecStartPre` in `piclaw.service` to ensure the prompt is fresh on every restart.
+`scripts/piclaw-refresh-system-prompt` regenerates `~/.pi/agent/SYSTEM.md` from the live checkout's `pi-coding-agent` dependency at `/workspace/src/piclaw-live/node_modules/@mariozechner/pi-coding-agent/`.
 
 After generating the base prompt, it appends any non-empty overlay files it finds, in this order:
 

@@ -10,30 +10,32 @@
 # 1. Add isBunRuntime to the import from config.js
 # 2. Add tryNative:false when isBunRuntime is true
 #
-# This patch is idempotent — safe to run on every update.
+# This patch is idempotent and only touches the provided repo root.
 
 set -euo pipefail
 
-LOADER_PATHS=(
-  /home/agent/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/loader.js
-)
+if [ "$#" -ne 1 ]; then
+  echo "Usage: $(basename "$0") <repo-root>" >&2
+  exit 1
+fi
 
-# Also patch any cached versions
-for cached in /home/agent/.bun/install/cache/@mariozechner/pi-coding-agent@*/dist/core/extensions/loader.js; do
-  [ -f "$cached" ] && LOADER_PATHS+=("$cached")
-done
+REPO_ROOT="$1"
+TOP_LEVEL_LOADER="${REPO_ROOT}/node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/loader.js"
+NESTED_LOADER="${REPO_ROOT}/node_modules/piclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/loader.js"
 
-# Also patch piclaw's nested copy
-for nested in /home/agent/.bun/install/global/node_modules/piclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/loader.js; do
-  [ -f "$nested" ] && LOADER_PATHS+=("$nested")
-done
+LOADER_PATHS=()
+[ -f "${TOP_LEVEL_LOADER}" ] && LOADER_PATHS+=("${TOP_LEVEL_LOADER}")
+[ -f "${NESTED_LOADER}" ] && LOADER_PATHS+=("${NESTED_LOADER}")
 
-# Deduplicate by inode so hardlinked files are only patched once
+if [ "${#LOADER_PATHS[@]}" -eq 0 ]; then
+  echo "No pi-coding-agent loader.js found under ${REPO_ROOT}" >&2
+  exit 1
+fi
+
 declare -A seen_inodes
 UNIQUE_PATHS=()
 for p in "${LOADER_PATHS[@]}"; do
-  [ -f "$p" ] || continue
-  inode=$(stat -c '%i' "$p")
+  inode="$(stat -c '%i' "$p")"
   if [ -z "${seen_inodes[$inode]:-}" ]; then
     seen_inodes[$inode]=1
     UNIQUE_PATHS+=("$p")
@@ -44,18 +46,15 @@ PATCHED=0
 for loader in "${UNIQUE_PATHS[@]}"; do
   needs_patch=0
 
-  # Check 1: import line missing isBunRuntime
   if grep -q 'import { getAgentDir, isBunBinary }' "$loader" 2>/dev/null; then
     needs_patch=1
   fi
 
-  # Check 2: createJiti call missing isBunRuntime tryNative
   if grep -q 'isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }' "$loader" 2>/dev/null; then
     needs_patch=1
   fi
 
   if [ "$needs_patch" -eq 0 ]; then
-    # Verify it's already fully patched
     if grep -q 'isBunRuntime.*tryNative.*false' "$loader" 2>/dev/null && \
        grep -q 'isBunBinary, isBunRuntime' "$loader" 2>/dev/null; then
       echo "Already patched: $loader"
@@ -63,17 +62,12 @@ for loader in "${UNIQUE_PATHS[@]}"; do
     fi
   fi
 
-  # Apply patches via temp file (files may be root-owned)
-  tmp=$(mktemp)
+  tmp="$(mktemp)"
   cp "$loader" "$tmp"
 
-  # Patch 1: Add isBunRuntime to the import
   sed -i 's|import { getAgentDir, isBunBinary }|import { getAgentDir, isBunBinary, isBunRuntime }|' "$tmp"
-
-  # Patch 2: Add tryNative:false for isBunRuntime
   sed -i 's|isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }|isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases(), ...(isBunRuntime \&\& { tryNative: false }) }|' "$tmp"
 
-  # Try direct cp first (agent-owned files), fall back to sudo (root-owned)
   cp "$tmp" "$loader" 2>/dev/null || sudo cp --preserve=mode,ownership "$tmp" "$loader"
   rm -f "$tmp"
   echo "Patched: $loader"

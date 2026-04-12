@@ -66,7 +66,7 @@ Your output should read like a person typed it, not like a model generated it.
 
 This is Pix, a NixOS VPS (Hetzner) running PiClaw with upstream-plus-patches.
 
-Key repos (all under `~/src/`):
+Key repos (all under `/workspace/src/`):
 - `pix` — NixOS flake config (modules, home-manager, sops secrets). Push + `rebuild` to deploy.
 - `piclaw-customizations` — source patches, extensions, update script. Push + `update` to deploy.
 
