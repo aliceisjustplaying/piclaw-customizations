@@ -2,6 +2,8 @@
 
 Patches, extensions, and maintenance scripts for a [PiClaw](https://github.com/rcarmo/piclaw) instance.
 
+The deployment checkout lives at `/workspace/src/piclaw-live`. For clean upstream PR work, use `/workspace/src/piclaw-fork` instead of editing the live checkout directly.
+
 ## Structure
 
 ```
