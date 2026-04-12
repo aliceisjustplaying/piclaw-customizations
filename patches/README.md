@@ -25,6 +25,7 @@ They must be re-applied after every `git pull` / source update.
 | 16 | `runtime/web/src/ui/app-pane-runtime-orchestration.ts` | Keep the dock terminal pane mounted while hidden so reopening stays clean |
 | 17 | `runtime/web/src/panes/terminal-pane.ts` | Detach event listeners before reinstalling on dock reopen (prevents duplicate observers) |
 | 18 | `runtime/src/channels/web/agent/agent-debug.ts` | Fix current upstream TypeScript inference so `/agent/debug` builds cleanly |
+| 19 | `runtime/web/src/panes/terminal-pane.ts` | Reconnect terminal WebSocket on dock reopen — detects dead socket in `afterAttachToHost`, re-calls `connectBackend`, reuses terminal instance, adds resize retries and connect dedup |
 
 ## Apply all patches
 

@@ -1,0 +1,348 @@
+diff --git a/runtime/web/src/panes/terminal-pane.ts b/runtime/web/src/panes/terminal-pane.ts
+index c9617687..c9068256 100644
+--- a/runtime/web/src/panes/terminal-pane.ts
++++ b/runtime/web/src/panes/terminal-pane.ts
+@@ -288,10 +288,13 @@ class TerminalPaneInstance implements PaneInstance {
+     private dockResizeListener = null;
+     private windowResizeListener = null;
+     private resizeFrame = 0;
++    private resizeRetryTimers = new Set<number>();
+     private lastAppliedThemeSignature = null;
+     private lastResizeSignature: string | null = null;
+     private pendingHandoffToken: string | null = null;
+     private transferHandoffToken: string | null = null;
++    private backendConnectPromise: Promise<void> | null = null;
++    private terminalEventHandlersBound = false;
+ 
+     constructor(container: HTMLElement, context: PaneContext) {
+         this.container = container;
+@@ -314,6 +317,9 @@ class TerminalPaneInstance implements PaneInstance {
+ 
+         this.bodyEl = this.ownerDocument.createElement('div');
+         this.bodyEl.className = 'terminal-pane-body';
++        this.bodyEl.style.display = 'flex';
++        this.bodyEl.style.flex = '1 1 auto';
++        this.bodyEl.style.minHeight = '0';
+         this.bodyEl.innerHTML = '<div class="terminal-placeholder">Bootstrapping ghostty-web…</div>';
+ 
+         this.termEl.append(this.bodyEl);
+@@ -346,12 +352,22 @@ class TerminalPaneInstance implements PaneInstance {
+         const host = this.bodyEl.querySelector('.terminal-live-host');
+         if (!(host instanceof HTMLElement)) return;
+ 
++        host.style.display = 'flex';
++        host.style.flex = '1 1 auto';
++        host.style.width = '100%';
++        host.style.height = '100%';
++        host.style.minWidth = '0';
++        host.style.minHeight = '0';
++        host.style.overflow = 'hidden';
++
+         const primaryChild = host.firstElementChild;
+         if (primaryChild instanceof HTMLElement) {
+             primaryChild.style.width = '100%';
+             primaryChild.style.height = '100%';
+             primaryChild.style.maxWidth = '100%';
+             primaryChild.style.minWidth = '0';
++            primaryChild.style.minHeight = '0';
++            primaryChild.style.flex = '1 1 auto';
+             primaryChild.style.display = 'block';
+         }
+ 
+@@ -359,14 +375,40 @@ class TerminalPaneInstance implements PaneInstance {
+         if (canvas instanceof HTMLElement) {
+             canvas.style.display = 'block';
+             canvas.style.maxWidth = 'none';
++            canvas.style.maxHeight = 'none';
++        }
++    }
++
++    private queueResizeRetries(delays: number[] = [32, 96, 180, 320, 520, 900]): void {
++        if (this.disposed || !this.ownerWindow) return;
++        this.clearResizeRetries();
++        for (const delay of delays) {
++            const timer = this.ownerWindow.setTimeout(() => {
++                this.resizeRetryTimers.delete(timer);
++                if (this.disposed) return;
++                this.scheduleResize(true);
++            }, delay);
++            this.resizeRetryTimers.add(timer);
++        }
++    }
++
++    private clearResizeRetries(): void {
++        if (!this.ownerWindow || this.resizeRetryTimers.size === 0) return;
++        for (const timer of Array.from(this.resizeRetryTimers)) {
++            try {
++                this.ownerWindow.clearTimeout(timer);
++            } catch {
++                /* expected: timeout may already be cleared while a resize retry is draining. */
++            }
+         }
++        this.resizeRetryTimers.clear();
+     }
+ 
+-    private scheduleResize(): void {
++    private scheduleResize(force = false): void {
+         if (this.disposed) return;
+ 
+         const signature = this.getResizeSignature();
+-        if (this.lastResizeSignature === signature) {
++        if (!force && this.lastResizeSignature === signature) {
+             return;
+         }
+ 
+@@ -387,8 +429,14 @@ class TerminalPaneInstance implements PaneInstance {
+             if (this.disposed) return;
+ 
+             this.bodyEl.innerHTML = '';
+-            const terminalHost = document.createElement('div');
++            const terminalHost = this.ownerDocument.createElement('div');
+             terminalHost.className = 'terminal-live-host';
++            terminalHost.style.display = 'flex';
++            terminalHost.style.flex = '1 1 auto';
++            terminalHost.style.width = '100%';
++            terminalHost.style.height = '100%';
++            terminalHost.style.minWidth = '0';
++            terminalHost.style.minHeight = '0';
+             this.bodyEl.appendChild(terminalHost);
+ 
+             const terminal = new mod.Terminal({
+@@ -415,7 +463,8 @@ class TerminalPaneInstance implements PaneInstance {
+             this.fitAddon = fitAddon;
+             this.installThemeSync();
+             this.installResizeSync();
+-            this.scheduleResize();
++            this.scheduleResize(true);
++            this.queueResizeRetries([32, 96, 180, 320, 520, 900, 1400, 2000]);
+ 
+             await this.connectBackend();
+         } catch (error) {
+@@ -491,82 +540,137 @@ class TerminalPaneInstance implements PaneInstance {
+                 this.scheduleResize();
+             });
+             observer.observe(this.container);
++            observer.observe(this.termEl);
++            observer.observe(this.bodyEl);
+             this.resizeObserver = observer;
+         }
+     }
+ 
+-    private async connectBackend() {
+-        const terminal = this.terminal;
+-        if (!terminal) return;
++    private hasLiveSocket(): boolean {
++        return this.socket?.readyState === WebSocket.OPEN || this.socket?.readyState === WebSocket.CONNECTING;
++    }
+ 
++    private clearSocketReference(closeExisting = false): void {
++        const socket = this.socket;
++        this.socket = null;
++        if (!closeExisting || !socket) return;
++        if (socket.readyState !== WebSocket.OPEN && socket.readyState !== WebSocket.CONNECTING) {
++            return;
++        }
+         try {
+-            const session = await fetchTerminalSession();
+-            if (this.disposed) return;
++            socket.close();
++        } catch {
++            /* best effort close for stale sockets only */
++        }
++    }
+ 
+-            if (!session?.enabled) {
+-                terminal.write?.(`Terminal backend unavailable: ${session?.error || 'disabled'}\r\n`);
+-                this.setStatus('Unavailable');
+-                return;
++    private bindTerminalEventHandlers(): void {
++        const terminal = this.terminal;
++        if (!terminal || this.terminalEventHandlersBound) return;
++
++        terminal.onData?.((data) => {
++            const socket = this.socket;
++            if (socket?.readyState === WebSocket.OPEN) {
++                socket.send(JSON.stringify({ type: 'input', data }));
+             }
++        });
+ 
+-            const handoffToken = this.pendingHandoffToken || null;
+-            const socket = new WebSocket(buildTerminalWebSocketUrl(session.ws_path || '/terminal/ws', handoffToken));
+-            this.socket = socket;
+-            this.setStatus(handoffToken ? 'Transferring…' : 'Connecting…');
++        terminal.onResize?.(({ cols, rows }) => {
++            const socket = this.socket;
++            if (socket?.readyState === WebSocket.OPEN) {
++                socket.send(JSON.stringify({ type: 'resize', cols, rows }));
++            }
++        });
+ 
+-            terminal.onData?.((data) => {
+-                if (socket.readyState === WebSocket.OPEN) {
+-                    socket.send(JSON.stringify({ type: 'input', data }));
+-                }
+-            });
++        this.terminalEventHandlersBound = true;
++    }
+ 
+-            terminal.onResize?.(({ cols, rows }) => {
+-                if (socket.readyState === WebSocket.OPEN) {
+-                    socket.send(JSON.stringify({ type: 'resize', cols, rows }));
+-                }
+-            });
++    private async connectBackend() {
++        const terminal = this.terminal;
++        if (!terminal || this.disposed) return;
++        this.bindTerminalEventHandlers();
+ 
+-            socket.addEventListener('open', () => {
+-                if (this.disposed) return;
+-                if (handoffToken && this.pendingHandoffToken === handoffToken) {
+-                    this.pendingHandoffToken = null;
+-                    this.transferHandoffToken = handoffToken;
+-                }
+-                this.setStatus('Connected');
+-                this.scheduleResize();
+-            });
++        if (this.hasLiveSocket()) {
++            return;
++        }
++        if (this.backendConnectPromise) {
++            await this.backendConnectPromise;
++            return;
++        }
++
++        const connectPromise = (async () => {
++            this.clearSocketReference();
+ 
+-            socket.addEventListener('message', (event) => {
++            try {
++                const session = await fetchTerminalSession();
+                 if (this.disposed) return;
+-                let payload = null;
+-                try {
+-                    payload = JSON.parse(String(event.data));
+-                } catch {
+-                    payload = { type: 'output', data: String(event.data) };
+-                }
+ 
+-                if (payload?.type === 'output' && typeof payload.data === 'string') {
+-                    terminal.write?.(payload.data);
++                if (!session?.enabled) {
++                    terminal.write?.(`Terminal backend unavailable: ${session?.error || 'disabled'}\r\n`);
++                    this.setStatus('Unavailable');
+                     return;
+                 }
+-                if (payload?.type === 'exit') {
+-                    terminal.write?.(`\r\n[terminal exited]\r\n`);
+-                    this.setStatus('Exited');
+-                }
+-            });
+ 
+-            socket.addEventListener('close', () => {
+-                if (this.disposed) return;
+-                this.setStatus('Disconnected');
+-            });
++                const handoffToken = this.pendingHandoffToken || null;
++                const socket = new WebSocket(buildTerminalWebSocketUrl(session.ws_path || '/terminal/ws', handoffToken));
++                this.socket = socket;
++                this.setStatus(handoffToken ? 'Transferring…' : 'Connecting…');
++
++                socket.addEventListener('open', () => {
++                    if (this.disposed || this.socket !== socket) return;
++                    if (handoffToken && this.pendingHandoffToken === handoffToken) {
++                        this.pendingHandoffToken = null;
++                        this.transferHandoffToken = handoffToken;
++                    }
++                    this.setStatus('Connected');
++                    this.scheduleResize(true);
++                    this.queueResizeRetries([24, 72, 160, 320, 640, 1200]);
++                });
++
++                socket.addEventListener('message', (event) => {
++                    if (this.disposed || this.socket !== socket) return;
++                    let payload = null;
++                    try {
++                        payload = JSON.parse(String(event.data));
++                    } catch {
++                        payload = { type: 'output', data: String(event.data) };
++                    }
++
++                    if (payload?.type === 'output' && typeof payload.data === 'string') {
++                        terminal.write?.(payload.data);
++                        return;
++                    }
++                    if (payload?.type === 'exit') {
++                        terminal.write?.(`\r\n[terminal exited]\r\n`);
++                        this.setStatus('Exited');
++                    }
++                });
++
++                socket.addEventListener('close', () => {
++                    if (this.socket === socket) {
++                        this.socket = null;
++                    }
++                    if (this.disposed || this.socket !== null) return;
++                    this.setStatus('Disconnected');
++                });
++
++                socket.addEventListener('error', () => {
++                    if (this.disposed || this.socket !== socket) return;
++                    this.setStatus('Connection error');
++                });
++            } catch (error) {
++                terminal.write?.(`Terminal backend unavailable: ${error instanceof Error ? error.message : String(error)}\r\n`);
++                this.setStatus('Unavailable');
++            }
++        })();
+ 
+-            socket.addEventListener('error', () => {
+-                if (this.disposed) return;
+-                this.setStatus('Connection error');
+-            });
+-        } catch (error) {
+-            terminal.write?.(`Terminal backend unavailable: ${error instanceof Error ? error.message : String(error)}\r\n`);
+-            this.setStatus('Unavailable');
++        this.backendConnectPromise = connectPromise;
++        try {
++            await connectPromise;
++        } finally {
++            if (this.backendConnectPromise === connectPromise) {
++                this.backendConnectPromise = null;
++            }
+         }
+     }
+ 
+@@ -604,16 +708,20 @@ class TerminalPaneInstance implements PaneInstance {
+     }
+ 
+     afterAttachToHost(): void {
++        this.detachHostListeners();
+         this.installThemeSync();
+         this.installResizeSync();
+         if (this.socket?.readyState === WebSocket.OPEN) {
+             this.setStatus('Connected');
+-        } else if (this.pendingHandoffToken) {
+-            this.setStatus('Transferring…');
+         } else if (this.socket?.readyState === WebSocket.CONNECTING) {
+-            this.setStatus('Connecting…');
++            this.setStatus(this.pendingHandoffToken ? 'Transferring…' : 'Connecting…');
++        } else {
++            this.clearSocketReference();
++            this.setStatus(this.pendingHandoffToken ? 'Transferring…' : 'Connecting…');
++            void this.connectBackend();
+         }
+-        this.scheduleResize();
++        this.scheduleResize(true);
++        this.queueResizeRetries([32, 96, 180, 320, 520, 900, 1400]);
+         requestAnimationFrame(() => this.focus());
+     }
+ 
+@@ -674,6 +782,7 @@ class TerminalPaneInstance implements PaneInstance {
+     dispose(): void {
+         if (this.disposed) return;
+         this.disposed = true;
++        this.clearResizeRetries();
+         this.detachHostListeners();
+         this.resizeFrame = disposeTerminalRuntimeBestEffort({
+             resizeFrame: this.resizeFrame,
