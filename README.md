@@ -36,7 +36,7 @@ configs/pi-openai-fast.json      # Project config for the fast-mode package
 SYSTEM.append.md                 # Durable custom instructions appended to generated SYSTEM.md
 
 scripts/                          # Maintenance scripts
-├── piclaw-update.sh                  # Full update: git pull → patch → build → install
+├── piclaw-update.sh                  # Full update: refresh cache → patch → build → install
 └── piclaw-refresh-system-prompt      # Regenerate SYSTEM.md (ExecStartPre)
 ```
 
@@ -54,11 +54,13 @@ Applied to the [rcarmo/piclaw](https://github.com/rcarmo/piclaw) source tree bef
 | 04 | `runtime/web/src/ui/app-extension-status.ts`, `runtime/web/src/ui/app-sidepanel-orchestration.ts` | Handle Codex panel actions in the web UI, send `chat_jid` on cancel, and dismiss panels locally |
 | 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete |
 | 06 | Terminal dock/popout fixes | Fix terminal dock sizing/rendering, standalone dock fill, popout→dock reattach |
-| 07 | `runtime/src/dream.ts`, `runtime/src/task-scheduler.ts` | `PICLAW_DREAM_MODEL` env var override for nightly Dream |
-| 08 | WebAuthn enrol regex fix | |
-| 09 | Terminal binary resolution from PATH | |
-| 10 | Extension UI error details | Show readable extension path/event/error instead of `[object Object]` |
+| ~~07~~ | *(merged upstream — PR #25)* | |
+| ~~08~~ | *(merged upstream — PR #23)* | |
+| ~~09~~ | *(merged upstream — PR #24)* | |
+| ~~10~~ | *(merged upstream — commit `4fcd82d`)* | |
 | 11 | DB lazy init for extension module graph | Ensure Jiti-loaded extension code can initialize and use the DB singleton on first access |
+| ~~12~~ | *(merged upstream — commit `071e2f4c`)* | |
+| ~~13~~ | *(merged upstream — PR #27)* | |
 
 ### Post-install patches
 
@@ -162,7 +164,7 @@ bash scripts/piclaw-update.sh --dry-run
 
 ### Update flow
 
-1. `refresh_source_checkout` — clone/pull piclaw source
+1. `refresh_source_checkout` — refresh the cached upstream clone and create a temp working checkout
 2. `compare_versions_or_exit` — skip if up-to-date (unless `--force`)
 3. `apply_source_patches` — apply numbered `.patch` files
 4. `build_from_source` — compile server + web UI
