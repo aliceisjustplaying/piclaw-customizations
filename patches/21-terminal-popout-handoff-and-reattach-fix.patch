@@ -1,0 +1,469 @@
+diff --git a/runtime/web/src/panes/terminal-pane.ts b/runtime/web/src/panes/terminal-pane.ts
+index aedef59..0d300b7 100644
+--- a/runtime/web/src/panes/terminal-pane.ts
++++ b/runtime/web/src/panes/terminal-pane.ts
+@@ -269,6 +269,29 @@ export function relocateTerminalPaneRoot(root: HTMLElement | null | undefined, c
+     return true;
+ }
+ 
++function createBlankTerminalSnapshot(cols: number, rows: number) {
++    const cell = {
++        codepoint: 32,
++        width: 1,
++        flags: 0,
++        fg_r: 255,
++        fg_g: 255,
++        fg_b: 255,
++        bg_r: 0,
++        bg_g: 0,
++        bg_b: 0,
++        grapheme_len: 0,
++        hyperlink_id: 0,
++    };
++    const cells = [];
++    for (let row = 0; row < rows; row += 1) {
++        for (let col = 0; col < cols; col += 1) {
++            cells.push({ ...cell });
++        }
++    }
++    return { cells, cursor: { x: 0, y: 0 } };
++}
++
+ class TerminalPaneInstance implements PaneInstance {
+     private container: HTMLElement;
+     private ownerDocument: Document;
+@@ -292,7 +315,11 @@ class TerminalPaneInstance implements PaneInstance {
+     private lastAppliedThemeSignature = null;
+     private lastResizeSignature: string | null = null;
+     private pendingHandoffToken: string | null = null;
+-    private transferHandoffToken: string | null = null;
++    private standbyHandoffToken: string | null = null;
++    private standbyHandoffRequest: Promise<string | null> | null = null;
++    private lastSessionId: string | null = null;
++    private hasBlankSnapshot = false;
++    private pendingInitialReveal = false;
+ 
+     constructor(container: HTMLElement, context: PaneContext) {
+         this.container = container;
+@@ -303,7 +330,6 @@ class TerminalPaneInstance implements PaneInstance {
+             : null;
+         const popoutHandoffToken = consumePanePopoutTransferToken('terminal_handoff');
+         this.pendingHandoffToken = transferHandoffToken || popoutHandoffToken || null;
+-        this.transferHandoffToken = this.pendingHandoffToken;
+ 
+         this.termEl = this.ownerDocument.createElement('div');
+         this.termEl.className = 'terminal-pane-content';
+@@ -453,6 +479,19 @@ class TerminalPaneInstance implements PaneInstance {
+             }
+ 
+             await terminal.open(terminalHost);
++            (terminalHost as any).__terminal = terminal;
++            try {
++                const blank = createBlankTerminalSnapshot(terminal.cols || 120, terminal.rows || 30);
++                terminal.setSnapshot?.(blank.cells, blank.cursor);
++                terminal.renderer?.clear?.();
++                terminal.refresh?.();
++                terminalHost.style.visibility = 'hidden';
++                this.hasBlankSnapshot = true;
++                this.pendingInitialReveal = true;
++            } catch {
++                this.hasBlankSnapshot = false;
++                this.pendingInitialReveal = false;
++            }
+             this.syncHostLayout();
+             terminal.loadFonts?.();
+             fitAddon?.observeResize?.();
+@@ -462,7 +501,7 @@ class TerminalPaneInstance implements PaneInstance {
+             this.installThemeSync();
+             this.installResizeSync();
+             this.scheduleResize(true);
+-            this.queueResizeRetries([32, 96, 180, 320, 520, 900, 1400, 2000]);
++            this.queueResizeRetries([32, 96, 180, 320]);
+ 
+             await this.connectBackend();
+         } catch (error) {
+@@ -544,6 +583,38 @@ class TerminalPaneInstance implements PaneInstance {
+         }
+     }
+ 
++    private consumeStandbyHandoffToken(): string | null {
++        const token = this.standbyHandoffToken || null;
++        this.standbyHandoffToken = null;
++        return token;
++    }
++
++    private async ensureStandbyHandoffToken(force = false): Promise<string | null> {
++        if (this.disposed) return null;
++        if (!force && this.standbyHandoffToken) {
++            return this.standbyHandoffToken;
++        }
++        if (this.standbyHandoffRequest) {
++            return await this.standbyHandoffRequest;
++        }
++        this.standbyHandoffRequest = requestTerminalHandoff()
++            .then((token) => {
++                if (!token || this.disposed) {
++                    return null;
++                }
++                this.standbyHandoffToken = token;
++                return token;
++            })
++            .catch((error) => {
++                console.warn('[terminal-pane] Failed to prepare standby handoff token:', error);
++                return null;
++            })
++            .finally(() => {
++                this.standbyHandoffRequest = null;
++            });
++        return await this.standbyHandoffRequest;
++    }
++
+     private async connectBackend() {
+         const terminal = this.terminal;
+         if (!terminal) return;
+@@ -579,11 +650,11 @@ class TerminalPaneInstance implements PaneInstance {
+                 if (this.disposed) return;
+                 if (handoffToken && this.pendingHandoffToken === handoffToken) {
+                     this.pendingHandoffToken = null;
+-                    this.transferHandoffToken = handoffToken;
+                 }
++                void this.ensureStandbyHandoffToken(false);
+                 this.setStatus('Connected');
+                 this.scheduleResize(true);
+-                this.queueResizeRetries([24, 72, 160, 320, 640, 1200]);
++                this.queueResizeRetries([24, 72, 160, 320]);
+             });
+ 
+             socket.addEventListener('message', (event) => {
+@@ -595,8 +666,41 @@ class TerminalPaneInstance implements PaneInstance {
+                     payload = { type: 'output', data: String(event.data) };
+                 }
+ 
++                if (payload?.type === 'session') {
++                    const sessionId = typeof payload.session_id === 'string' ? payload.session_id : null;
++                    (terminal as any).__piclawSessionMeta = {
++                        sessionId,
++                        createdAt: typeof payload.created_at === 'string' ? payload.created_at : null,
++                        processPid: typeof payload.process_pid === 'number' ? payload.process_pid : null,
++                    };
++                    if (this.lastSessionId !== sessionId) {
++                        this.lastSessionId = sessionId;
++                    }
++                    if (!this.standbyHandoffToken) {
++                        void this.ensureStandbyHandoffToken(false);
++                    }
++                    return;
++                }
+                 if (payload?.type === 'output' && typeof payload.data === 'string') {
++                    if (this.hasBlankSnapshot) {
++                        try {
++                            terminal.clear?.();
++                            terminal.renderer?.clear?.();
++                            terminal.clearSnapshot?.();
++                        } catch {
++                            // best effort
++                        }
++                        this.hasBlankSnapshot = false;
++                    }
+                     terminal.write?.(payload.data);
++                    if (this.pendingInitialReveal) {
++                        const host = this.bodyEl?.querySelector?.('.terminal-live-host');
++                        if (host instanceof HTMLElement) {
++                            host.style.visibility = 'visible';
++                            requestAnimationFrame(() => this.focus());
++                        }
++                        this.pendingInitialReveal = false;
++                    }
+                     return;
+                 }
+                 if (payload?.type === 'exit') {
+@@ -653,7 +757,13 @@ class TerminalPaneInstance implements PaneInstance {
+         this.setStatus('Moving terminal…');
+     }
+ 
+-    afterAttachToHost(): void {
++    afterAttachToHost(context?: { transferState?: Record<string, unknown> | null }): void {
++        const transferHandoffToken = typeof context?.transferState?.handoffToken === 'string' && context.transferState.handoffToken.trim()
++            ? context.transferState.handoffToken.trim()
++            : null;
++        if (transferHandoffToken) {
++            this.pendingHandoffToken = transferHandoffToken;
++        }
+         this.installThemeSync();
+         this.installResizeSync();
+         if (this.socket?.readyState === WebSocket.OPEN) {
+@@ -664,36 +774,33 @@ class TerminalPaneInstance implements PaneInstance {
+             this.setStatus('Connecting…');
+         }
+         this.scheduleResize(true);
+-        this.queueResizeRetries([32, 96, 180, 320, 520, 900, 1400]);
++        this.queueResizeRetries([32, 96, 180, 320]);
+         requestAnimationFrame(() => this.focus());
+     }
+ 
+-    moveHost(container: HTMLElement): boolean {
+-        if (this.disposed) return false;
+-        this.detachHostListeners();
+-        this.container = container;
+-        this.ownerDocument = container.ownerDocument || this.ownerDocument || document;
+-        this.ownerWindow = (this.ownerDocument.defaultView || this.ownerWindow || window) as Window & typeof globalThis;
+-        if (!relocateTerminalPaneRoot(this.termEl, container)) {
+-            return false;
+-        }
+-        this.afterAttachToHost();
+-        return true;
++    moveHost(_container: HTMLElement): boolean {
++        return false;
+     }
+ 
+     exportHostTransferState(): Record<string, unknown> | null {
+-        return {
+-            kind: 'terminal',
+-            live: true,
+-            handoffToken: this.transferHandoffToken || null,
+-        };
++        const handoffToken = this.standbyHandoffToken || this.pendingHandoffToken || null;
++        return handoffToken
++            ? {
++                kind: 'terminal',
++                live: false,
++                handoffToken,
++            }
++            : null;
+     }
+ 
+     async preparePopoutTransfer(): Promise<Record<string, string> | null> {
+-        const handoffToken = await requestTerminalHandoff();
++        let handoffToken = this.consumeStandbyHandoffToken();
++        if (!handoffToken) {
++            await this.ensureStandbyHandoffToken(true);
++            handoffToken = this.consumeStandbyHandoffToken();
++        }
+         if (!handoffToken) return null;
+         this.pendingHandoffToken = handoffToken;
+-        this.transferHandoffToken = handoffToken;
+         return { terminal_handoff: handoffToken };
+     }
+ 
+@@ -725,6 +832,9 @@ class TerminalPaneInstance implements PaneInstance {
+     dispose(): void {
+         if (this.disposed) return;
+         this.disposed = true;
++        this.lastSessionId = null;
++        this.standbyHandoffToken = null;
++        this.standbyHandoffRequest = null;
+         this.clearResizeRetries();
+         this.detachHostListeners();
+         this.resizeFrame = disposeTerminalRuntimeBestEffort({
+diff --git a/runtime/web/src/ui/app-branch-pane-lifecycle-actions.ts b/runtime/web/src/ui/app-branch-pane-lifecycle-actions.ts
+index a238415..6b61133 100644
+--- a/runtime/web/src/ui/app-branch-pane-lifecycle-actions.ts
++++ b/runtime/web/src/ui/app-branch-pane-lifecycle-actions.ts
+@@ -366,6 +366,7 @@ export async function popOutPaneAction(options: PopOutPaneActionOptions): Promis
+         detachTransfer?.paneInstanceId
+         && detachTransfer?.paneWindowId
+         && sourceInstance
++        && panePath !== terminalTabPath
+         && exportedHostTransfer?.kind !== 'terminal'
+       ) {
+         registerPaneLiveTransfer({
+diff --git a/runtime/web/src/ui/app-pane-runtime-orchestration.ts b/runtime/web/src/ui/app-pane-runtime-orchestration.ts
+index bcccd45..4833b5d 100644
+--- a/runtime/web/src/ui/app-pane-runtime-orchestration.ts
++++ b/runtime/web/src/ui/app-pane-runtime-orchestration.ts
+@@ -191,12 +191,22 @@ export function shouldDisableTerminalReattach(options: {
+   return isLikelySafariBrowser(options?.runtimeNavigator);
+ }
+ 
++function shouldUseLivePaneTransfer(options: {
++  panePath: string;
++  terminalTabPath: string;
++}): boolean {
++  const panePath = typeof options?.panePath === 'string' ? options.panePath.trim() : '';
++  if (!panePath) return false;
++  return panePath !== options?.terminalTabPath;
++}
++
+ export interface PanePopoutReattachRequestMessage {
+   type: 'piclaw-pane-reattach-request';
+   panePath: string;
+   paneInstanceId?: string;
+   editorPopoutToken?: string;
+   paneTransferToken?: string;
++  paneTransferPayload?: Record<string, unknown>;
+   allowLiveTransfer?: boolean;
+ }
+ 
+@@ -228,7 +238,8 @@ export function buildPanePopoutReattachRequestMessage(options: {
+   const exportedHostTransfer = typeof instance?.exportHostTransferState === 'function'
+     ? instance.exportHostTransferState()
+     : null;
+-  const paneTransfer = exportedHostTransfer
++  const useInlineHostTransfer = panePath === terminalTabPath;
++  const paneTransfer = exportedHostTransfer && !useInlineHostTransfer
+     ? createPaneHostTransferPayload({
+       path: panePath,
+       payload: exportedHostTransfer,
+@@ -259,6 +270,7 @@ export function buildPanePopoutReattachRequestMessage(options: {
+     ...(paneInstanceId ? { paneInstanceId } : {}),
+     ...(editorTransfer?.editor_popout ? { editorPopoutToken: editorTransfer.editor_popout } : {}),
+     ...(paneTransfer?.pane_transfer ? { paneTransferToken: paneTransfer.pane_transfer } : {}),
++    ...(useInlineHostTransfer && exportedHostTransfer ? { paneTransferPayload: exportedHostTransfer } : {}),
+     ...(allowLiveTransfer ? {} : { allowLiveTransfer: false }),
+   };
+ }
+@@ -283,13 +295,18 @@ export function consumePanePopoutReattachRequestMessage(options: {
+     : null;
+   const editorPopoutToken = typeof options?.payload?.editorPopoutToken === 'string' ? options.payload.editorPopoutToken.trim() : '';
+   const paneTransferToken = typeof options?.payload?.paneTransferToken === 'string' ? options.payload.paneTransferToken.trim() : '';
++  const inlineHostTransferPayload = options?.payload?.paneTransferPayload && typeof options.payload.paneTransferPayload === 'object' && !Array.isArray(options.payload.paneTransferPayload)
++    ? options.payload.paneTransferPayload as Record<string, unknown>
++    : null;
+ 
+   const editorTransfer = editorPopoutToken
+     ? consumeEditorPopoutState(editorPopoutToken, runtime, nowMs)
+     : null;
+-  const hostTransfer = paneTransferToken
+-    ? consumePaneHostTransferState(paneTransferToken, runtime, nowMs)
+-    : null;
++  const hostTransfer = inlineHostTransferPayload
++    ? { panePath, path: panePath, payload: inlineHostTransferPayload, capturedAt: nowMs }
++    : (paneTransferToken
++      ? consumePaneHostTransferState(paneTransferToken, runtime, nowMs)
++      : null);
+ 
+   return {
+     panePath,
+@@ -545,7 +562,8 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+     const pendingTab = pendingDetachedTabsRef.current.get(panePath) || null;
+     if (matchesPaneDetachClaim(pendingTab, claim)) {
+       const preservedInstance = editorInstanceRef.current;
+-      if (preservedInstance && typeof preservedInstance.moveHost === 'function') {
++      const useLiveTransfer = shouldUseLivePaneTransfer({ panePath, terminalTabPath });
++      if (useLiveTransfer && preservedInstance && typeof preservedInstance.moveHost === 'function') {
+         registerPaneLiveTransfer({
+           panePath,
+           paneInstanceId: pendingTab.paneInstanceId,
+@@ -558,7 +576,7 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+           },
+         });
+       }
+-      if (editorInstanceRef.current) {
++      if (useLiveTransfer && editorInstanceRef.current) {
+         editorInstanceRef.current = null;
+       }
+       const nextState = finalizePendingPaneOwnership(pendingTab);
+@@ -587,7 +605,8 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+ 
+     const pendingDock = pendingDetachedDockPaneRef.current;
+     const preservedDockInstance = dockInstanceRef.current;
+-    if (pendingDock && preservedDockInstance && typeof preservedDockInstance.moveHost === 'function') {
++    const useLiveTransfer = shouldUseLivePaneTransfer({ panePath, terminalTabPath });
++    if (useLiveTransfer && pendingDock && preservedDockInstance && typeof preservedDockInstance.moveHost === 'function') {
+       registerPaneLiveTransfer({
+         panePath,
+         paneInstanceId: pendingDock.paneInstanceId,
+@@ -600,7 +619,7 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+         },
+       });
+     }
+-    if (dockInstanceRef.current) {
++    if (useLiveTransfer && dockInstanceRef.current) {
+       dockInstanceRef.current = null;
+     }
+     if (!matchesPaneDetachClaim(pendingDock, claim)) return false;
+@@ -633,6 +652,7 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+     const instance = panePath === terminalTabPath
+       ? (dockInstanceRef.current || editorInstanceRef.current)
+       : editorInstanceRef.current;
++    const effectiveAllowLiveTransfer = allowLiveTransfer && shouldUseLivePaneTransfer({ panePath, terminalTabPath });
+     const payload = buildPanePopoutReattachRequestMessage({
+       panePath,
+       paneInstanceId: detachState.paneInstanceId,
+@@ -641,12 +661,12 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+         : (typeof (tabPaneOverrides as any)?.get === 'function' ? ((tabPaneOverrides as any).get(panePath) || null) : null),
+       terminalTabPath,
+       viewState: panePath === terminalTabPath ? null : (tabStore.getViewState(panePath) || null),
+-      allowLiveTransfer,
++      allowLiveTransfer: effectiveAllowLiveTransfer,
+       instance,
+     });
+     if (!payload) return false;
+ 
+-    if (allowLiveTransfer && payload.paneTransferToken && typeof instance?.moveHost === 'function') {
++    if (effectiveAllowLiveTransfer && payload.paneTransferToken && typeof instance?.moveHost === 'function') {
+       if (dockInstanceRef.current === instance) {
+         dockInstanceRef.current = null;
+       }
+@@ -828,6 +848,7 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+ 
+       const detachedTab = detachedTabsRef.current.get(panePath) || null;
+       const detachedDock = panePath === terminalTabPath ? detachedDockPaneRef.current : null;
++      const useLiveTransfer = shouldUseLivePaneTransfer({ panePath, terminalTabPath });
+       const detached = detachedTab || detachedDock;
+       if (!detached) return;
+       if (transfer?.paneInstanceId && transfer.paneInstanceId !== detached.paneInstanceId) return;
+@@ -838,7 +859,7 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+         pendingReattachEditorTransfersRef.current.delete(panePath);
+         return;
+       }
+-      if (transfer?.hostTransfer && transfer.allowLiveTransfer) {
++      if (transfer?.hostTransfer && transfer.allowLiveTransfer && useLiveTransfer) {
+         pendingReattachPaneClaimsRef.current.set(panePath, {
+           panePath,
+           paneInstanceId: detached.paneInstanceId,
+@@ -1038,6 +1059,7 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+         panePopoutMode
+         && hasPaneDetachTransferState(detachState)
+         && typeof nextInstance?.moveHost === 'function'
++        && shouldUseLivePaneTransfer({ panePath: activeId, terminalTabPath })
+       ) {
+         registerPaneLiveTransfer({
+           panePath: activeId,
+@@ -1076,7 +1098,9 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+         }
+         : null;
+       const reattachClaim = pendingReattachPaneClaimsRef.current.get(activeId) || null;
+-      const liveTransferClaim = popoutClaim || reattachClaim;
++      const liveTransferClaim = shouldUseLivePaneTransfer({ panePath: activeId, terminalTabPath })
++        ? (popoutClaim || reattachClaim)
++        : null;
+       const liveTransferSourceWindow = panePopoutMode
+         ? (typeof window !== 'undefined' && window.opener && !window.opener.closed ? window.opener : null)
+         : (pendingReattachPaneSourceWindowsRef.current.get(activeId) || null);
+@@ -1185,20 +1209,30 @@ export function usePaneRuntimeOrchestration(options: UsePaneRuntimeOrchestration
+       return;
+     }
+ 
+-    const instance = ext.mount(container, { mode: 'view' });
++    const pendingPopoutHostTransfer = pendingPaneHostTransferRef.current?.path === terminalTabPath
++      ? pendingPaneHostTransferRef.current
++      : null;
++    const pendingReattachHostTransfer = pendingReattachPaneHostTransfersRef.current.get(terminalTabPath) || null;
++    const pendingHostTransfer = pendingPopoutHostTransfer || pendingReattachHostTransfer;
++
++    const instance = ext.mount(container, {
++      mode: 'view',
++      ...(pendingHostTransfer?.payload ? { transferState: pendingHostTransfer.payload } : {}),
++    });
+     dockInstanceRef.current = instance;
+     void invokePaneAfterAttachToHost(instance, {
+       path: terminalTabPath,
+       hostMode: panePopoutMode ? 'popout' : 'main',
+-      transferState: pendingPaneHostTransferRef.current?.path === terminalTabPath
+-        ? (pendingPaneHostTransferRef.current.payload || null)
+-        : null,
++      transferState: pendingHostTransfer?.payload || null,
+     }).catch((error) => {
+       console.warn('[pane-attach] afterAttachToHost failed:', error);
+     });
+-    if (pendingPaneHostTransferRef.current?.path === terminalTabPath) {
++    if (pendingPopoutHostTransfer) {
+       pendingPaneHostTransferRef.current = null;
+     }
++    if (pendingReattachHostTransfer) {
++      pendingReattachPaneHostTransfersRef.current.delete(terminalTabPath);
++    }
+     requestAnimationFrame(() => instance.focus?.());
+ 
+     return () => {

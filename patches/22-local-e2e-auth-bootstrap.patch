@@ -1,0 +1,117 @@
+diff --git a/runtime/src/channels/web/http/dispatch-auth.ts b/runtime/src/channels/web/http/dispatch-auth.ts
+index 2fa4996a..b1cab75a 100644
+--- a/runtime/src/channels/web/http/dispatch-auth.ts
++++ b/runtime/src/channels/web/http/dispatch-auth.ts
+@@ -11,8 +11,56 @@ import {
+   redirectToLoginResponse,
+   type AuthEndpointsContext,
+ } from "../auth/auth-endpoints.js";
++import { randomSessionToken } from "../auth/auth.js";
++import { buildSessionCookieHeader } from "../auth/session-auth.js";
++import { isInternalSecretRequestAuthorized } from "../auth/internal-secret.js";
++import { getWebRuntimeConfig } from "../../../core/config.js";
++import { createWebSession, DEFAULT_WEB_USER_ID } from "../../../db.js";
+ import type { RouteFlags } from "./route-flags.js";
+ 
++const E2E_BOOTSTRAP_TTL_SECONDS = 10 * 60;
++
++function isLoopbackHostname(hostname: string): boolean {
++  const normalized = hostname.trim().toLowerCase();
++  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1" || normalized === "[::1]";
++}
++
++function handleE2eBootstrapEndpoint(req: Request): Response {
++  const config = getWebRuntimeConfig();
++  const url = new URL(req.url);
++  if (!isLoopbackHostname(url.hostname)) {
++    return new Response(JSON.stringify({ error: "Loopback access required" }), {
++      status: 403,
++      headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
++    });
++  }
++
++  if (!config.internalSecret.trim() || !isInternalSecretRequestAuthorized(req, config.internalSecret)) {
++    return new Response(JSON.stringify({ error: "Unauthorized" }), {
++      status: 401,
++      headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
++    });
++  }
++
++  const ttlSeconds = Math.max(60, Math.min(config.sessionTtl || E2E_BOOTSTRAP_TTL_SECONDS, E2E_BOOTSTRAP_TTL_SECONDS));
++  const sessionToken = randomSessionToken();
++  const session = createWebSession(sessionToken, DEFAULT_WEB_USER_ID, ttlSeconds, "e2e");
++  const setCookie = buildSessionCookieHeader(sessionToken, req, ttlSeconds, req.url.startsWith("https://"));
++
++  return new Response(JSON.stringify({
++    ok: true,
++    auth_method: session.auth_method,
++    expires_at: session.expires_at,
++  }), {
++    status: 200,
++    headers: {
++      "Content-Type": "application/json; charset=utf-8",
++      "Cache-Control": "no-store",
++      "Set-Cookie": setCookie,
++    },
++  });
++}
++
+ /** Channel contract required by auth-route HTTP dispatcher. */
+ export interface AuthDispatchChannel {
+   /** Auth gateway methods required to validate pre-enrolment TOTP session state. */
+@@ -51,6 +99,10 @@ export async function handleAuthRoutes(
+     return await handleWebauthnEnrollPageEndpoint(channel.endpointContexts.auth());
+   }
+ 
++  if (flags.isE2eBootstrap) {
++    return handleE2eBootstrapEndpoint(req);
++  }
++
+   if (flags.isWebauthnLoginStart) {
+     return await handleWebauthnLoginStartEndpoint(req, channel.endpointContexts.auth());
+   }
+diff --git a/runtime/src/channels/web/http/route-flags.ts b/runtime/src/channels/web/http/route-flags.ts
+index 663c639b..7244599e 100644
+--- a/runtime/src/channels/web/http/route-flags.ts
++++ b/runtime/src/channels/web/http/route-flags.ts
+@@ -18,6 +18,8 @@ export type RouteFlags = {
+   isLoginPage: boolean;
+   /** True when the request targets `/auth/verify`. */
+   isAuthVerify: boolean;
++  /** True when the request targets the local E2E auth bootstrap endpoint. */
++  isE2eBootstrap: boolean;
+   /** True when the request targets WebAuthn login start. */
+   isWebauthnLoginStart: boolean;
+   /** True when the request targets WebAuthn login finish. */
+@@ -81,6 +83,7 @@ export function isPublicStaticPath(pathname: string): boolean {
+ export function getRouteFlags(req: Request, pathname: string): RouteFlags {
+   const isGetOrHead = req.method === "GET" || req.method === "HEAD";
+   const isAuthVerify = req.method === "POST" && pathname === "/auth/verify";
++  const isE2eBootstrap = req.method === "POST" && pathname === "/auth/e2e/bootstrap";
+   const isWebauthnLoginStart = req.method === "POST" && pathname === "/auth/webauthn/login/start";
+   const isWebauthnLoginFinish = req.method === "POST" && pathname === "/auth/webauthn/login/finish";
+   const isWebauthnRegisterStart = req.method === "POST" && pathname === "/auth/webauthn/register/start";
+@@ -90,6 +93,7 @@ export function getRouteFlags(req: Request, pathname: string): RouteFlags {
+ 
+   const isAuthEndpoint =
+     isAuthVerify ||
++    isE2eBootstrap ||
+     isWebauthnLoginStart ||
+     isWebauthnLoginFinish ||
+     isWebauthnRegisterStart ||
+@@ -99,6 +103,7 @@ export function getRouteFlags(req: Request, pathname: string): RouteFlags {
+     isGetOrHead,
+     isLoginPage: isGetOrHead && (pathname === "/login" || pathname === "/login.html"),
+     isAuthVerify,
++    isE2eBootstrap,
+     isWebauthnLoginStart,
+     isWebauthnLoginFinish,
+     isWebauthnRegisterStart,
+@@ -130,6 +135,7 @@ export function shouldSkipAuthCheck(flags: RouteFlags, hasInternalAccess: boolea
+     hasInternalAccess ||
+     flags.isLoginPage ||
+     flags.isAuthVerify ||
++    flags.isE2eBootstrap ||
+     flags.isWebauthnLoginStart ||
+     flags.isWebauthnLoginFinish ||
+     flags.isWebauthnRegisterStart ||

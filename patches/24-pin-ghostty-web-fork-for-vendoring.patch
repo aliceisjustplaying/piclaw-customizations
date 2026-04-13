@@ -1,0 +1,44 @@
+diff --git a/bun.lock b/bun.lock
+index 7ef12c7..c30e7ac 100644
+--- a/bun.lock
++++ b/bun.lock
+@@ -17,7 +17,7 @@
+         "d3": "^7.9.0",
+         "docx-preview": "^0.3.7",
+         "fflate": "0.8.2",
+-        "ghostty-web": "github:rcarmo/ghostty-web#fcc47d423a7fce1c02c702b6464d0b1ab89175f1",
++        "ghostty-web": "github:aliceisjustplaying/ghostty-web#8c02b065cd8a9e4cf7ea711f5a2cb3ed61a15ca5",
+         "htm": "3.1.1",
+         "js-yaml": "^4.1.1",
+         "katex": "0.16.38",
+@@ -891,7 +891,7 @@
+ 
+     "get-uri": ["get-uri@6.0.5", "", { "dependencies": { "basic-ftp": "^5.0.2", "data-uri-to-buffer": "^6.0.2", "debug": "^4.3.4" } }, "sha512-b1O07XYq8eRuVzBNgJLstU6FYc1tS6wnMtF1I1D9lE8LxZSOGZ7LhxN54yPP6mGw5f2CkXY2BQUL9Fx41qvcIg=="],
+ 
+-    "ghostty-web": ["ghostty-web@github:rcarmo/ghostty-web#fcc47d4", {}, "rcarmo-ghostty-web-fcc47d4", "sha512-tq0cFciI32VTyOXDoLHQQDndeA6jhFuZ/3TWYx3VlYDzRhYkWAtTBi6t29isYPzdiKNIWggjkn3Ve/+Qub/wBg=="],
++    "ghostty-web": ["ghostty-web@github:aliceisjustplaying/ghostty-web#8c02b06", {}, "aliceisjustplaying-ghostty-web-8c02b06"],
+ 
+     "glob": ["glob@13.0.6", "", { "dependencies": { "minimatch": "^10.2.2", "minipass": "^7.1.3", "path-scurry": "^2.0.2" } }, "sha512-Wjlyrolmm8uDpm/ogGyXZXb1Z+Ca2B8NbJwqBVg0axK9GbBeoS7yGV6vjXnYdGm6X53iehEuxxbyiKp8QmN4Vw=="],
+ 
+@@ -1003,7 +1003,7 @@
+ 
+     "levn": ["levn@0.4.1", "", { "dependencies": { "prelude-ls": "^1.2.1", "type-check": "~0.4.0" } }, "sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ=="],
+ 
+-    "libsignal": ["@whiskeysockets/libsignal-node@github:whiskeysockets/libsignal-node#1c30d7d", { "dependencies": { "curve25519-js": "^0.0.4", "protobufjs": "6.8.8" } }, "WhiskeySockets-libsignal-node-1c30d7d", "sha512-5q4/OuDQaMYx3RpDqMqS3WYyqjrsSMpU8ipQZtpYnm5l6DwNoLV9oIYMDK0NILKW+tyk3tVCIA11BMYQ+A1+GA=="],
++    "libsignal": ["@whiskeysockets/libsignal-node@github:whiskeysockets/libsignal-node#1c30d7d", { "dependencies": { "curve25519-js": "^0.0.4", "protobufjs": "6.8.8" } }, "WhiskeySockets-libsignal-node-1c30d7d"],
+ 
+     "lie": ["lie@3.3.0", "", { "dependencies": { "immediate": "~3.0.5" } }, "sha512-UaiMJzeWRlEujzAuw5LokY1L5ecNQYZKfmyZ9L7wDHb/p5etKaxXhohBcrw0EYby+G/NA52vRSN4N39dxHAIwQ=="],
+ 
+diff --git a/package.json b/package.json
+index b6b1463..0ce09f5 100644
+--- a/package.json
++++ b/package.json
+@@ -91,7 +91,7 @@
+     "d3": "^7.9.0",
+     "docx-preview": "^0.3.7",
+     "fflate": "0.8.2",
+-    "ghostty-web": "github:rcarmo/ghostty-web#fcc47d423a7fce1c02c702b6464d0b1ab89175f1",
++    "ghostty-web": "github:aliceisjustplaying/ghostty-web#8c02b065cd8a9e4cf7ea711f5a2cb3ed61a15ca5",
+     "htm": "3.1.1",
+     "js-yaml": "^4.1.1",
+     "katex": "0.16.38",
