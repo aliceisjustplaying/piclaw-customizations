@@ -1,4 +1,4 @@
-# piclaw-mods
+# piclaw-customizations
 
 Patches, extensions, and maintenance scripts for a [PiClaw](https://github.com/rcarmo/piclaw) instance.
 
@@ -8,43 +8,40 @@ The deployment checkout lives at `/workspace/src/piclaw-live`. For clean upstrea
 
 ```
 patches/                          # Source patches applied before build
-├── 01-session-system-prompt.patch      # Load ~/.pi/agent/SYSTEM.md as system prompt
-├── 02-bootstrap-broadcast-event.patch  # Expose broadcastEvent to extensions
-├── 03-dispatch-codex-endpoints.patch   # /agent/codex/stop & /dismiss endpoints
-├── 04-web-codex-action-handler.patch   # Web UI action handlers for codex widgets
-├── 05-web-update-autocomplete.patch    # /update and /fast in slash command autocomplete
-├── 06-terminal-dock-and-popout-fixes.patch # Terminal dock sizing/rendering/reattach fixes
-├── 07-dream-model-override.patch          # Dream model override via PICLAW_DREAM_MODEL env var
-├── 08-webauthn-enrol-regex-fix.patch
-├── 09-terminal-resolve-binaries-from-path.patch
-├── 10-extension-ui-error-details.patch
+├── 01-session-system-prompt.patch
+├── 02-bootstrap-broadcast-event.patch
+├── 04-web-codex-action-handler.patch
+├── 05-web-update-autocomplete.patch
+├── 06-terminal-dock-and-popout-fixes.patch
 ├── 11-db-lazy-init-for-extension-module-graph.patch
-├── 15-web-rebuild-autocomplete.patch         # Add /rebuild to slash command autocomplete
-├── 16-terminal-dock-reopen-cleanly.patch     # Preserve dock terminal frontend state across hide/reopen
-├── 17-terminal-detach-listeners-on-reopen.patch # Detach event listeners before reinstalling them on dock reopen
-├── 18-agent-debug-handler-count-types.patch   # Fix upstream /agent/debug type inference for current TypeScript
-├── verify-patches.sh                   # Check patches against latest upstream
-├── regenerate-patches.sh               # Regenerate patches from deployed files
-└── README.md                           # Patch documentation
+├── 15-web-rebuild-autocomplete.patch
+├── verify-patches.sh
+├── regenerate-patches.sh
+└── README.md                     # Patch documentation and terminal patch outcomes
 
 patches/post-install/             # Post-install patches (applied inside the staged source checkout)
-└── 01-jiti-trynative-bun-runtime.sh  # Fix jiti extension loading under Bun runtime
+├── 01-jiti-trynative-bun-runtime.sh
+└── 02-context-usage-from-session-context.sh
 
 extensions/codex-delegate/        # PiClaw extension
-└── index.ts                          # Multi-task Codex delegation with live widgets
+└── index.ts                      # Multi-task Codex delegation with live widgets
 
-extensions/pi-openai-fast/       # Installed third-party Pi extension package
-├── extensions/index.ts              # Implements /fast via service_tier=priority
+extensions/pi-openai-fast/        # Installed third-party Pi extension package
+├── extensions/index.ts           # Implements /fast via service_tier=priority
 ├── package.json
 └── README.md
 
-configs/pi-openai-fast.json      # Project config for the fast-mode package
-SYSTEM.append.md                 # Durable custom instructions appended to generated SYSTEM.md
+configs/pi-openai-fast.json       # Project config for the fast-mode package
+SYSTEM.append.md                  # Durable custom instructions appended to generated SYSTEM.md
 
 scripts/                          # Maintenance scripts
-├── piclaw-update.sh                  # Full update: refresh cache → patch → build → activate live checkout
-├── piclaw-rollback.sh                # Swap piclaw-live.previous back into place and restart
-└── piclaw-refresh-system-prompt      # Regenerate SYSTEM.md from the live checkout
+├── piclaw-update.sh              # Full update: refresh cache → patch → build → activate
+├── piclaw-update-host.sh         # Host-side wrapper (systemd transient unit)
+├── piclaw-verify-deploy.sh       # Verify a candidate without activating
+├── piclaw-rollback.sh            # Swap piclaw-live.previous back and restart
+├── piclaw-rollback-host.sh       # Host-side rollback wrapper
+├── piclaw-healthcheck.sh         # Post-restart health check
+└── piclaw-refresh-system-prompt  # Regenerate SYSTEM.md from the live checkout
 ```
 
 ## Patches
@@ -53,26 +50,36 @@ scripts/                          # Maintenance scripts
 
 Applied to the [rcarmo/piclaw](https://github.com/rcarmo/piclaw) source tree before building. The update script handles this automatically.
 
-| # | File | Purpose |
-|---|------|---------|
+| # | File(s) | Purpose |
+|---|---------|---------|
 | 01 | `runtime/src/agent-pool/session.ts` | Load `~/.pi/agent/SYSTEM.md` as the agent system prompt |
 | 02 | `runtime/src/runtime/bootstrap.ts` | Wire `broadcastEvent` on `globalThis` for extensions |
-| 03 | `runtime/src/channels/web/http/dispatch-agent.ts` | Add `/agent/codex/stop` and `/agent/codex/dismiss` HTTP endpoints with correct chat targeting and NixOS-safe `tmux` resolution |
-| 04 | `runtime/web/src/ui/app-extension-status.ts`, `runtime/web/src/ui/app-sidepanel-orchestration.ts` | Handle Codex panel actions in the web UI, send `chat_jid` on cancel, and dismiss panels locally |
+| 04 | `dispatch-agent.ts`, `app-extension-status.ts`, `app-sidepanel-orchestration.ts`, `app-main-action-composition.ts` | Codex stop/dismiss endpoints, web UI action handlers, `setExtensionStatusPanels` plumbing |
 | 05 | `runtime/web/src/components/compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete |
-| 06 | Terminal dock/popout fixes | Fix terminal dock sizing/rendering, standalone dock fill, popout→dock reattach |
-| ~~07~~ | *(merged upstream — PR #25)* | |
-| ~~08~~ | *(merged upstream — PR #23)* | |
-| ~~09~~ | *(merged upstream — PR #24)* | |
-| ~~10~~ | *(merged upstream — commit `4fcd82d`)* | |
-| 11 | DB lazy init for extension module graph | Ensure Jiti-loaded extension code can initialize and use the DB singleton on first access |
-| ~~12~~ | *(merged upstream — commit `071e2f4c`)* | |
-| ~~13~~ | *(merged upstream — PR #27)* | |
-| ~~14~~ | *(merged upstream)* | |
+| 06 | `terminal-pane.ts`, `app-main-shell-render.ts`, `editor.css` | Terminal dock sizing/layout improvements and standalone dock fill |
+| 11 | `runtime/src/db/connection.ts` | Lazy DB init for Jiti-loaded extension module graphs |
 | 15 | `runtime/web/src/components/compose-box.ts` | Add `/rebuild` to slash command autocomplete |
-| 16 | `runtime/web/src/ui/app-pane-runtime-orchestration.ts` | Keep the dock terminal pane mounted while hidden so reopening stays clean |
-| 17 | `runtime/web/src/panes/terminal-pane.ts` | Detach event listeners before reinstalling on dock reopen (prevents duplicate observers) |
-| 18 | `runtime/src/channels/web/agent/agent-debug.ts` | Fix current upstream TypeScript inference so `/agent/debug` builds cleanly |
+
+### Retired patches
+
+Numbering is preserved so the next new patch is **20**.
+
+| # | Status | Reason |
+|---|--------|--------|
+| ~~03~~ | Removed | Was a subset of 04 |
+| ~~07~~ | Merged upstream | PR #25 |
+| ~~08~~ | Merged upstream | PR #23 |
+| ~~09~~ | Merged upstream | PR #24 |
+| ~~10~~ | Merged upstream | Commit `4fcd82d` |
+| ~~12~~ | Merged upstream | Commit `071e2f4c` |
+| ~~13~~ | Merged upstream | PR #27 |
+| ~~14~~ | Merged upstream | — |
+| ~~16~~ | Retired locally | Reusing dock terminal instance across hide/show broke reopen |
+| ~~17~~ | Retired locally | Listener detach on reopen caused garbled/stale redraw |
+| ~~18~~ | Merged upstream | PR #31 |
+| ~~19~~ | Retired locally | Reconnect-on-reopen path was too invasive |
+
+See `patches/README.md` for detailed terminal patch outcomes.
 
 ### Post-install patches
 
@@ -80,35 +87,10 @@ Applied after `bun install --ignore-scripts` inside the staged source checkout. 
 
 | # | Script | Purpose |
 |---|--------|---------|
-| 01 | `01-jiti-trynative-bun-runtime.sh` | Fix `pi-coding-agent` extension loader for Bun runtime |
+| 01 | `01-jiti-trynative-bun-runtime.sh` | Fix jiti extension loader for Bun runtime |
+| 02 | `02-context-usage-from-session-context.sh` | Context usage from session context |
 
-**The jiti patch:** When PiClaw runs under Bun (non-binary), jiti's `tryNative` defaults to `true`, causing Bun's native resolver to handle imports before jiti can apply its alias map. Extensions that import `@mariozechner/*` peer dependencies fail with `Cannot find module`. The patch:
-1. Adds `isBunRuntime` to the import from `config.js`
-2. Sets `tryNative: false` when `isBunRuntime` is true
-
-Patches the staged checkout's top-level `node_modules` copy and a nested `piclaw/node_modules` copy if one exists. Idempotent — safe to run on every update. Remove once fixed upstream in `pi-coding-agent`.
-
-### Environment variables
-
-| Variable | Default | Purpose |
-|----------|---------|----------|
-| `PICLAW_DREAM_MODEL` | *(unset — inherits session model)* | Model identifier for the nightly Dream task, e.g. `claude-sonnet-4-6` |
-
-### Verifying patches
-
-```bash
-./patches/verify-patches.sh
-```
-
-This uses strict `git apply --check`, so the first reject is a real drift signal rather than a fuzzy apply.
-
-### Regenerating patches from deployed code
-
-```bash
-./patches/regenerate-patches.sh
-```
-
-> **Note:** Patch 04, 05, 06, 15, 16, and 17 modify web source that ships only as a compiled bundle — they can't be regenerated from deployed files, only verified against upstream.
+**The jiti patch:** When PiClaw runs under Bun (non-binary), jiti's `tryNative` defaults to `true`, causing Bun's native resolver to handle imports before jiti can apply its alias map. Extensions that import `@mariozechner/*` peer dependencies fail with `Cannot find module`. The patch adds `isBunRuntime` to the import from `config.js` and sets `tryNative: false` when `isBunRuntime` is true. Idempotent — safe to run on every update. Remove once fixed upstream in `pi-coding-agent`.
 
 ## Codex Delegate Extension
 
@@ -118,7 +100,7 @@ A PiClaw extension that delegates coding tasks to [OpenAI Codex CLI](https://git
 
 - **Multi-task**: Run multiple Codex tasks concurrently with independent widgets
 - **Live streaming**: JSONL polling every 2s, item counts (cmds/files/msgs), token usage
-- **Correct chat targeting**: Widgets attach to the active branch chat instead of falling back to `web:default`
+- **Correct chat targeting**: Widgets attach to the active branch chat
 - **NixOS-friendly binary resolution**: finds `codex`, `tmux`, and `bash` without relying on `which`
 - **Cancel & dismiss**: Cancel goes through the backend; dismiss is handled locally in the web UI
 - **Reattach**: Picks up running tmux sessions after restart
@@ -175,6 +157,9 @@ bash scripts/piclaw-update.sh --force --no-restart
 
 # Check for updates only
 bash scripts/piclaw-update.sh --dry-run
+
+# Validate without activating
+bash scripts/piclaw-update.sh --force --verify-only
 ```
 
 ### Update flow
