@@ -1,5 +1,5 @@
 diff --git a/runtime/src/agent-pool/session.ts b/runtime/src/agent-pool/session.ts
-index 51a0aef..c1f6817 100644
+index 74818054..c9a9a58d 100644
 --- a/runtime/src/agent-pool/session.ts
 +++ b/runtime/src/agent-pool/session.ts
 @@ -13,7 +13,7 @@
@@ -11,7 +11,7 @@ index 51a0aef..c1f6817 100644
  import { join, resolve, dirname } from "path";
  import { fileURLToPath } from "url";
  import {
-@@ -113,6 +113,13 @@ function getBundledExtensionPaths(): string[] {
+@@ -117,6 +117,14 @@ function getBundledExtensionPaths(): string[] {
    return paths;
  }
  
@@ -26,19 +26,19 @@ index 51a0aef..c1f6817 100644
  /** Ensure the session directory exists for a chat and return its path. */
  export function ensureSessionDir(chatJid: string): string {
    const chatSessionDir = join(SESSIONS_DIR, sanitiseJid(chatJid));
-@@ -145,6 +152,7 @@ export async function createSessionInDir(
-   }
- ): Promise<AgentSessionRuntime> {
+@@ -152,6 +160,7 @@ export async function createSessionInDir(
+   );
+ 
    const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
 +    const systemPrompt = getSystemPromptOverride();
      const services = await createAgentSessionServices({
        cwd,
        agentDir: getAgentDir(),
-@@ -154,6 +162,7 @@ export async function createSessionInDir(
+@@ -161,6 +170,7 @@ export async function createSessionInDir(
        resourceLoaderOptions: {
          extensionFactories: [...builtinExtensionFactories, ...(options.extensionFactories ?? [])],
          additionalExtensionPaths: getBundledExtensionPaths(),
 +        ...(systemPrompt ? { systemPrompt } : {}),
-       },
-     });
- 
+         ...(channelSystemPromptAppendix
+           ? {
+               appendSystemPromptOverride: (base: string[]) => [...base, channelSystemPromptAppendix],
