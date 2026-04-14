@@ -154,42 +154,6 @@ index 49476298..9a0630ff 100644
      supportsThinking: true,
      providerUsage: { prompt: 100 },
    });
-diff --git a/runtime/test/web/app-model-state.test.ts b/runtime/test/web/app-model-state.test.ts
-index f02c8594..56adc2a2 100644
---- a/runtime/test/web/app-model-state.test.ts
-+++ b/runtime/test/web/app-model-state.test.ts
-@@ -13,6 +13,7 @@ test('resolveModelStateUpdate normalizes model/thinking/supports/provider fields
-     model: 'gpt-5',
-     hasThinkingLevel: true,
-     thinkingLevel: 'high',
-+    thinkingLevelLabel: 'high',
-     hasSupportsThinking: true,
-     supportsThinking: true,
-     hasProviderUsage: true,
-@@ -26,6 +27,7 @@ test('resolveModelStateUpdate preserves nullish fallback semantics from app.ts',
-     model: undefined,
-     hasThinkingLevel: false,
-     thinkingLevel: null,
-+    thinkingLevelLabel: null,
-     hasSupportsThinking: false,
-     supportsThinking: false,
-     hasProviderUsage: false,
-@@ -37,6 +39,7 @@ test('resolveModelStateUpdate preserves nullish fallback semantics from app.ts',
-     model: null,
-     hasThinkingLevel: true,
-     thinkingLevel: null,
-+    thinkingLevelLabel: null,
-     hasSupportsThinking: true,
-     supportsThinking: false,
-     hasProviderUsage: true,
-@@ -48,6 +51,7 @@ test('resolveModelStateUpdate preserves nullish fallback semantics from app.ts',
-     model: undefined,
-     hasThinkingLevel: false,
-     thinkingLevel: null,
-+    thinkingLevelLabel: null,
-     hasSupportsThinking: false,
-     supportsThinking: false,
-     hasProviderUsage: false,
 diff --git a/runtime/test/web/compose-box.test.ts b/runtime/test/web/compose-box.test.ts
 index 497894de..2b8615c2 100644
 --- a/runtime/test/web/compose-box.test.ts

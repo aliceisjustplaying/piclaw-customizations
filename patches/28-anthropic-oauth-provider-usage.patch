@@ -1,18 +1,10 @@
---- runtime/src/agent-pool/provider-usage.ts
-+++ runtime/src/agent-pool/provider-usage.ts
-@@ -2,6 +2,8 @@
- 
- import { createLogger, debugSuppressedError } from "../utils/logger.js";
- 
+diff --git a/runtime/src/agent-pool/provider-usage.ts b/runtime/src/agent-pool/provider-usage.ts
+--- a/runtime/src/agent-pool/provider-usage.ts
++++ b/runtime/src/agent-pool/provider-usage.ts
+@@ -4,0 +5,2 @@
 +const ANTHROPIC_OAUTH_USAGE_BETA = "oauth-2025-04-20";
 +
- export interface ProviderUsageWindow {
-   label: string;
-   used_percent: number | null;
-@@ -11,8 +13,21 @@
-   reset_description: string | null;
- }
- 
+@@ -13,0 +16,13 @@
 +export interface ProviderExtraUsage {
 +  enabled: boolean;
 +  unlimited: boolean;
@@ -26,24 +18,12 @@
 +  hint_short: string | null;
 +}
 +
- export interface ProviderUsageSnapshot {
+@@ -15 +30 @@
 -  provider: "openai-codex" | "github-copilot";
 +  provider: "openai-codex" | "github-copilot" | "anthropic";
-   source: string;
-   plan: string | null;
-   fetched_at: string;
-@@ -20,6 +35,7 @@
-   secondary: ProviderUsageWindow | null;
-   credits_remaining: number | null;
-   credits_unlimited: boolean;
+@@ -22,0 +38 @@
 +  extra_usage: ProviderExtraUsage | null;
-   hint_short: string;
- }
- 
-@@ -88,6 +104,28 @@
-   return `${Math.round(value)}%`;
- }
- 
+@@ -90,0 +107,22 @@
 +function formatUsd(value: number | null): string | null {
 +  if (value == null || !Number.isFinite(value)) return null;
 +  const rendered = Number.isInteger(value)
@@ -66,13 +46,7 @@
 +  }
 +}
 +
- function buildCodexHint(
-   primary: ProviderUsageWindow | null,
-   secondary: ProviderUsageWindow | null,
-@@ -115,6 +153,93 @@
-   return parts.join(" • ");
- }
- 
+@@ -117,0 +156,87 @@
 +function buildExtraUsageHint(
 +  enabled: boolean,
 +  unlimited: boolean,
@@ -160,26 +134,11 @@
 +  return null;
 +}
 +
- async function getOAuthCredential(authStorage: AuthStorage, providerId: string): Promise<any | null> {
-   const current = (authStorage.get(providerId) as any) ?? null;
-   if (!current || current.type !== "oauth") return null;
-@@ -174,6 +299,7 @@
-     secondary,
-     credits_remaining: Number.isFinite(creditsRemaining) ? creditsRemaining : null,
-     credits_unlimited: creditsUnlimited,
+@@ -176,0 +302 @@
 +    extra_usage: null,
-     hint_short: buildCodexHint(primary, secondary, Number.isFinite(creditsRemaining) ? creditsRemaining : null, creditsUnlimited),
-   };
- }
-@@ -228,12 +354,96 @@
-     secondary,
-     credits_remaining: null,
-     credits_unlimited: false,
+@@ -230,0 +357 @@
 +    extra_usage: null,
-     hint_short: buildCopilotHint(primary, secondary),
-   };
- }
- 
+@@ -234,0 +362,83 @@
 +async function fetchAnthropicOAuthProfile(accessToken: string): Promise<any | null> {
 +  const res = await fetch("https://api.anthropic.com/api/oauth/profile", {
 +    headers: {
@@ -263,29 +222,18 @@
 +  };
 +}
 +
- export async function getProviderUsage(authStorage: AuthStorage, providerId: string): Promise<ProviderUsageSnapshot | null> {
+@@ -236 +446 @@
 -  if (providerId !== "openai-codex" && providerId !== "github-copilot") return null;
 +  if (providerId !== "openai-codex" && providerId !== "github-copilot" && providerId !== "anthropic") return null;
- 
-   const cached = usageCache.get(providerId);
-   if (cached && cached.expiresAt > Date.now()) {
-@@ -244,7 +454,9 @@
-   try {
-     value = providerId === "openai-codex"
-       ? await fetchCodexUsage(authStorage)
+@@ -247 +457,3 @@
 -      : await fetchGitHubCopilotUsage(authStorage);
 +      : providerId === "github-copilot"
 +        ? await fetchGitHubCopilotUsage(authStorage)
 +        : await fetchAnthropicUsage(authStorage);
-   } catch (error) {
-     debugSuppressedError(log, "Provider usage refresh failed; returning the cached usage snapshot when available.", error, {
-       providerId,
---- runtime/test/agent-pool/provider-usage.test.ts
-+++ runtime/test/agent-pool/provider-usage.test.ts
-@@ -113,6 +113,127 @@
-     }
-   });
- 
+diff --git a/runtime/test/agent-pool/provider-usage.test.ts b/runtime/test/agent-pool/provider-usage.test.ts
+--- a/runtime/test/agent-pool/provider-usage.test.ts
++++ b/runtime/test/agent-pool/provider-usage.test.ts
+@@ -115,0 +116,121 @@
 +  test("fetches Anthropic usage from the OAuth usage API", async () => {
 +    const fetchMock = mock(async (input: RequestInfo | URL) => {
 +      const url = String(input);
@@ -407,26 +355,12 @@
 +    }
 +  });
 +
-   test("returns null for unsupported providers", async () => {
-     const usage = await getProviderUsage(createAuthStorage({}), "openai");
-     expect(usage).toBeNull();
---- runtime/web/src/components/compose-box.ts
-+++ runtime/web/src/components/compose-box.ts
-@@ -711,6 +711,9 @@
-     const modelHintSuffix = supportsThinking && thinkingLevel ? ` (${thinkingLevel})` : '';
-     const modelThinkingLabel = modelHintSuffix.trim() ? `${thinkingLevel}` : '';
-     const modelUsageLabel = typeof modelUsage?.hint_short === 'string' ? modelUsage.hint_short.trim() : '';
+diff --git a/runtime/web/src/components/compose-box.ts b/runtime/web/src/components/compose-box.ts
+--- a/runtime/web/src/components/compose-box.ts
++++ b/runtime/web/src/components/compose-box.ts
+@@ -713,0 +714,3 @@
 +    const modelExtraUsageResetLabel = typeof modelUsage?.extra_usage?.reset_description === 'string'
 +        ? modelUsage.extra_usage.reset_description.trim()
 +        : '';
-     const modelUsageSectionLabel = [
-         modelThinkingLabel || null,
-         modelUsageLabel || null,
-@@ -721,6 +724,7 @@
-         modelUsageLabel || null,
-         modelUsage?.primary?.reset_description || null,
-         modelUsage?.secondary?.reset_description || null,
+@@ -723,0 +727 @@
 +        modelExtraUsageResetLabel || null,
-     ].filter(Boolean);
-     const modelHintTitle = switchingModel
-         ? 'Switching model…'
