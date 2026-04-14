@@ -3,6 +3,12 @@
 Applied to the piclaw source **before building** via `git apply` (strict mode, no fuzzy matching).
 The update script handles this automatically.
 
+Automation helpers in this directory:
+- `audit-upstream.sh` — classify every active patch as `needed`, `upstreamed`, `drifted`, or `blocked`
+- `watch-upstream-prs.sh` — poll only opt-in upstream PRs from `manifest.json` and rerun the audit when one merges
+- `manifest.json` — patch metadata; `track_upstream` is opt-in so patches with no upstream intent stay out of PR polling
+- `.state/` — ignored local cache of last-seen upstream SHA and PR states
+
 ## Active patches
 
 | # | File(s) | Purpose |
@@ -53,6 +59,28 @@ Numbering preserved — next new patch is **29**.
 ```bash
 ./patches/verify-patches.sh
 ```
+
+## Audit upstream drift / retirement
+
+```bash
+./patches/audit-upstream.sh
+```
+
+Behavior:
+- `needed` — patch still applies forward and should stay active
+- `upstreamed` — patch applies in reverse and is a retire candidate
+- `drifted` — patch needs manual refresh
+- `blocked` — an earlier patch drifted, so later results are intentionally withheld
+
+## Watch tracked upstream PRs
+
+```bash
+./patches/watch-upstream-prs.sh
+```
+
+`watch-upstream-prs.sh` only polls patches marked with `"track_upstream": true` in `manifest.json`.
+Use that for patches we actually intend to upstream; leave local-only patches at `false`.
+When a tracked PR transitions to merged, the watcher reruns `audit-upstream.sh` immediately.
 
 ## Post-install patches
 

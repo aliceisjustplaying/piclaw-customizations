@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "github_repo": "rcarmo/piclaw",
+  "patches": {
+    "01": {
+      "name": "session-system-prompt",
+      "track_upstream": false,
+      "upstream_prs": []
+    },
+    "02": {
+      "name": "bootstrap-broadcast-event",
+      "track_upstream": false,
+      "upstream_prs": []
+    },
+    "04": {
+      "name": "web-codex-action-handler",
+      "track_upstream": false,
+      "upstream_prs": []
+    },
+    "05": {
+      "name": "web-update-autocomplete",
+      "track_upstream": false,
+      "upstream_prs": []
+    },
+    "11": {
+      "name": "db-lazy-init-for-extension-module-graph",
+      "track_upstream": false,
+      "upstream_prs": []
+    },
+    "15": {
+      "name": "web-rebuild-autocomplete",
+      "track_upstream": false,
+      "upstream_prs": []
+    },
+    "24": {
+      "name": "pin-ghostty-web-fork-for-vendoring",
+      "track_upstream": false,
+      "upstream_prs": []
+    },
+    "28": {
+      "name": "anthropic-oauth-provider-usage",
+      "track_upstream": false,
+      "upstream_prs": []
+    }
+  }
+}

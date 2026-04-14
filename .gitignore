@@ -1,4 +1,5 @@
 node_modules/
+patches/.state/
 *.swp
 *.swo
 .DS_Store

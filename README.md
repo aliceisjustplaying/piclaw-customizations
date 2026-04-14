@@ -12,6 +12,9 @@ patches/                          # Source patches applied before build
 ├── *.patch                       # Active source patches (see patches/README.md)
 ├── retired/                      # Retired patches kept for history/reference
 ├── post-install/                 # Post-install dependency patches
+├── manifest.json                 # Patch metadata; upstream PR polling is opt-in per patch
+├── audit-upstream.sh             # Classify active patches against upstream (needed/upstreamed/drifted)
+├── watch-upstream-prs.sh         # Poll tracked upstream PRs and rerun the audit on merge
 ├── verify-patches.sh
 ├── regenerate-patches.sh
 └── README.md
@@ -35,13 +38,18 @@ scripts/
 
 ## Patches
 
-See [`patches/README.md`](patches/README.md) for the full patch table, retired patches, and terminal patch outcomes.
+See [`patches/README.md`](patches/README.md) for the full patch table, retired patches, terminal patch outcomes, and upstream-audit automation.
 
 Active source patches: `01`, `02`, `04`, `05`, `11`, `15`, `24`, `28`
 Retired after upstream merge: `20`, `21`, `22`, `23`, `25`, `26`, `27` (stored under `patches/retired/`)
 Superseded locally: `06` (`patches/06-terminal-dock-and-popout-fixes.patch.superseded`)
 Post-install patches: `01` (jiti/Bun fix), `02` (context usage)
 Next available number: **29**
+
+Upstream maintenance helpers:
+- `./patches/audit-upstream.sh` audits every active patch against current upstream
+- `./patches/watch-upstream-prs.sh` polls only patches with `"track_upstream": true` in `patches/manifest.json`
+- local watcher/audit state is cached under ignored `patches/.state/`
 
 ## Codex Delegate Extension
 
