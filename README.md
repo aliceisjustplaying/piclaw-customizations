@@ -21,7 +21,7 @@ extensions/
 └── pi-openai-fast/               # /fast toggle (service_tier=priority)
 
 configs/pi-openai-fast.json       # Project config for fast-mode
-SYSTEM.append.md                  # Custom instructions appended to SYSTEM.md
+SYSTEM.base.md                    # Exact text installed to ~/.pi/agent/SYSTEM.md
 
 scripts/
 ├── piclaw-update.sh              # Full update: cache → patch → build → activate
@@ -37,11 +37,11 @@ scripts/
 
 See [`patches/README.md`](patches/README.md) for the full patch table, retired patches, and terminal patch outcomes.
 
-Active source patches: `01`, `02`, `04`, `05`, `11`, `15`, `24`
+Active source patches: `01`, `02`, `04`, `05`, `11`, `15`, `24`, `25`
 Retired after upstream merge: `20`, `21`, `22`, `23` (stored under `patches/retired/`)
 Superseded locally: `06` (`patches/06-terminal-dock-and-popout-fixes.patch.superseded`)
 Post-install patches: `01` (jiti/Bun fix), `02` (context usage)
-Next available number: **25**
+Next available number: **26**
 
 ## Codex Delegate Extension
 
@@ -70,12 +70,10 @@ verify-deploy                 # validate candidate without activating
 rollback                      # swap piclaw-live.previous back
 ```
 
-The update script refreshes the upstream cache, applies patches with strict `git apply`, builds server + web, validates the candidate, activates it, deploys extensions, regenerates SYSTEM.md, updates the global `pi-coding-agent` CLI, and updates companion CLIs.
+The update script refreshes the upstream cache, applies patches with strict `git apply`, builds server + web, validates the candidate, activates it, deploys extensions, installs the fixed SYSTEM.md template, updates the global `pi-coding-agent` CLI, and updates companion CLIs.
 
 ## System Prompt
 
-`scripts/piclaw-refresh-system-prompt` generates `~/.pi/agent/SYSTEM.md` from the live checkout's `pi-coding-agent`, rewrites `~/.local/bin/pi` to prefer the live bundled CLI with a global fallback, then appends:
+`scripts/piclaw-refresh-system-prompt` installs `SYSTEM.base.md` verbatim as `~/.pi/agent/SYSTEM.md`, with no local or repo append layers, and rewrites `~/.local/bin/pi` to prefer the live bundled CLI with a global fallback.
 
-1. `SYSTEM.append.md` (this repo)
-2. `~/.pi/agent/SYSTEM.local.md`
-3. `/workspace/.pi/SYSTEM.local.md`
+The single canonical `AGENTS.md` for Pix lives in `/workspace/src/pix/AGENTS.md`; `/workspace/AGENTS.md` should point to that tracked file.

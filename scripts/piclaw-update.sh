@@ -494,9 +494,9 @@ validate_candidate() {
 }
 
 stage_system_prompt() {
-  status "Staging SYSTEM.md from candidate"
+  status "Staging SYSTEM.md from template"
   if ! regenerate_system_prompt_from_root "${SOURCE_DIR}" "${STAGED_SYSTEM_PROMPT}"; then
-    error "Failed to stage SYSTEM.md from the candidate checkout"
+    error "Failed to stage SYSTEM.md"
     exit 1
   fi
 

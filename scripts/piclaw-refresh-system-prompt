@@ -3,99 +3,57 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PICLAW_LIVE_ROOT="${PICLAW_LIVE_ROOT:-/workspace/src/piclaw-live}"
 PICLAW_SYSTEM_PROMPT_OUT="${PICLAW_SYSTEM_PROMPT_OUT:-/home/agent/.pi/agent/SYSTEM.md}"
 
-run_prompt_builder() {
-  local cli="${PICLAW_LIVE_ROOT}/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
-  if [ ! -f "${cli}" ]; then
-    echo "piclaw-refresh-system-prompt: pi-coding-agent CLI not found at ${cli}" >&2
+write_system_prompt() {
+  local template="${REPO_DIR}/SYSTEM.base.md"
+  local out="${PICLAW_SYSTEM_PROMPT_OUT}"
+  local pi_bin="${HOME}/.local/bin/pi"
+  local bundled_cli="/workspace/src/piclaw-live/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
+  local global_cli="${HOME}/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
+
+  if [ ! -f "${template}" ]; then
+    echo "piclaw-refresh-system-prompt: missing template ${template}" >&2
     exit 1
   fi
 
-  env \
-    HOME=/home/agent \
-    PICLAW_CUSTOMIZATIONS_DIR="${REPO_DIR}" \
-    PICLAW_LIVE_ROOT="${PICLAW_LIVE_ROOT}" \
-    PICLAW_SYSTEM_PROMPT_OUT="${PICLAW_SYSTEM_PROMPT_OUT}" \
-    node --input-type=module -e '
-import { chmodSync, mkdirSync, realpathSync, writeFileSync, existsSync, readFileSync, lstatSync, unlinkSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
-const cli = realpathSync(process.argv[1]);
-const pkg = dirname(dirname(cli));
-const { buildSystemPrompt } = await import(pathToFileURL(join(pkg, "dist/core/system-prompt.js")).href);
-const { createAllToolDefinitions } = await import(pathToFileURL(join(pkg, "dist/core/tools/index.js")).href);
-const defs = createAllToolDefinitions(process.cwd());
-const names = ["read", "bash", "edit", "write"];
-const toolSnippets = Object.fromEntries(names.map((n) => [n, defs[n]?.promptSnippet]).filter(([, v]) => v));
-const promptGuidelines = names.flatMap((n) => defs[n]?.promptGuidelines ?? []);
-let s = buildSystemPrompt({ selectedTools: names, toolSnippets, promptGuidelines, cwd: process.cwd() })
-  .replace(/\nCurrent date:.*\nCurrent working directory:.*$/s, "")
-  .replace("Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):", "Pi documentation (read this only for pi-specific questions):");
+  mkdir -p "$(dirname "${out}")"
+  install -m 0644 "${template}" "${out}"
 
-const stableDocsRoot = join(process.env.PICLAW_LIVE_ROOT, "node_modules/@mariozechner/pi-coding-agent");
-s = s
-  .replace(/- Main documentation: .*/g, `- Main documentation: ${join(stableDocsRoot, "README.md")}`)
-  .replace(/- Additional docs: .*/g, `- Additional docs: ${join(stableDocsRoot, "docs")}`)
-  .replace(/- Examples: .* \(extensions, custom tools, SDK\)/g, `- Examples: ${join(stableDocsRoot, "examples")} (extensions, custom tools, SDK)`);
-
-const overlayPaths = [
-  join(process.env.PICLAW_CUSTOMIZATIONS_DIR, "SYSTEM.append.md"),
-  join(process.env.HOME, ".pi/agent/SYSTEM.local.md"),
-  "/workspace/.pi/SYSTEM.local.md",
-];
-
-for (const path of overlayPaths) {
-  if (!existsSync(path)) continue;
-  const content = readFileSync(path, "utf-8").trim();
-  if (!content) continue;
-  s += `\n\n---\n\n${content}`;
-}
-
-const out = process.env.PICLAW_SYSTEM_PROMPT_OUT || join(process.env.HOME, ".pi/agent/SYSTEM.md");
-mkdirSync(dirname(out), { recursive: true });
-writeFileSync(out, s + "\n");
-
-const piBin = join(process.env.HOME, ".local/bin/pi");
-const stableLiveRoot = "/workspace/src/piclaw-live";
-const bundledCli = join(stableLiveRoot, "node_modules/@mariozechner/pi-coding-agent/dist/cli.js");
-const globalCli = join(process.env.HOME, ".bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/cli.js");
-const launcher = `#!/usr/bin/env bash
+  mkdir -p "$(dirname "${pi_bin}")"
+  rm -f "${pi_bin}"
+  cat >"${pi_bin}" <<EOF
+#!/usr/bin/env bash
 set -euo pipefail
 
-bundled_cli=${JSON.stringify(bundledCli)}
-global_cli=${JSON.stringify(globalCli)}
+bundled_cli="${bundled_cli}"
+global_cli="${global_cli}"
 
-if [ -f "$bundled_cli" ]; then
-  exec node "$bundled_cli" "$@"
+if [ -f "\$bundled_cli" ]; then
+  exec node "\$bundled_cli" "\$@"
 fi
 
-if [ -f "$global_cli" ]; then
-  exec node "$global_cli" "$@"
+if [ -f "\$global_cli" ]; then
+  exec node "\$global_cli" "\$@"
 fi
 
 echo "pi launcher: no pi-coding-agent CLI found in bundled or global locations" >&2
 exit 1
-`;
-mkdirSync(dirname(piBin), { recursive: true });
-if (existsSync(piBin) && lstatSync(piBin).isSymbolicLink()) unlinkSync(piBin);
-writeFileSync(piBin, launcher);
-chmodSync(piBin, 0o755);
-console.log(out);
-' "$cli"
+EOF
+  chmod 0755 "${pi_bin}"
+
+  printf '%s\n' "${out}"
 }
 
 if [ "$(id -un)" = "agent" ]; then
-  run_prompt_builder
+  write_system_prompt
   exit 0
 fi
 
-command_string="$(declare -f run_prompt_builder)
+command_string="$(declare -f write_system_prompt)
 REPO_DIR=$(printf '%q' "${REPO_DIR}")
-PICLAW_LIVE_ROOT=$(printf '%q' "${PICLAW_LIVE_ROOT}")
 PICLAW_SYSTEM_PROMPT_OUT=$(printf '%q' "${PICLAW_SYSTEM_PROMPT_OUT}")
-run_prompt_builder"
+write_system_prompt"
 
 exec sudo -u agent -H env \
   PATH="/home/agent/.local/bin:/home/agent/.bun/bin:/usr/local/bin:/run/wrappers/bin:/run/current-system/sw/bin" \
