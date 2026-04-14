@@ -280,7 +280,7 @@ index 3a323750..17d4eeee 100644
        });
      }
 diff --git a/runtime/web/src/components/compose-box.ts b/runtime/web/src/components/compose-box.ts
-index fdcbf222..f9a16d45 100644
+index fdcbf222..5be62479 100644
 --- a/runtime/web/src/components/compose-box.ts
 +++ b/runtime/web/src/components/compose-box.ts
 @@ -18,7 +18,8 @@ import { refreshAgentModelStateBestEffort } from './compose-model-refresh.js';
@@ -293,7 +293,15 @@ index fdcbf222..f9a16d45 100644
    { name: "/cycle-thinking", description: "Cycle thinking level" },
    { name: "/theme", description: "Set UI theme (no name to show available themes)" },
    { name: "/meters", description: "Toggle the top-right CPU/RAM HUD (/meters on|off|toggle)" },
-@@ -974,6 +975,7 @@ export function ComposeBox({
+@@ -710,6 +711,7 @@ export function ComposeBox({
+             onModelStateChange({
+                 model: modelLabel ?? null,
+                 thinking_level: payload.thinking_level ?? null,
++                thinking_level_label: payload.thinking_level_label ?? null,
+                 supports_thinking: payload.supports_thinking,
+                 provider_usage: payload.provider_usage ?? null,
+             });
+@@ -974,6 +976,7 @@ export function ComposeBox({
              emitModelState({
                  model: nextModel ?? activeModel ?? null,
                  thinking_level: response?.command?.thinking_level,
@@ -301,7 +309,7 @@ index fdcbf222..f9a16d45 100644
                  supports_thinking: response?.command?.supports_thinking,
              });
              await refreshAgentModelStateBestEffort(getAgentModels, currentChatJid, emitModelState);
-@@ -1162,6 +1164,7 @@ export function ComposeBox({
+@@ -1162,6 +1165,7 @@ export function ComposeBox({
                      emitModelState({
                          model: response.command.model_label ?? activeModel ?? null,
                          thinking_level: response.command.thinking_level,
