@@ -70,11 +70,11 @@ verify-deploy                 # validate candidate without activating
 rollback                      # swap piclaw-live.previous back
 ```
 
-The update script refreshes the upstream cache, applies patches with strict `git apply`, builds server + web, validates the candidate, activates it, deploys extensions, regenerates SYSTEM.md, and updates companion CLIs.
+The update script refreshes the upstream cache, applies patches with strict `git apply`, builds server + web, validates the candidate, activates it, deploys extensions, regenerates SYSTEM.md, updates the global `pi-coding-agent` CLI, and updates companion CLIs.
 
 ## System Prompt
 
-`scripts/piclaw-refresh-system-prompt` generates `~/.pi/agent/SYSTEM.md` from the live checkout's `pi-coding-agent`, then appends:
+`scripts/piclaw-refresh-system-prompt` generates `~/.pi/agent/SYSTEM.md` from the live checkout's `pi-coding-agent`, rewrites `~/.local/bin/pi` to prefer the live bundled CLI with a global fallback, then appends:
 
 1. `SYSTEM.append.md` (this repo)
 2. `~/.pi/agent/SYSTEM.local.md`

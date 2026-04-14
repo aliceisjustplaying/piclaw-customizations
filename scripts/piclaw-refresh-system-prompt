@@ -19,7 +19,7 @@ run_prompt_builder() {
     PICLAW_LIVE_ROOT="${PICLAW_LIVE_ROOT}" \
     PICLAW_SYSTEM_PROMPT_OUT="${PICLAW_SYSTEM_PROMPT_OUT}" \
     node --input-type=module -e '
-import { mkdirSync, realpathSync, writeFileSync, symlinkSync, existsSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, realpathSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 const cli = realpathSync(process.argv[1]);
@@ -56,9 +56,30 @@ for (const path of overlayPaths) {
 const out = process.env.PICLAW_SYSTEM_PROMPT_OUT || join(process.env.HOME, ".pi/agent/SYSTEM.md");
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(out, s + "\n");
+
 const piBin = join(process.env.HOME, ".local/bin/pi");
+const bundledCli = join(process.env.PICLAW_LIVE_ROOT, "node_modules/@mariozechner/pi-coding-agent/dist/cli.js");
+const globalCli = join(process.env.HOME, ".bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/cli.js");
+const launcher = `#!/usr/bin/env bash
+set -euo pipefail
+
+bundled_cli=${JSON.stringify(bundledCli)}
+global_cli=${JSON.stringify(globalCli)}
+
+if [ -f "$bundled_cli" ]; then
+  exec node "$bundled_cli" "$@"
+fi
+
+if [ -f "$global_cli" ]; then
+  exec node "$global_cli" "$@"
+fi
+
+echo "pi launcher: no pi-coding-agent CLI found in bundled or global locations" >&2
+exit 1
+`;
 mkdirSync(dirname(piBin), { recursive: true });
-if (!existsSync(piBin)) symlinkSync(join(pkg, "dist/cli.js"), piBin);
+writeFileSync(piBin, launcher);
+chmodSync(piBin, 0o755);
 console.log(out);
 ' "$cli"
 }

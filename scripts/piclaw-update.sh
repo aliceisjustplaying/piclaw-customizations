@@ -37,6 +37,9 @@ CLAUDE_VERSION_AFTER=""
 PI_AGENT_VERSION_BEFORE=""
 PI_AGENT_VERSION_AFTER=""
 
+GLOBAL_PI_AGENT_VERSION_BEFORE=""
+GLOBAL_PI_AGENT_VERSION_AFTER=""
+
 status() {
   printf '[piclaw-update] %s\n' "$*"
 }
@@ -504,6 +507,7 @@ capture_tool_versions_before_updates() {
   CODEX_VERSION_BEFORE="$(get_codex_version)"
   CLAUDE_VERSION_BEFORE="$(get_claude_version)"
   PI_AGENT_VERSION_BEFORE="$(get_current_pi_agent_version)"
+  GLOBAL_PI_AGENT_VERSION_BEFORE="$(get_global_pi_agent_version)"
 }
 
 update_codex_cli() {
@@ -538,6 +542,22 @@ update_claude_cli() {
 
   CLAUDE_VERSION_AFTER="$(get_claude_version)"
   status "$(update_report_line "Claude" "${CLAUDE_VERSION_BEFORE}" "${CLAUDE_VERSION_AFTER}")"
+}
+
+update_global_pi_agent_cli() {
+  if ! command -v bun >/dev/null 2>&1; then
+    GLOBAL_PI_AGENT_VERSION_AFTER="${GLOBAL_PI_AGENT_VERSION_BEFORE}"
+    status "Global pi-coding-agent update skipped (bun not installed)"
+    return 0
+  fi
+
+  status "Updating global pi-coding-agent CLI"
+  if ! quiet bun add -g @mariozechner/pi-coding-agent@latest; then
+    status "Global pi-coding-agent update failed; continuing"
+  fi
+
+  GLOBAL_PI_AGENT_VERSION_AFTER="$(get_global_pi_agent_version)"
+  status "$(update_report_line "Global pi-coding-agent" "${GLOBAL_PI_AGENT_VERSION_BEFORE}" "${GLOBAL_PI_AGENT_VERSION_AFTER}")"
 }
 
 apply_post_install_patches() {
@@ -604,12 +624,13 @@ format_summary_version() {
 }
 
 print_summary_report() {
-  local piclaw_line codex_line claude_line pi_agent_line
+  local piclaw_line codex_line claude_line bundled_pi_agent_line global_pi_agent_line
 
   piclaw_line="$(format_summary_version "${PICLAW_VERSION_BEFORE}" "${PICLAW_VERSION_AFTER}")"
   codex_line="$(format_summary_version "${CODEX_VERSION_BEFORE}" "${CODEX_VERSION_AFTER}")"
   claude_line="$(format_summary_version "${CLAUDE_VERSION_BEFORE}" "${CLAUDE_VERSION_AFTER}")"
-  pi_agent_line="$(format_summary_version "${PI_AGENT_VERSION_BEFORE}" "${PI_AGENT_VERSION_AFTER}")"
+  bundled_pi_agent_line="$(format_summary_version "${PI_AGENT_VERSION_BEFORE}" "${PI_AGENT_VERSION_AFTER}")"
+  global_pi_agent_line="$(format_summary_version "${GLOBAL_PI_AGENT_VERSION_BEFORE}" "${GLOBAL_PI_AGENT_VERSION_AFTER}")"
 
   printf '═══════════════════════════════════════════════════════\n'
   printf '  PiClaw Update Report\n'
@@ -618,7 +639,8 @@ print_summary_report() {
   printf '           https://github.com/rcarmo/piclaw/commit/%s\n' "${PICLAW_COMMIT_AFTER}"
   printf '  Codex:   %s\n' "${codex_line}"
   printf '  Claude:  %s\n' "${claude_line}"
-  printf '  pi-coding-agent: %s\n' "${pi_agent_line}"
+  printf '  pi-coding-agent (bundled): %s\n' "${bundled_pi_agent_line}"
+  printf '  pi-coding-agent (global):  %s\n' "${global_pi_agent_line}"
   printf '═══════════════════════════════════════════════════════\n'
 }
 
@@ -705,6 +727,7 @@ main() {
   deploy_custom_extensions
   wire_extension_node_modules
   install_staged_system_prompt
+  update_global_pi_agent_cli
   update_codex_cli
   update_claude_cli
   print_summary_report
