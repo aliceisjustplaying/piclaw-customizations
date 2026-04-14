@@ -1,0 +1,313 @@
+diff --git a/runtime/src/agent-control/agent-control-helpers.ts b/runtime/src/agent-control/agent-control-helpers.ts
+index 63f4062b..8960c93a 100644
+--- a/runtime/src/agent-control/agent-control-helpers.ts
++++ b/runtime/src/agent-control/agent-control-helpers.ts
+@@ -22,6 +22,33 @@ import { readJsonConfig, writeJsonConfig } from "../core/config-store.js";
+ /** Ordered list of supported thinking levels from off to xhigh. */
+ export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+ 
++/**
++ * Provider-native aliases for thinking levels.
++ * Anthropic uses "effort" terminology: "max" maps to internal "xhigh".
++ */
++export const THINKING_LEVEL_ALIASES: Record<string, string> = {
++  max: "xhigh",
++};
++
++/** Resolve a user-provided level name through provider-native aliases. */
++export function resolveThinkingAlias(level: string): string {
++  return THINKING_LEVEL_ALIASES[level] ?? level;
++}
++
++/** Check if a provider uses "effort" terminology (e.g. Anthropic). */
++export function isEffortProvider(provider: string | undefined | null): boolean {
++  return provider?.toLowerCase() === "anthropic";
++}
++
++/**
++ * Format a thinking level for display, using provider-native terms when appropriate.
++ * For Anthropic: "xhigh" displays as "max".
++ */
++export function formatThinkingLevelForDisplay(level: string, provider: string | undefined | null): string {
++  if (isEffortProvider(provider) && level === "xhigh") return "max";
++  return level;
++}
++
+ /** Return the preferred working directory for shell commands (configured workspace or cwd). */
+ export function resolveShellCwd(): string {
+   if (existsSync(WORKSPACE_DIR)) return WORKSPACE_DIR;
+diff --git a/runtime/src/agent-control/agent-control-types.ts b/runtime/src/agent-control/agent-control-types.ts
+index 7a05fcc8..b7f7e2b9 100644
+--- a/runtime/src/agent-control/agent-control-types.ts
++++ b/runtime/src/agent-control/agent-control-types.ts
+@@ -255,6 +255,7 @@ export interface AgentControlResult {
+   queued_steer?: boolean;
+   model_label?: string | null;
+   thinking_level?: string | null;
++  thinking_level_label?: string | null;
+   /** Optional media attachment ids to include with the response message. */
+   mediaIds?: number[];
+   /** Optional adaptive card content blocks to include with the response message. */
+diff --git a/runtime/src/agent-control/command-parsers.ts b/runtime/src/agent-control/command-parsers.ts
+index e099ff87..939311e1 100644
+--- a/runtime/src/agent-control/command-parsers.ts
++++ b/runtime/src/agent-control/command-parsers.ts
+@@ -474,6 +474,7 @@ export function parseSearch(args: string, raw: string): AgentControlCommand {
+ export const COMMAND_PARSERS: Record<string, CommandParser> = {
+   "/model": parseModel,
+   "/thinking": parseThinking,
++  "/effort": parseThinking,
+   "/commands": simple("commands"),
+   "/restart": simple("restart"),
+   "/exit": simple("exit"),
+diff --git a/runtime/src/agent-control/command-registry.ts b/runtime/src/agent-control/command-registry.ts
+index d50f8a75..520ada43 100644
+--- a/runtime/src/agent-control/command-registry.ts
++++ b/runtime/src/agent-control/command-registry.ts
+@@ -21,7 +21,7 @@ export interface ControlCommandDefinition {
+ export const CONTROL_COMMAND_DEFINITIONS: ControlCommandDefinition[] = [
+   { name: "/model", description: "Select model or list available models (alias /models)", aliases: ["/models"] },
+   { name: "/cycle-model", description: "Cycle to the next available model" },
+-  { name: "/thinking", description: "Show or set thinking level" },
++  { name: "/thinking", description: "Show or set thinking/effort level (alias /effort)", aliases: ["/effort"] },
+   { name: "/cycle-thinking", description: "Cycle thinking level" },
+   { name: "/state", description: "Show current session state" },
+   { name: "/stats", description: "Show session token and cost stats" },
+diff --git a/runtime/src/agent-control/handlers/model.ts b/runtime/src/agent-control/handlers/model.ts
+index 6bf26523..23a34781 100644
+--- a/runtime/src/agent-control/handlers/model.ts
++++ b/runtime/src/agent-control/handlers/model.ts
+@@ -11,7 +11,7 @@ import type { AgentSession, ModelRegistry } from "@mariozechner/pi-coding-agent"
+ import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+ import type { Api, Model } from "@mariozechner/pi-ai";
+ import type { AgentControlCommand, AgentControlResult } from "../agent-control-types.js";
+-import { THINKING_LEVELS, normalizeModelMatch } from "../agent-control-helpers.js";
++import { THINKING_LEVELS, normalizeModelMatch, resolveThinkingAlias, isEffortProvider, formatThinkingLevelForDisplay } from "../agent-control-helpers.js";
+ 
+ type ModelCommand = Extract<AgentControlCommand, { type: "model" }>;
+ type ThinkingCommand = Extract<AgentControlCommand, { type: "thinking" }>;
+@@ -111,21 +111,32 @@ export async function handleModel(session: AgentSession, modelRegistry: ModelReg
+     return { status: "error", message };
+   }
+ 
++  const provider = selected.provider;
++  const thinkingLevel = session.thinkingLevel ?? null;
++  const thinkingLevelDisplay = thinkingLevel ? formatThinkingLevelForDisplay(thinkingLevel, provider) : null;
+   const thinkingNote = session.supportsThinking()
+-    ? ` Thinking level: ${session.thinkingLevel}.`
++    ? ` Thinking level: ${thinkingLevelDisplay ?? thinkingLevel}.`
+     : " Thinking is off for this model.";
+-  const modelLabel = `${selected.provider}/${selected.id}`;
+-  const thinkingLevel = session.thinkingLevel ?? null;
++  const modelLabel = `${provider}/${selected.id}`;
+ 
+   return {
+     status: "success",
+     message: `Model set to ${modelLabel}.${thinkingNote}`,
+     model_label: modelLabel,
+     thinking_level: thinkingLevel,
++    thinking_level_label: thinkingLevelDisplay,
+   };
+ }
+ 
+-/** Handle /thinking: set or query the thinking level. */
++/** Format the available levels list, adding provider-native aliases in parentheses. */
++function formatAvailableLevels(levels: readonly string[], provider: string | undefined | null): string {
++  return levels.map((l) => {
++    if (isEffortProvider(provider) && l === "xhigh") return `${l} (max)`;
++    return l;
++  }).join(", ");
++}
++
++/** Handle /thinking (alias /effort): set or query the thinking level. */
+ export async function handleThinking(session: AgentSession, _modelRegistry: ModelRegistry, command: ThinkingCommand): Promise<AgentControlResult> {
+   if (!session.model) {
+     return {
+@@ -138,10 +149,12 @@ export async function handleThinking(session: AgentSession, _modelRegistry: Mode
+   if (!requestedRaw) {
+     const available = session.getAvailableThinkingLevels();
+     const modelLabel = session.model ? `${session.model.provider}/${session.model.id}` : "unknown";
++    const provider = session.model?.provider;
++    const effortNote = isEffortProvider(provider) ? " (effort)" : "";
+     const lines = [
+       `Current model: ${modelLabel}.`,
+-      `Current thinking level: ${session.thinkingLevel}.`,
+-      `Available thinking levels: ${available.join(", ")}.`,
++      `Current thinking${effortNote} level: ${formatThinkingLevelForDisplay(session.thinkingLevel, provider)}.`,
++      `Available levels: ${formatAvailableLevels(available, provider)}.`,
+     ];
+     if (!session.supportsThinking()) {
+       lines.push("Thinking is off for this model.");
+@@ -150,11 +163,14 @@ export async function handleThinking(session: AgentSession, _modelRegistry: Mode
+       status: "success",
+       message: lines.join("\n"),
+       thinking_level: session.thinkingLevel ?? null,
++      thinking_level_label: formatThinkingLevelForDisplay(session.thinkingLevel, session.model?.provider),
+     };
+   }
+ 
+-  if (!THINKING_LEVELS.includes(requestedRaw as ThinkingLevel)) {
+-    const available = session.getAvailableThinkingLevels().join(", ");
++  const resolved = resolveThinkingAlias(requestedRaw);
++
++  if (!THINKING_LEVELS.includes(resolved as ThinkingLevel)) {
++    const available = formatAvailableLevels(session.getAvailableThinkingLevels(), session.model?.provider);
+     return {
+       status: "error",
+       message: `Unknown thinking level: ${command.level}. Available: ${available}.`,
+@@ -162,22 +178,25 @@ export async function handleThinking(session: AgentSession, _modelRegistry: Mode
+   }
+ 
+   const _previousLevel = session.thinkingLevel;
+-  session.setThinkingLevel(requestedRaw as ThinkingLevel);
++  session.setThinkingLevel(resolved as ThinkingLevel);
+   const applied = session.thinkingLevel;
+ 
+   if (!session.supportsThinking()) {
+     return {
+-      status: requestedRaw === "off" ? "success" : "error",
++      status: resolved === "off" ? "success" : "error",
+       message: "Current model does not support thinking levels. Thinking is off.",
+       thinking_level: session.thinkingLevel ?? null,
++      thinking_level_label: formatThinkingLevelForDisplay(session.thinkingLevel, session.model?.provider),
+     };
+   }
+ 
+-  const note = applied !== requestedRaw ? ` (requested ${requestedRaw})` : "";
++  const displayApplied = formatThinkingLevelForDisplay(applied, session.model?.provider);
++  const note = applied !== resolved ? ` (requested ${requestedRaw})` : "";
+   return {
+     status: "success",
+-    message: `Thinking level set to ${applied}${note}.`,
++    message: `Thinking level set to ${displayApplied}${note}.`,
+     thinking_level: applied ?? session.thinkingLevel ?? null,
++    thinking_level_label: displayApplied,
+   };
+ }
+ 
+diff --git a/runtime/src/agent-pool/runtime-facade.ts b/runtime/src/agent-pool/runtime-facade.ts
+index 093638db..4354d4f8 100644
+--- a/runtime/src/agent-pool/runtime-facade.ts
++++ b/runtime/src/agent-pool/runtime-facade.ts
+@@ -8,6 +8,7 @@
+ import type { AgentSession, AgentSessionRuntime, ModelRegistry, AuthStorage } from "@mariozechner/pi-coding-agent";
+ 
+ import { applyControlCommand, type AgentControlCommand, type AgentControlResult } from "../agent-control/index.js";
++import { formatThinkingLevelForDisplay } from "../agent-control/agent-control-helpers.js";
+ import { detectChannel } from "../router.js";
+ import { executeSlashCommand } from "./slash-command.js";
+ import { getProviderUsage } from "./provider-usage.js";
+@@ -364,6 +365,7 @@ export interface AvailableModelsResult {
+   models: string[];
+   model_options: AvailableModelOption[];
+   thinking_level: string | null;
++  thinking_level_label: string | null;
+   supports_thinking: boolean;
+   provider_usage: Awaited<ReturnType<typeof getProviderUsage>>;
+ }
+@@ -430,11 +432,15 @@ export class AgentRuntimeFacade {
+     const providerUsage = session.model?.provider
+       ? await getProviderUsage(this.options.authStorage, session.model.provider)
+       : null;
++    const thinkingLevelLabel = thinkingLevel && session.model?.provider
++      ? formatThinkingLevelForDisplay(thinkingLevel, session.model.provider)
++      : thinkingLevel;
+     return {
+       current: currentModel,
+       models,
+       model_options: modelOptions,
+       thinking_level: thinkingLevel,
++      thinking_level_label: thinkingLevelLabel,
+       supports_thinking: supportsThinking,
+       provider_usage: providerUsage,
+     };
+diff --git a/runtime/src/channels/web/handlers/agent.ts b/runtime/src/channels/web/handlers/agent.ts
+index 3a323750..5b2e35c8 100644
+--- a/runtime/src/channels/web/handlers/agent.ts
++++ b/runtime/src/channels/web/handlers/agent.ts
+@@ -330,11 +330,13 @@ export async function handleAgentMessage(
+     // Broadcast model state so the UI hint updates immediately
+     let nextModel = result.model_label ?? null;
+     let thinkingLevel = result.thinking_level ?? null;
++    let thinkingLevelLabel = result.thinking_level_label ?? null;
+     let supportsThinking: boolean | undefined = undefined;
+     try {
+       const modelState = await channel.agentPool.getAvailableModels(chatJid);
+       if (!nextModel) nextModel = modelState.current ?? null;
+       if (thinkingLevel == null) thinkingLevel = modelState.thinking_level ?? null;
++      if (!thinkingLevelLabel) thinkingLevelLabel = modelState.thinking_level_label ?? thinkingLevel;
+       supportsThinking = modelState.supports_thinking;
+     } catch {
+       if (typeof channel.agentPool.getCurrentModelLabel === "function") {
+@@ -347,6 +349,7 @@ export async function handleAgentMessage(
+         chat_jid: chatJid,
+         model: nextModel ?? null,
+         thinking_level: thinkingLevel ?? null,
++        thinking_level_label: thinkingLevelLabel ?? thinkingLevel ?? null,
+         supports_thinking: supportsThinking,
+       });
+       if (command.type === "model" || command.type === "cycle_model") {
+@@ -580,12 +583,14 @@ export async function handleAgentMessage(
+     if (result.status === "success" && modelCommands.includes(command.type)) {
+       let nextModel = result.model_label ?? null;
+       let thinkingLevel = result.thinking_level ?? null;
++      let thinkingLevelLabel = result.thinking_level_label ?? null;
+       let supportsThinking: boolean | undefined = undefined;
+ 
+       try {
+         const modelState = await channel.agentPool.getAvailableModels(chatJid);
+         if (!nextModel) nextModel = modelState.current ?? null;
+         if (thinkingLevel == null) thinkingLevel = modelState.thinking_level ?? null;
++        if (!thinkingLevelLabel) thinkingLevelLabel = modelState.thinking_level_label ?? thinkingLevel;
+         supportsThinking = modelState.supports_thinking;
+       } catch {
+         if (typeof channel.agentPool.getCurrentModelLabel === "function") {
+@@ -597,6 +602,7 @@ export async function handleAgentMessage(
+         chat_jid: chatJid,
+         model: nextModel ?? null,
+         thinking_level: thinkingLevel ?? null,
++        thinking_level_label: thinkingLevelLabel ?? thinkingLevel ?? null,
+         supports_thinking: supportsThinking,
+       });
+     }
+diff --git a/runtime/web/src/ui/app-auth-bootstrap.ts b/runtime/web/src/ui/app-auth-bootstrap.ts
+index 1e707fe2..4fe41c40 100644
+--- a/runtime/web/src/ui/app-auth-bootstrap.ts
++++ b/runtime/web/src/ui/app-auth-bootstrap.ts
+@@ -118,7 +118,7 @@ export function applyModelStatePayload(options: ApplyModelStateOptions): void {
+ 
+   const modelUpdate = resolveModelStateUpdate(payload);
+   if (modelUpdate.hasModel) setActiveModel(modelUpdate.model);
+-  if (modelUpdate.hasThinkingLevel) setActiveThinkingLevel(modelUpdate.thinkingLevel);
++  if (modelUpdate.hasThinkingLevel) setActiveThinkingLevel(modelUpdate.thinkingLevelLabel ?? modelUpdate.thinkingLevel);
+   if (modelUpdate.hasSupportsThinking) setSupportsThinking(modelUpdate.supportsThinking);
+   if (modelUpdate.hasProviderUsage) setActiveModelUsage(modelUpdate.providerUsage);
+ }
+diff --git a/runtime/web/src/ui/app-model-state.ts b/runtime/web/src/ui/app-model-state.ts
+index a1139e22..42aeb07b 100644
+--- a/runtime/web/src/ui/app-model-state.ts
++++ b/runtime/web/src/ui/app-model-state.ts
+@@ -3,6 +3,7 @@ export interface ModelStateUpdate {
+   model: unknown;
+   hasThinkingLevel: boolean;
+   thinkingLevel: unknown;
++  thinkingLevelLabel: unknown;
+   hasSupportsThinking: boolean;
+   supportsThinking: boolean;
+   hasProviderUsage: boolean;
+@@ -14,6 +15,7 @@ const EMPTY_MODEL_STATE_UPDATE: ModelStateUpdate = {
+   model: undefined,
+   hasThinkingLevel: false,
+   thinkingLevel: null,
++  thinkingLevelLabel: null,
+   hasSupportsThinking: false,
+   supportsThinking: false,
+   hasProviderUsage: false,
+@@ -32,6 +34,7 @@ export function resolveModelStateUpdate(payload: Record<string, unknown> | null
+     model: nextModel,
+     hasThinkingLevel: payload.thinking_level !== undefined,
+     thinkingLevel: payload.thinking_level ?? null,
++    thinkingLevelLabel: payload.thinking_level_label ?? payload.thinking_level ?? null,
+     hasSupportsThinking: payload.supports_thinking !== undefined,
+     supportsThinking: Boolean(payload.supports_thinking),
+     hasProviderUsage: payload.provider_usage !== undefined,
