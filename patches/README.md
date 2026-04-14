@@ -14,8 +14,6 @@ The update script handles this automatically.
 | 11 | `runtime/src/db/connection.ts` | Lazy DB init for Jiti-loaded extension module graphs |
 | 15 | `compose-box.ts` | Add `/rebuild` to slash command autocomplete |
 | 24 | `package.json`, `bun.lock` | Pin `ghostty-web` vendoring to the forked commit that carries the upstream bootstrap/open-reset fix |
-| 25 | `turn-coordinator.ts`, `run-agent-orchestrator.ts` | Surface provider errors (e.g. Anthropic 400) instead of silent "no response" |
-| 26 | `agent-control-helpers.ts`, `agent-control-types.ts`, `command-parsers.ts`, `command-registry.ts`, `handlers/model.ts`, `runtime-facade.ts`, `agent.ts`, `app-auth-bootstrap.ts`, `app-model-state.ts` | `/effort` alias for `/thinking`, accept `max` as level alias, show provider-native labels on UI |
 
 ## Retired patches
 
@@ -36,6 +34,8 @@ Numbering preserved — next new patch is **27**.
 | ~~21~~ | Merged upstream | PR #36; upstream commit `653bf412` |
 | ~~22~~ | Merged upstream | PR #33; upstream commit `10f724be` |
 | ~~23~~ | Merged upstream | PR #34; upstream commit `dee1daa1` |
+| ~~25~~ | Merged upstream | PR #37; upstream commit `610dda1c` |
+| ~~26~~ | Merged upstream | PR #38; upstream commit `f66f1035` |
 
 ## Terminal patch outcomes
 
