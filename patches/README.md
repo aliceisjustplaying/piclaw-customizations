@@ -14,11 +14,12 @@ The update script handles this automatically.
 | 11 | `runtime/src/db/connection.ts` | Lazy DB init for Jiti-loaded extension module graphs |
 | 15 | `compose-box.ts` | Add `/rebuild` to slash command autocomplete |
 | 24 | `package.json`, `bun.lock` | Pin `ghostty-web` vendoring to the forked commit that carries the upstream bootstrap/open-reset fix |
+| 27 | `agent-control-helpers.ts`, `handlers/model.ts`, `compose-box.ts`, `chat.css` | Provider-scoped `max` aliasing, provider-native cycle labels, and inline query notices for blank `/thinking`/`/effort`/`/model` |
 
 ## Retired patches
 
 Retired patches that are still useful for history/reference are kept under `patches/retired/`.
-Numbering preserved — next new patch is **27**.
+Numbering preserved — next new patch is **28**.
 
 | # | Status | Reason |
 |---|--------|--------|

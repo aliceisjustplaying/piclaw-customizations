@@ -1,0 +1,345 @@
+diff --git a/runtime/src/agent-control/agent-control-helpers.ts b/runtime/src/agent-control/agent-control-helpers.ts
+index 8960c93a..9325c58b 100644
+--- a/runtime/src/agent-control/agent-control-helpers.ts
++++ b/runtime/src/agent-control/agent-control-helpers.ts
+@@ -26,13 +26,16 @@ export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhig
+  * Provider-native aliases for thinking levels.
+  * Anthropic uses "effort" terminology: "max" maps to internal "xhigh".
+  */
+-export const THINKING_LEVEL_ALIASES: Record<string, string> = {
++export const EFFORT_PROVIDER_THINKING_LEVEL_ALIASES: Record<string, string> = {
+   max: "xhigh",
+ };
+ 
+-/** Resolve a user-provided level name through provider-native aliases. */
+-export function resolveThinkingAlias(level: string): string {
+-  return THINKING_LEVEL_ALIASES[level] ?? level;
++/** Resolve a user-provided level name through provider-native aliases for the active provider. */
++export function resolveThinkingAlias(level: string, provider: string | undefined | null): string {
++  if (isEffortProvider(provider)) {
++    return EFFORT_PROVIDER_THINKING_LEVEL_ALIASES[level] ?? level;
++  }
++  return level;
+ }
+ 
+ /** Check if a provider uses "effort" terminology (e.g. Anthropic). */
+diff --git a/runtime/src/agent-control/handlers/model.ts b/runtime/src/agent-control/handlers/model.ts
+index 23a34781..40474315 100644
+--- a/runtime/src/agent-control/handlers/model.ts
++++ b/runtime/src/agent-control/handlers/model.ts
+@@ -103,7 +103,6 @@ export async function handleModel(session: AgentSession, modelRegistry: ModelReg
+     selected = matches[0];
+   }
+ 
+-  const _previousModel = session.model;
+   try {
+     await session.setModel(selected);
+   } catch (err) {
+@@ -167,7 +166,7 @@ export async function handleThinking(session: AgentSession, _modelRegistry: Mode
+     };
+   }
+ 
+-  const resolved = resolveThinkingAlias(requestedRaw);
++  const resolved = resolveThinkingAlias(requestedRaw, session.model?.provider);
+ 
+   if (!THINKING_LEVELS.includes(resolved as ThinkingLevel)) {
+     const available = formatAvailableLevels(session.getAvailableThinkingLevels(), session.model?.provider);
+@@ -177,7 +176,6 @@ export async function handleThinking(session: AgentSession, _modelRegistry: Mode
+     };
+   }
+ 
+-  const _previousLevel = session.thinkingLevel;
+   session.setThinkingLevel(resolved as ThinkingLevel);
+   const applied = session.thinkingLevel;
+ 
+@@ -213,11 +211,13 @@ export async function handleCycleModel(session: AgentSession, _modelRegistry: Mo
+     const label = `${result.model.provider}/${result.model.id}`;
+     const scope = result.isScoped ? "scoped" : "available";
+     const thinkingLevel = result.thinkingLevel ?? null;
++    const thinkingLevelLabel = thinkingLevel ? formatThinkingLevelForDisplay(thinkingLevel, result.model.provider) : null;
+     return {
+       status: "success",
+-      message: `Model set to ${label} (cycle: ${scope}). Thinking level: ${result.thinkingLevel}.`,
++      message: `Model set to ${label} (cycle: ${scope}). Thinking level: ${thinkingLevelLabel ?? thinkingLevel}.`,
+       model_label: label,
+       thinking_level: thinkingLevel,
++      thinking_level_label: thinkingLevelLabel,
+     };
+   } catch (err) {
+     const message = err instanceof Error ? err.message : String(err);
+@@ -231,5 +231,11 @@ export async function handleCycleThinking(session: AgentSession, _modelRegistry:
+   if (!level) {
+     return { status: "error", message: "Current model does not support thinking levels.", thinking_level: session.thinkingLevel ?? null };
+   }
+-  return { status: "success", message: `Thinking level set to ${level}.`, thinking_level: level };
++  const displayLevel = formatThinkingLevelForDisplay(level, session.model?.provider);
++  return {
++    status: "success",
++    message: `Thinking level set to ${displayLevel}.`,
++    thinking_level: level,
++    thinking_level_label: displayLevel,
++  };
+ }
+diff --git a/runtime/test/agent-control/agent-control-handlers.test.ts b/runtime/test/agent-control/agent-control-handlers.test.ts
+index 6d103b22..b4f4363a 100644
+--- a/runtime/test/agent-control/agent-control-handlers.test.ts
++++ b/runtime/test/agent-control/agent-control-handlers.test.ts
+@@ -393,6 +393,17 @@ test("agent control cycle and agent identity commands", async () => {
+   const cycleThinking = await applyControlCommand(runtime as any, registry, { type: "cycle_thinking", raw: "/cycle-thinking" });
+   expect(cycleThinking.message).toContain("Thinking level set");
+ 
++  const maxOnOpenAi = await applyControlCommand(runtime as any, registry, { type: "thinking", level: "max", raw: "/thinking max" });
++  expect(maxOnOpenAi.status).toBe("error");
++  expect(maxOnOpenAi.message).toContain("Unknown thinking level: max");
++
++  session.model = { provider: "anthropic", id: "claude-opus-4-6", reasoning: true } as any;
++  const maxOnAnthropic = await applyControlCommand(runtime as any, registry, { type: "thinking", level: "max", raw: "/thinking max" });
++  expect(maxOnAnthropic.status).toBe("success");
++  expect(maxOnAnthropic.thinking_level).toBe("xhigh");
++  expect(maxOnAnthropic.thinking_level_label).toBe("max");
++  expect(maxOnAnthropic.message).toContain("Thinking level set to max");
++
+   const agentName = await applyControlCommand(runtime as any, registry, { type: "agent_name", name: "Pi", raw: "/agent-name Pi" });
+   expect(agentName.message).toContain("Agent name set");
+ 
+diff --git a/runtime/test/agent-control/agent-control-helpers.test.ts b/runtime/test/agent-control/agent-control-helpers.test.ts
+index 6851f8ed..12fe7715 100644
+--- a/runtime/test/agent-control/agent-control-helpers.test.ts
++++ b/runtime/test/agent-control/agent-control-helpers.test.ts
+@@ -14,7 +14,9 @@ import {
+   formatCompactNumber,
+   formatCurrency,
+   formatShellBlock,
++  formatThinkingLevelForDisplay,
+   normalizeModelMatch,
++  resolveThinkingAlias,
+   runPromptAndCapture,
+   truncateText,
+ } from "../../src/agent-control/agent-control-helpers.js";
+@@ -102,6 +104,14 @@ test("normalizeModelMatch finds provider/id case-insensitively", () => {
+   expect(match?.provider).toBe("OpenAI");
+ });
+ 
++test("thinking aliases and labels are provider-aware", () => {
++  expect(resolveThinkingAlias("max", "anthropic")).toBe("xhigh");
++  expect(resolveThinkingAlias("max", "openai")).toBe("max");
++  expect(resolveThinkingAlias("high", "anthropic")).toBe("high");
++  expect(formatThinkingLevelForDisplay("xhigh", "anthropic")).toBe("max");
++  expect(formatThinkingLevelForDisplay("xhigh", "openai")).toBe("xhigh");
++});
++
+ test("runPromptAndCapture captures assistant output", async () => {
+   const session = new PromptSession();
+   const result = await runPromptAndCapture(session as any, "hi");
+diff --git a/runtime/test/web/app-auth-bootstrap.test.ts b/runtime/test/web/app-auth-bootstrap.test.ts
+index 49476298..9a0630ff 100644
+--- a/runtime/test/web/app-auth-bootstrap.test.ts
++++ b/runtime/test/web/app-auth-bootstrap.test.ts
+@@ -93,7 +93,8 @@ test('applyModelStatePayload only applies present model fields', () => {
+   applyModelStatePayload({
+     payload: {
+       current: 'gpt-5',
+-      thinking_level: 'high',
++      thinking_level: 'xhigh',
++      thinking_level_label: 'max',
+       supports_thinking: true,
+       provider_usage: { prompt: 100 },
+     },
+@@ -105,7 +106,7 @@ test('applyModelStatePayload only applies present model fields', () => {
+ 
+   expect(updates).toEqual({
+     model: 'gpt-5',
+-    thinkingLevel: 'high',
++    thinkingLevel: 'max',
+     supportsThinking: true,
+     providerUsage: { prompt: 100 },
+   });
+diff --git a/runtime/test/web/app-model-state.test.ts b/runtime/test/web/app-model-state.test.ts
+index f02c8594..56adc2a2 100644
+--- a/runtime/test/web/app-model-state.test.ts
++++ b/runtime/test/web/app-model-state.test.ts
+@@ -13,6 +13,7 @@ test('resolveModelStateUpdate normalizes model/thinking/supports/provider fields
+     model: 'gpt-5',
+     hasThinkingLevel: true,
+     thinkingLevel: 'high',
++    thinkingLevelLabel: 'high',
+     hasSupportsThinking: true,
+     supportsThinking: true,
+     hasProviderUsage: true,
+@@ -26,6 +27,7 @@ test('resolveModelStateUpdate preserves nullish fallback semantics from app.ts',
+     model: undefined,
+     hasThinkingLevel: false,
+     thinkingLevel: null,
++    thinkingLevelLabel: null,
+     hasSupportsThinking: false,
+     supportsThinking: false,
+     hasProviderUsage: false,
+@@ -37,6 +39,7 @@ test('resolveModelStateUpdate preserves nullish fallback semantics from app.ts',
+     model: null,
+     hasThinkingLevel: true,
+     thinkingLevel: null,
++    thinkingLevelLabel: null,
+     hasSupportsThinking: true,
+     supportsThinking: false,
+     hasProviderUsage: true,
+@@ -48,6 +51,7 @@ test('resolveModelStateUpdate preserves nullish fallback semantics from app.ts',
+     model: undefined,
+     hasThinkingLevel: false,
+     thinkingLevel: null,
++    thinkingLevelLabel: null,
+     hasSupportsThinking: false,
+     supportsThinking: false,
+     hasProviderUsage: false,
+diff --git a/runtime/test/web/compose-box.test.ts b/runtime/test/web/compose-box.test.ts
+index 497894de..2b8615c2 100644
+--- a/runtime/test/web/compose-box.test.ts
++++ b/runtime/test/web/compose-box.test.ts
+@@ -9,6 +9,7 @@ import {
+   normalizeModelPickerOptions,
+   parseQueuedContent,
+   resolveComposePrefillRequest,
++  resolveUiOnlyCommandNotice,
+ } from '../../web/src/components/compose-box.ts';
+ import { CONTROL_COMMAND_DEFINITIONS } from '../../src/agent-control/command-registry.ts';
+ 
+@@ -148,3 +149,30 @@ test('model picker helpers expose searchable names and formatted context windows
+   expect(getModelPickerOptionSearchLabel(option)).toContain('Claude Sonnet 4');
+   expect(getModelPickerOptionSearchLabel(option)).toContain('200K ctx');
+ });
++
++test('resolveUiOnlyCommandNotice only surfaces read-only model and thinking queries', () => {
++  expect(resolveUiOnlyCommandNotice('/thinking', {
++    ui_only: true,
++    command: { message: 'Current thinking (effort) level: max.' },
++  })).toBe('Current thinking (effort) level: max.');
++
++  expect(resolveUiOnlyCommandNotice('/effort', {
++    ui_only: true,
++    command: { message: 'Current thinking (effort) level: max.' },
++  })).toBe('Current thinking (effort) level: max.');
++
++  expect(resolveUiOnlyCommandNotice('/model', {
++    ui_only: true,
++    command: { message: 'Available models:\n• anthropic/claude-opus-4-6 (current)' },
++  })).toContain('Available models:');
++
++  expect(resolveUiOnlyCommandNotice('/thinking high', {
++    ui_only: true,
++    command: { message: 'Thinking level set to high.' },
++  })).toBeNull();
++
++  expect(resolveUiOnlyCommandNotice('/cycle-model', {
++    ui_only: true,
++    command: { message: 'Model set to openai/gpt-5.' },
++  })).toBeNull();
++});
+diff --git a/runtime/web/src/components/compose-box.ts b/runtime/web/src/components/compose-box.ts
+index 5be62479..72ce4619 100644
+--- a/runtime/web/src/components/compose-box.ts
++++ b/runtime/web/src/components/compose-box.ts
+@@ -92,6 +92,24 @@ export function getComposeHistoryStorageKey(chatJid = 'web:default') {
+     return `${COMPOSE_HISTORY_STORAGE_KEY}:${encodeURIComponent(normalized)}`;
+ }
+ 
++export function resolveUiOnlyCommandNotice(commandText, response) {
++    const message = typeof response?.command?.message === 'string' ? response.command.message.trim() : '';
++    if (!response?.ui_only || !message) return null;
++
++    const trimmed = typeof commandText === 'string' ? commandText.trim() : '';
++    if (!trimmed.startsWith('/')) return null;
++
++    const parts = trimmed.split(/\s+/).filter(Boolean);
++    const slashName = parts[0]?.toLowerCase() || '';
++    const hasArgs = parts.length > 1;
++
++    if (!hasArgs && (slashName === '/model' || slashName === '/thinking' || slashName === '/effort')) {
++        return message;
++    }
++
++    return null;
++}
++
+ /**
+  * Tiny SVG pie chart showing context window usage.
+  * Green when <75%, amber 75–90%, red >90%. Tooltip shows exact numbers.
+@@ -550,6 +568,7 @@ export function ComposeBox({
+     const [loadingModels, setLoadingModels] = useState(false);
+     const [footerWidth, setFooterWidth] = useState(0);
+     const [submitError, setSubmitError] = useState(null);
++    const [submitNotice, setSubmitNotice] = useState(null);
+     const [statusNoticeNowMs, setStatusNoticeNowMs] = useState(() => Date.now());
+     const textareaRef = useRef(null);
+     const slashRef = useRef(null);
+@@ -969,6 +988,8 @@ export function ComposeBox({
+     const runModelCommand = async (commandText) => {
+         if (searchMode || switchingModel) return;
+ 
++        setSubmitError(null);
++        setSubmitNotice(null);
+         setSwitchingModel(true);
+         try {
+             const response = await sendAgentMessage('default', commandText, null, [], null, currentChatJid);
+@@ -980,6 +1001,7 @@ export function ComposeBox({
+                 supports_thinking: response?.command?.supports_thinking,
+             });
+             await refreshAgentModelStateBestEffort(getAgentModels, currentChatJid, emitModelState);
++            setSubmitNotice(resolveUiOnlyCommandNotice(commandText, response));
+             onPost?.(response);
+             return true;
+         } catch (error) {
+@@ -1085,6 +1107,7 @@ export function ComposeBox({
+         setMentionMatches([]);
+         setShowSessionPopup(false);
+         setSubmitError(null);
++        setSubmitNotice(null);
+ 
+         // Capture media/refs before clearing so the async send can use them
+         const capturedMediaFiles = includeMedia ? [...mediaFiles] : [];
+@@ -1171,6 +1194,7 @@ export function ComposeBox({
+                     await refreshAgentModelStateBestEffort(getAgentModels, currentChatJid, emitModelState);
+                 }
+ 
++                setSubmitNotice(resolveUiOnlyCommandNotice(baseContent, response));
+                 onPost?.(response);
+             } catch (error) {
+                 if (clearAfterSubmit) {
+@@ -1696,6 +1720,7 @@ export function ComposeBox({
+     const handleInput = (e) => {
+         const value = e.target.value;
+         setSubmitError(null);
++        setSubmitNotice(null);
+         if (showSessionPopup) setShowSessionPopup(false);
+         resizeTextarea(e.target);
+         updateValue(value);
+@@ -1745,6 +1770,11 @@ export function ComposeBox({
+             ${submitError && html`
+                 <div class="compose-submit-error compose-submit-error-top" role="status" aria-live="polite">${submitError}</div>
+             `}
++            ${submitNotice && html`
++                <div class="compose-inline-status compose-command-notice" role="status" aria-live="polite">
++                    <div class="compose-inline-status-detail compose-command-notice-text">${submitNotice}</div>
++                </div>
++            `}
+             <div
+                 class=${`compose-input-wrapper${isDragActive ? ' drag-active' : ''}`}
+                 onDragEnter=${handleDragEnter}
+diff --git a/runtime/web/static/css/chat.css b/runtime/web/static/css/chat.css
+index 154b886f..127d215e 100644
+--- a/runtime/web/static/css/chat.css
++++ b/runtime/web/static/css/chat.css
+@@ -298,6 +298,15 @@
+     color: var(--text-secondary);
+ }
+ 
++.compose-command-notice {
++    margin: 2px var(--spacing-xs) 0 var(--spacing-xs);
++}
++
++.compose-command-notice-text {
++    margin-top: 0;
++    white-space: pre-wrap;
++}
++
+ .compose-clear-attachments-btn {
+     display: inline-flex;
+     align-items: center;
