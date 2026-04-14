@@ -9,7 +9,8 @@ Upstream PR work: `/workspace/src/piclaw-fork`
 
 ```
 patches/                          # Source patches applied before build
-├── 01–15 *.patch                 # See patches/README.md for details
+├── *.patch                       # Active source patches (see patches/README.md)
+├── retired/                      # Retired patches kept for history/reference
 ├── post-install/                 # Post-install dependency patches
 ├── verify-patches.sh
 ├── regenerate-patches.sh
@@ -36,7 +37,9 @@ scripts/
 
 See [`patches/README.md`](patches/README.md) for the full patch table, retired patches, and terminal patch outcomes.
 
-Active source patches: `01`, `02`, `04`, `05`, `06`, `11`, `15`, `20`, `21`, `22`, `23`, `24`
+Active source patches: `01`, `02`, `04`, `05`, `11`, `15`, `24`
+Retired after upstream merge: `20`, `21`, `22`, `23` (stored under `patches/retired/`)
+Superseded locally: `06` (`patches/06-terminal-dock-and-popout-fixes.patch.superseded`)
 Post-install patches: `01` (jiti/Bun fix), `02` (context usage)
 Next available number: **25**
 

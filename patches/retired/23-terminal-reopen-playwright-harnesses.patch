@@ -10,104 +10,154 @@ index 72a14e66..b6b1463e 100644
      "check:pack-hygiene": "bun run runtime/scripts/pack-hygiene.ts",
      "check:stale-dist": "cd runtime && bun run scripts/check-stale-dist.ts",
      "check:import-boundaries": "cd runtime && bun run scripts/check-import-boundaries.ts",
-diff --git a/runtime/scripts/playwright/web-auth-bootstrap.ts b/runtime/scripts/playwright/web-auth-bootstrap.ts
+diff --git a/runtime/scripts/playwright/terminal-reopen-multicycle.ts b/runtime/scripts/playwright/terminal-reopen-multicycle.ts
 new file mode 100644
-index 00000000..22747d61
+index 00000000..21d9d370
 --- /dev/null
-+++ b/runtime/scripts/playwright/web-auth-bootstrap.ts
-@@ -0,0 +1,92 @@
++++ b/runtime/scripts/playwright/terminal-reopen-multicycle.ts
+@@ -0,0 +1,50 @@
 +#!/usr/bin/env bun
-+// @ts-nocheck
++import { chromium } from 'playwright';
++import { bootstrapE2EStorageState } from './web-auth-bootstrap.ts';
 +
-+export function resolveInternalSecret(explicitSecret?: string): string {
-+  const value = String(
-+    explicitSecret ||
-+    process.env.PICLAW_INTERNAL_SECRET ||
-+    process.env.PICLAW_WEB_INTERNAL_SECRET ||
-+    ''
-+  ).trim();
-+  if (!value) {
-+    throw new Error('Missing internal secret. Pass --internal-secret or set PICLAW_INTERNAL_SECRET / PICLAW_WEB_INTERNAL_SECRET.');
-+  }
-+  return value;
-+}
-+
-+function parseSetCookie(setCookieHeader: string | null, baseUrl: string) {
-+  if (!setCookieHeader) {
-+    throw new Error('E2E auth bootstrap did not return a Set-Cookie header.');
-+  }
-+
-+  const parts = setCookieHeader.split(';').map((part) => part.trim()).filter(Boolean);
-+  const [nameValue, ...attrs] = parts;
-+  const eq = nameValue.indexOf('=');
-+  if (eq <= 0) {
-+    throw new Error(`Invalid Set-Cookie header: ${setCookieHeader}`);
-+  }
-+
-+  const name = nameValue.slice(0, eq).trim();
-+  const value = nameValue.slice(eq + 1);
-+  const url = new URL(baseUrl);
-+  const cookie = {
-+    name,
-+    value,
-+    domain: url.hostname,
-+    path: '/',
-+    httpOnly: false,
-+    secure: url.protocol === 'https:',
-+    sameSite: 'Lax',
-+    expires: -1,
-+  } as any;
-+
-+  for (const attr of attrs) {
-+    const [rawKey, ...rawRest] = attr.split('=');
-+    const key = String(rawKey || '').trim().toLowerCase();
-+    const attrValue = rawRest.join('=').trim();
-+    if (key === 'path' && attrValue) cookie.path = attrValue;
-+    else if (key === 'domain' && attrValue) cookie.domain = attrValue.replace(/^\./, '');
-+    else if (key === 'httponly') cookie.httpOnly = true;
-+    else if (key === 'secure') cookie.secure = true;
-+    else if (key === 'samesite' && attrValue) {
-+      const normalized = attrValue.toLowerCase();
-+      if (normalized === 'strict') cookie.sameSite = 'Strict';
-+      else if (normalized === 'none') cookie.sameSite = 'None';
-+      else cookie.sameSite = 'Lax';
-+    } else if (key === 'max-age' && attrValue && Number.isFinite(Number(attrValue))) {
-+      cookie.expires = Math.floor(Date.now() / 1000) + Number(attrValue);
-+    }
-+  }
-+
-+  return cookie;
-+}
-+
-+export async function bootstrapE2EStorageState(options: {
-+  baseUrl: string;
-+  internalSecret?: string;
-+}) {
-+  const baseUrl = String(options.baseUrl || '').trim().replace(/\/$/, '');
-+  if (!baseUrl) throw new Error('bootstrapE2EStorageState requires a baseUrl.');
-+
-+  const response = await fetch(`${baseUrl}/auth/e2e/bootstrap`, {
-+    method: 'POST',
-+    headers: {
-+      'x-piclaw-internal-secret': resolveInternalSecret(options.internalSecret),
-+    },
++function readDebug(page: any) {
++  return page.evaluate(() => {
++    const host = document.querySelector('.terminal-live-host');
++    const term = host && (host as any).__terminal;
++    if (!term) return null;
++    return {
++      sessionMeta: term.__piclawSessionMeta || null,
++      lines: Array.from({ length: 8 }, (_, row) => {
++        const line = term.wasmTerm?.getLine?.(row);
++        if (!line) return null;
++        return line.map((cell: any) => (!cell || cell.width === 0) ? '' : String.fromCodePoint(cell.codepoint || 32)).join('').replace(/\s+$/g, '');
++      }),
++      activeTag: document.activeElement?.tagName || null,
++      activeAria: document.activeElement?.getAttribute?.('aria-label') || null,
++    };
 +  });
++}
 +
-+  const bodyText = await response.text();
-+  if (!response.ok) {
-+    throw new Error([
-+      `E2E auth bootstrap failed: HTTP ${response.status}`,
-+      bodyText && `body: ${bodyText}`,
-+      'Expected loopback access to the local web server plus a valid internal secret.',
-+    ].filter(Boolean).join('\n'));
++const cycles = Number(process.env.PICLAW_MULTICYCLE_COUNT || '5');
++const storageState = await bootstrapE2EStorageState({
++  baseUrl: 'http://127.0.0.1:8080',
++  internalSecret: process.env.PICLAW_INTERNAL_SECRET || process.env.PICLAW_WEB_INTERNAL_SECRET,
++});
++const browser = await chromium.launch({ headless: true, executablePath: process.env.PICLAW_PLAYWRIGHT_EXECUTABLE_PATH });
++const context = await browser.newContext({ storageState });
++const page = await context.newPage();
++await page.goto('http://127.0.0.1:8080', { waitUntil: 'domcontentloaded' });
++await page.waitForTimeout(2000);
++
++for (let cycle = 1; cycle <= cycles; cycle += 1) {
++  await page.keyboard.press('Control+`');
++  await page.locator('.terminal-live-host').first().waitFor({ state: 'visible', timeout: 15000 });
++  await page.waitForTimeout(700);
++  await page.locator('.terminal-live-host').first().click({ position: { x: 24, y: 24 } });
++  await page.keyboard.type(`printf "__CYCLE_${cycle}__\\n"\n`, { delay: 10 });
++  await page.waitForTimeout(1500);
++  const afterType = await readDebug(page);
++  console.log(JSON.stringify({ cycle, phase: 'afterType', state: afterType }));
++  if (cycle < cycles) {
++    await page.locator('button[aria-label="Hide terminal"]').first().click();
++    await page.waitForTimeout(350);
++  }
++}
++
++await context.close();
++await browser.close();
+diff --git a/runtime/scripts/playwright/terminal-reopen-race.ts b/runtime/scripts/playwright/terminal-reopen-race.ts
+new file mode 100644
+index 00000000..1dcd9d08
+--- /dev/null
++++ b/runtime/scripts/playwright/terminal-reopen-race.ts
+@@ -0,0 +1,86 @@
++#!/usr/bin/env bun
++import { chromium } from 'playwright';
++import { bootstrapE2EStorageState } from './web-auth-bootstrap.ts';
++
++const cycles = Number(process.env.PICLAW_RACE_CYCLES || '12');
++const reopenWaitMs = Number(process.env.PICLAW_RACE_REOPEN_WAIT_MS || '40');
++const typeDelayMs = Number(process.env.PICLAW_RACE_TYPE_DELAY_MS || '8');
++
++function sleep(ms: number) {
++  return new Promise((resolve) => setTimeout(resolve, ms));
++}
++
++async function readState(page: any) {
++  return page.evaluate(() => {
++    const host = document.querySelector('.terminal-live-host');
++    const term = host && (host as any).__terminal;
++    const lines = [];
++    if (term?.wasmTerm?.getLine) {
++      for (let row = 0; row < 8; row += 1) {
++        const line = term.wasmTerm.getLine(row);
++        if (!line) {
++          lines.push(null);
++          continue;
++        }
++        lines.push(line.map((cell: any) => (!cell || cell.width === 0) ? '' : String.fromCodePoint(cell.codepoint || 32)).join('').replace(/\s+$/g, ''));
++      }
++    }
++    return {
++      activeTag: document.activeElement?.tagName || null,
++      activeAria: document.activeElement?.getAttribute?.('aria-label') || null,
++      status: document.querySelector('.terminal-pane-content')?.getAttribute('data-connection-status') || null,
++      sessionMeta: term?.__piclawSessionMeta || null,
++      hasBlankSnapshot: term?.hasSnapshot?.() ?? null,
++      isResizing: term?._isResizing ?? null,
++      writeQueueLength: term?._writeQueue?.length ?? null,
++      cols: term?.cols ?? null,
++      rows: term?.rows ?? null,
++      lines,
++    };
++  });
++}
++
++const storageState = await bootstrapE2EStorageState({
++  baseUrl: 'http://127.0.0.1:8080',
++  internalSecret: process.env.PICLAW_INTERNAL_SECRET || process.env.PICLAW_WEB_INTERNAL_SECRET,
++});
++const browser = await chromium.launch({ headless: true, executablePath: process.env.PICLAW_PLAYWRIGHT_EXECUTABLE_PATH });
++const context = await browser.newContext({ storageState, viewport: { width: 1280, height: 900 } });
++const page = await context.newPage();
++const events: any[] = [];
++page.on('console', (msg) => events.push({ kind: 'console', type: msg.type(), text: msg.text(), ts: Date.now() }));
++page.on('pageerror', (err) => events.push({ kind: 'pageerror', text: String(err), ts: Date.now() }));
++
++await page.goto('http://127.0.0.1:8080', { waitUntil: 'domcontentloaded' });
++await page.waitForTimeout(2000);
++
++for (let cycle = 1; cycle <= cycles; cycle += 1) {
++  if (cycle === 1) {
++    await page.keyboard.press('Control+`');
++    await page.locator('.terminal-live-host').first().waitFor({ state: 'visible', timeout: 15000 });
++    await page.waitForTimeout(200);
++  } else {
++    await page.locator('button[aria-label="Hide terminal"]').first().click();
++    await page.waitForTimeout(120);
++    await page.keyboard.press('Control+`');
++    await page.locator('.terminal-live-host').first().waitFor({ state: 'visible', timeout: 15000 });
++    await page.waitForTimeout(reopenWaitMs);
 +  }
 +
-+  const cookie = parseSetCookie(response.headers.get('set-cookie'), baseUrl);
-+  return {
-+    cookies: [cookie],
-+    origins: [],
-+  };
++  await page.locator('.terminal-live-host').first().click({ position: { x: 30, y: 30 } });
++  const before = await readState(page);
++  const cmd = `printf "__RACE_${cycle}__\\n"`;
++  await page.keyboard.type(cmd, { delay: typeDelayMs });
++  await page.keyboard.press('Enter');
++  await page.waitForTimeout(450);
++  const after450 = await readState(page);
++  await page.waitForTimeout(1500);
++  const after1950 = await readState(page);
++  const joined = JSON.stringify(after1950.lines || []);
++  const ok = joined.includes(`__RACE_${cycle}__`);
++  console.log(JSON.stringify({ cycle, before, after450, after1950, ok }));
 +}
++
++console.log('EVENTS=' + JSON.stringify(events));
++await context.close();
++await browser.close();
 diff --git a/runtime/scripts/playwright/terminal-reopen.ts b/runtime/scripts/playwright/terminal-reopen.ts
 new file mode 100644
 index 00000000..93939147
@@ -481,151 +531,101 @@ index 00000000..93939147
 +}
 +
 +await main();
-diff --git a/runtime/scripts/playwright/terminal-reopen-multicycle.ts b/runtime/scripts/playwright/terminal-reopen-multicycle.ts
+diff --git a/runtime/scripts/playwright/web-auth-bootstrap.ts b/runtime/scripts/playwright/web-auth-bootstrap.ts
 new file mode 100644
-index 00000000..21d9d370
+index 00000000..22747d61
 --- /dev/null
-+++ b/runtime/scripts/playwright/terminal-reopen-multicycle.ts
-@@ -0,0 +1,50 @@
++++ b/runtime/scripts/playwright/web-auth-bootstrap.ts
+@@ -0,0 +1,92 @@
 +#!/usr/bin/env bun
-+import { chromium } from 'playwright';
-+import { bootstrapE2EStorageState } from './web-auth-bootstrap.ts';
++// @ts-nocheck
 +
-+function readDebug(page: any) {
-+  return page.evaluate(() => {
-+    const host = document.querySelector('.terminal-live-host');
-+    const term = host && (host as any).__terminal;
-+    if (!term) return null;
-+    return {
-+      sessionMeta: term.__piclawSessionMeta || null,
-+      lines: Array.from({ length: 8 }, (_, row) => {
-+        const line = term.wasmTerm?.getLine?.(row);
-+        if (!line) return null;
-+        return line.map((cell: any) => (!cell || cell.width === 0) ? '' : String.fromCodePoint(cell.codepoint || 32)).join('').replace(/\s+$/g, '');
-+      }),
-+      activeTag: document.activeElement?.tagName || null,
-+      activeAria: document.activeElement?.getAttribute?.('aria-label') || null,
-+    };
-+  });
-+}
-+
-+const cycles = Number(process.env.PICLAW_MULTICYCLE_COUNT || '5');
-+const storageState = await bootstrapE2EStorageState({
-+  baseUrl: 'http://127.0.0.1:8080',
-+  internalSecret: process.env.PICLAW_INTERNAL_SECRET || process.env.PICLAW_WEB_INTERNAL_SECRET,
-+});
-+const browser = await chromium.launch({ headless: true, executablePath: process.env.PICLAW_PLAYWRIGHT_EXECUTABLE_PATH });
-+const context = await browser.newContext({ storageState });
-+const page = await context.newPage();
-+await page.goto('http://127.0.0.1:8080', { waitUntil: 'domcontentloaded' });
-+await page.waitForTimeout(2000);
-+
-+for (let cycle = 1; cycle <= cycles; cycle += 1) {
-+  await page.keyboard.press('Control+`');
-+  await page.locator('.terminal-live-host').first().waitFor({ state: 'visible', timeout: 15000 });
-+  await page.waitForTimeout(700);
-+  await page.locator('.terminal-live-host').first().click({ position: { x: 24, y: 24 } });
-+  await page.keyboard.type(`printf "__CYCLE_${cycle}__\\n"\n`, { delay: 10 });
-+  await page.waitForTimeout(1500);
-+  const afterType = await readDebug(page);
-+  console.log(JSON.stringify({ cycle, phase: 'afterType', state: afterType }));
-+  if (cycle < cycles) {
-+    await page.locator('button[aria-label="Hide terminal"]').first().click();
-+    await page.waitForTimeout(350);
++export function resolveInternalSecret(explicitSecret?: string): string {
++  const value = String(
++    explicitSecret ||
++    process.env.PICLAW_INTERNAL_SECRET ||
++    process.env.PICLAW_WEB_INTERNAL_SECRET ||
++    ''
++  ).trim();
++  if (!value) {
++    throw new Error('Missing internal secret. Pass --internal-secret or set PICLAW_INTERNAL_SECRET / PICLAW_WEB_INTERNAL_SECRET.');
 +  }
++  return value;
 +}
 +
-+await context.close();
-+await browser.close();
-diff --git a/runtime/scripts/playwright/terminal-reopen-race.ts b/runtime/scripts/playwright/terminal-reopen-race.ts
-new file mode 100644
-index 00000000..1dcd9d08
---- /dev/null
-+++ b/runtime/scripts/playwright/terminal-reopen-race.ts
-@@ -0,0 +1,86 @@
-+#!/usr/bin/env bun
-+import { chromium } from 'playwright';
-+import { bootstrapE2EStorageState } from './web-auth-bootstrap.ts';
++function parseSetCookie(setCookieHeader: string | null, baseUrl: string) {
++  if (!setCookieHeader) {
++    throw new Error('E2E auth bootstrap did not return a Set-Cookie header.');
++  }
 +
-+const cycles = Number(process.env.PICLAW_RACE_CYCLES || '12');
-+const reopenWaitMs = Number(process.env.PICLAW_RACE_REOPEN_WAIT_MS || '40');
-+const typeDelayMs = Number(process.env.PICLAW_RACE_TYPE_DELAY_MS || '8');
++  const parts = setCookieHeader.split(';').map((part) => part.trim()).filter(Boolean);
++  const [nameValue, ...attrs] = parts;
++  const eq = nameValue.indexOf('=');
++  if (eq <= 0) {
++    throw new Error(`Invalid Set-Cookie header: ${setCookieHeader}`);
++  }
 +
-+function sleep(ms: number) {
-+  return new Promise((resolve) => setTimeout(resolve, ms));
-+}
++  const name = nameValue.slice(0, eq).trim();
++  const value = nameValue.slice(eq + 1);
++  const url = new URL(baseUrl);
++  const cookie = {
++    name,
++    value,
++    domain: url.hostname,
++    path: '/',
++    httpOnly: false,
++    secure: url.protocol === 'https:',
++    sameSite: 'Lax',
++    expires: -1,
++  } as any;
 +
-+async function readState(page: any) {
-+  return page.evaluate(() => {
-+    const host = document.querySelector('.terminal-live-host');
-+    const term = host && (host as any).__terminal;
-+    const lines = [];
-+    if (term?.wasmTerm?.getLine) {
-+      for (let row = 0; row < 8; row += 1) {
-+        const line = term.wasmTerm.getLine(row);
-+        if (!line) {
-+          lines.push(null);
-+          continue;
-+        }
-+        lines.push(line.map((cell: any) => (!cell || cell.width === 0) ? '' : String.fromCodePoint(cell.codepoint || 32)).join('').replace(/\s+$/g, ''));
-+      }
++  for (const attr of attrs) {
++    const [rawKey, ...rawRest] = attr.split('=');
++    const key = String(rawKey || '').trim().toLowerCase();
++    const attrValue = rawRest.join('=').trim();
++    if (key === 'path' && attrValue) cookie.path = attrValue;
++    else if (key === 'domain' && attrValue) cookie.domain = attrValue.replace(/^\./, '');
++    else if (key === 'httponly') cookie.httpOnly = true;
++    else if (key === 'secure') cookie.secure = true;
++    else if (key === 'samesite' && attrValue) {
++      const normalized = attrValue.toLowerCase();
++      if (normalized === 'strict') cookie.sameSite = 'Strict';
++      else if (normalized === 'none') cookie.sameSite = 'None';
++      else cookie.sameSite = 'Lax';
++    } else if (key === 'max-age' && attrValue && Number.isFinite(Number(attrValue))) {
++      cookie.expires = Math.floor(Date.now() / 1000) + Number(attrValue);
 +    }
-+    return {
-+      activeTag: document.activeElement?.tagName || null,
-+      activeAria: document.activeElement?.getAttribute?.('aria-label') || null,
-+      status: document.querySelector('.terminal-pane-content')?.getAttribute('data-connection-status') || null,
-+      sessionMeta: term?.__piclawSessionMeta || null,
-+      hasBlankSnapshot: term?.hasSnapshot?.() ?? null,
-+      isResizing: term?._isResizing ?? null,
-+      writeQueueLength: term?._writeQueue?.length ?? null,
-+      cols: term?.cols ?? null,
-+      rows: term?.rows ?? null,
-+      lines,
-+    };
-+  });
-+}
-+
-+const storageState = await bootstrapE2EStorageState({
-+  baseUrl: 'http://127.0.0.1:8080',
-+  internalSecret: process.env.PICLAW_INTERNAL_SECRET || process.env.PICLAW_WEB_INTERNAL_SECRET,
-+});
-+const browser = await chromium.launch({ headless: true, executablePath: process.env.PICLAW_PLAYWRIGHT_EXECUTABLE_PATH });
-+const context = await browser.newContext({ storageState, viewport: { width: 1280, height: 900 } });
-+const page = await context.newPage();
-+const events: any[] = [];
-+page.on('console', (msg) => events.push({ kind: 'console', type: msg.type(), text: msg.text(), ts: Date.now() }));
-+page.on('pageerror', (err) => events.push({ kind: 'pageerror', text: String(err), ts: Date.now() }));
-+
-+await page.goto('http://127.0.0.1:8080', { waitUntil: 'domcontentloaded' });
-+await page.waitForTimeout(2000);
-+
-+for (let cycle = 1; cycle <= cycles; cycle += 1) {
-+  if (cycle === 1) {
-+    await page.keyboard.press('Control+`');
-+    await page.locator('.terminal-live-host').first().waitFor({ state: 'visible', timeout: 15000 });
-+    await page.waitForTimeout(200);
-+  } else {
-+    await page.locator('button[aria-label="Hide terminal"]').first().click();
-+    await page.waitForTimeout(120);
-+    await page.keyboard.press('Control+`');
-+    await page.locator('.terminal-live-host').first().waitFor({ state: 'visible', timeout: 15000 });
-+    await page.waitForTimeout(reopenWaitMs);
 +  }
 +
-+  await page.locator('.terminal-live-host').first().click({ position: { x: 30, y: 30 } });
-+  const before = await readState(page);
-+  const cmd = `printf "__RACE_${cycle}__\\n"`;
-+  await page.keyboard.type(cmd, { delay: typeDelayMs });
-+  await page.keyboard.press('Enter');
-+  await page.waitForTimeout(450);
-+  const after450 = await readState(page);
-+  await page.waitForTimeout(1500);
-+  const after1950 = await readState(page);
-+  const joined = JSON.stringify(after1950.lines || []);
-+  const ok = joined.includes(`__RACE_${cycle}__`);
-+  console.log(JSON.stringify({ cycle, before, after450, after1950, ok }));
++  return cookie;
 +}
 +
-+console.log('EVENTS=' + JSON.stringify(events));
-+await context.close();
-+await browser.close();
++export async function bootstrapE2EStorageState(options: {
++  baseUrl: string;
++  internalSecret?: string;
++}) {
++  const baseUrl = String(options.baseUrl || '').trim().replace(/\/$/, '');
++  if (!baseUrl) throw new Error('bootstrapE2EStorageState requires a baseUrl.');
++
++  const response = await fetch(`${baseUrl}/auth/e2e/bootstrap`, {
++    method: 'POST',
++    headers: {
++      'x-piclaw-internal-secret': resolveInternalSecret(options.internalSecret),
++    },
++  });
++
++  const bodyText = await response.text();
++  if (!response.ok) {
++    throw new Error([
++      `E2E auth bootstrap failed: HTTP ${response.status}`,
++      bodyText && `body: ${bodyText}`,
++      'Expected loopback access to the local web server plus a valid internal secret.',
++    ].filter(Boolean).join('\n'));
++  }
++
++  const cookie = parseSetCookie(response.headers.get('set-cookie'), baseUrl);
++  return {
++    cookies: [cookie],
++    origins: [],
++  };
++}
