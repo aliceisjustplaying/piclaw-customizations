@@ -15,11 +15,12 @@ The update script handles this automatically.
 | 15 | `compose-box.ts` | Add `/rebuild` to slash command autocomplete |
 | 24 | `package.json`, `bun.lock` | Pin `ghostty-web` vendoring to the forked commit that carries the upstream bootstrap/open-reset fix |
 | 27 | `agent-control-helpers.ts`, `handlers/model.ts`, `compose-box.ts`, `chat.css` | Provider-scoped `max` aliasing, provider-native cycle labels, and inline query notices for blank `/thinking`/`/effort`/`/model` |
+| 28 | `provider-usage.ts`, `provider-usage.test.ts`, `compose-box.ts` | Anthropic OAuth provider usage: show 5h/week usage windows, fetch funded overage grant state, and keep extra-usage details in the model tooltip without adding them to the inline hint |
 
 ## Retired patches
 
 Retired patches that are still useful for history/reference are kept under `patches/retired/`.
-Numbering preserved — next new patch is **28**.
+Numbering preserved — next new patch is **29**.
 
 | # | Status | Reason |
 |---|--------|--------|
