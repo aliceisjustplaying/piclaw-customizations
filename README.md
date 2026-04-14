@@ -37,11 +37,11 @@ scripts/
 
 See [`patches/README.md`](patches/README.md) for the full patch table, retired patches, and terminal patch outcomes.
 
-Active source patches: `01`, `02`, `04`, `05`, `11`, `15`, `24`, `25`
+Active source patches: `01`, `02`, `04`, `05`, `11`, `15`, `24`, `25`, `26`
 Retired after upstream merge: `20`, `21`, `22`, `23` (stored under `patches/retired/`)
 Superseded locally: `06` (`patches/06-terminal-dock-and-popout-fixes.patch.superseded`)
 Post-install patches: `01` (jiti/Bun fix), `02` (context usage)
-Next available number: **26**
+Next available number: **27**
 
 ## Codex Delegate Extension
 

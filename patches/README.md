@@ -15,11 +15,12 @@ The update script handles this automatically.
 | 15 | `compose-box.ts` | Add `/rebuild` to slash command autocomplete |
 | 24 | `package.json`, `bun.lock` | Pin `ghostty-web` vendoring to the forked commit that carries the upstream bootstrap/open-reset fix |
 | 25 | `turn-coordinator.ts`, `run-agent-orchestrator.ts` | Surface provider errors (e.g. Anthropic 400) instead of silent "no response" |
+| 26 | `agent-control-helpers.ts`, `agent-control-types.ts`, `command-parsers.ts`, `command-registry.ts`, `handlers/model.ts`, `runtime-facade.ts`, `agent.ts`, `app-auth-bootstrap.ts`, `app-model-state.ts` | `/effort` alias for `/thinking`, accept `max` as level alias, show provider-native labels on UI |
 
 ## Retired patches
 
 Retired patches that are still useful for history/reference are kept under `patches/retired/`.
-Numbering preserved — next new patch is **26**.
+Numbering preserved — next new patch is **27**.
 
 | # | Status | Reason |
 |---|--------|--------|
