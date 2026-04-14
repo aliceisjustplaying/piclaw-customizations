@@ -623,25 +623,23 @@ format_summary_version() {
   fi
 }
 
+count_active_patches() {
+  local count=0
+  local p
+  for p in "${PATCH_DIR}"/[0-9]*.patch; do
+    [ -f "${p}" ] || continue
+    count=$((count + 1))
+  done
+  echo "${count}"
+}
+
 print_summary_report() {
-  local piclaw_line codex_line claude_line bundled_pi_agent_line global_pi_agent_line
+  local patch_count
+  patch_count="$(count_active_patches)"
 
-  piclaw_line="$(format_summary_version "${PICLAW_VERSION_BEFORE}" "${PICLAW_VERSION_AFTER}")"
-  codex_line="$(format_summary_version "${CODEX_VERSION_BEFORE}" "${CODEX_VERSION_AFTER}")"
-  claude_line="$(format_summary_version "${CLAUDE_VERSION_BEFORE}" "${CLAUDE_VERSION_AFTER}")"
-  bundled_pi_agent_line="$(format_summary_version "${PI_AGENT_VERSION_BEFORE}" "${PI_AGENT_VERSION_AFTER}")"
-  global_pi_agent_line="$(format_summary_version "${GLOBAL_PI_AGENT_VERSION_BEFORE}" "${GLOBAL_PI_AGENT_VERSION_AFTER}")"
-
-  printf '═══════════════════════════════════════════════════════\n'
-  printf '  PiClaw Update Report\n'
-  printf '═══════════════════════════════════════════════════════\n'
-  printf '  PiClaw:  %s\n' "${piclaw_line}"
-  printf '           https://github.com/rcarmo/piclaw/commit/%s\n' "${PICLAW_COMMIT_AFTER}"
-  printf '  Codex:   %s\n' "${codex_line}"
-  printf '  Claude:  %s\n' "${claude_line}"
-  printf '  pi-coding-agent (bundled): %s\n' "${bundled_pi_agent_line}"
-  printf '  pi-coding-agent (global):  %s\n' "${global_pi_agent_line}"
-  printf '═══════════════════════════════════════════════════════\n'
+  # Single dense line for agent consumption
+  printf '[piclaw-update] Update complete: %s, %s patches, commit %s\n' \
+    "${PICLAW_VERSION_AFTER}" "${patch_count}" "${PICLAW_COMMIT_AFTER:0:10}"
 }
 
 deploy_custom_extensions() {

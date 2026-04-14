@@ -56,22 +56,21 @@ main() {
   systemctl restart piclaw.service
 
   if wait_for_health; then
-    status "Update complete"
+    status "Update complete, health OK"
     exit 0
   fi
 
-  error "Updated service failed health checks; rolling back"
+  error "Health check failed after restart; rolling back"
   run_as_agent "${SCRIPT_DIR}/piclaw-rollback.sh"
 
-  status "Restarting piclaw service after rollback"
   systemctl restart piclaw.service
 
   if ! wait_for_health; then
-    error "Rollback failed health checks"
+    error "Rollback also failed health checks"
     exit 1
   fi
 
-  error "Update was rolled back after a failed post-restart health check"
+  error "Rolled back — update failed health check"
   exit 1
 }
 
