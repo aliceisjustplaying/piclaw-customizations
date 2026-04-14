@@ -12,16 +12,18 @@ REPO_URL="https://github.com/rcarmo/piclaw.git"
 UPSTREAM_REF="main"
 STATE_FILE="${SCRIPT_DIR}/.state/upstream-audit-state.json"
 PRINT_JSON=0
+DRY_RUN=0
 
 usage() {
 	cat <<'EOF'
-Usage: audit-upstream.sh [--repo-url URL] [--ref REF] [--state-file PATH] [--json]
+Usage: audit-upstream.sh [--repo-url URL] [--ref REF] [--state-file PATH] [--json] [--dry-run]
 
 Options:
   --repo-url URL     Override upstream repo URL (default: https://github.com/rcarmo/piclaw.git)
   --ref REF          Upstream branch or ref to audit (default: main)
   --state-file PATH  Persist audit state here (default: patches/.state/upstream-audit-state.json)
   --json             Print the resulting state JSON to stdout
+  --dry-run          Do not write state; compute and print results only
   -h, --help         Show this help text
 EOF
 }
@@ -42,6 +44,10 @@ while [ "$#" -gt 0 ]; do
 		;;
 	--json)
 		PRINT_JSON=1
+		shift
+		;;
+	--dry-run)
+		DRY_RUN=1
 		shift
 		;;
 	-h | --help)
@@ -66,7 +72,9 @@ require_command() {
 require_command git
 require_command jq
 
-mkdir -p "$(dirname "$STATE_FILE")"
+if [ "$DRY_RUN" -eq 0 ]; then
+	mkdir -p "$(dirname "$STATE_FILE")"
+fi
 
 patch_strip_level() {
 	local patch_file="$1"
@@ -114,8 +122,15 @@ if [ "${#PATCH_FILES[@]}" -eq 0 ]; then
 		--arg audited_at "$AUDITED_AT" \
 		--arg upstream_ref "$UPSTREAM_REF" \
 		--arg upstream_sha "$UPSTREAM_SHA" \
-		'{version:1,audited_at:$audited_at,upstream_ref:$upstream_ref,upstream_sha:$upstream_sha,patches:[]}' |
-		tee "$STATE_FILE" >/dev/null
+		'{version:1,audited_at:$audited_at,upstream_ref:$upstream_ref,upstream_sha:$upstream_sha,patches:[]}' >"$RESULTS_JSON"
+	if [ "$DRY_RUN" -eq 0 ]; then
+		cp "$RESULTS_JSON" "$STATE_FILE"
+	else
+		echo "[audit-upstream] Dry run: state file not written"
+	fi
+	if [ "$PRINT_JSON" -eq 1 ]; then
+		cat "$RESULTS_JSON"
+	fi
 	exit 0
 fi
 
@@ -201,20 +216,27 @@ jq -s \
 	--arg upstream_sha "$UPSTREAM_SHA" \
 	'{version:1,audited_at:$audited_at,upstream_ref:$upstream_ref,upstream_sha:$upstream_sha,patches:.}' \
 	"$RESULTS_NDJSON" >"$RESULTS_JSON"
-cp "$RESULTS_JSON" "$NEXT_STATE"
-mv "$NEXT_STATE" "$STATE_FILE"
 
-changed_count="$(jq '[.patches[] | select(.changed)] | length' "$STATE_FILE")"
+OUTPUT_FILE="$RESULTS_JSON"
+if [ "$DRY_RUN" -eq 0 ]; then
+	cp "$RESULTS_JSON" "$NEXT_STATE"
+	mv "$NEXT_STATE" "$STATE_FILE"
+	OUTPUT_FILE="$STATE_FILE"
+else
+	echo "[audit-upstream] Dry run: state file not written"
+fi
+
+changed_count="$(jq '[.patches[] | select(.changed)] | length' "$OUTPUT_FILE")"
 printf '[audit-upstream] Summary: %s needed, %s upstreamed, %s drifted, %s blocked\n' \
 	"$needed_count" "$upstreamed_count" "$drift_count" "$blocked_count"
 
 if [ "$changed_count" -gt 0 ]; then
 	echo "[audit-upstream] Status changes:"
-	jq -r '.patches[] | select(.changed) | "  - \(.patch): \(.previous_status) -> \(.status)"' "$STATE_FILE"
+	jq -r '.patches[] | select(.changed) | "  - \(.patch): \(.previous_status) -> \(.status)"' "$OUTPUT_FILE"
 fi
 
 if [ "$PRINT_JSON" -eq 1 ]; then
-	cat "$STATE_FILE"
+	cat "$OUTPUT_FILE"
 fi
 
 if [ "$drift_count" -gt 0 ] || [ "$blocked_count" -gt 0 ]; then

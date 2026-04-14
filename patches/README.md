@@ -64,6 +64,7 @@ Numbering preserved — next new patch is **29**.
 
 ```bash
 ./patches/audit-upstream.sh
+./patches/audit-upstream.sh --dry-run --json
 ```
 
 Behavior:
@@ -76,11 +77,13 @@ Behavior:
 
 ```bash
 ./patches/watch-upstream-prs.sh
+./patches/watch-upstream-prs.sh --dry-run --json
 ```
 
 `watch-upstream-prs.sh` only polls patches marked with `"track_upstream": true` in `manifest.json`.
 Use that for patches we actually intend to upstream; leave local-only patches at `false`.
 When a tracked PR transitions to merged, the watcher reruns `audit-upstream.sh` immediately.
+`--dry-run` skips state writes; on the PR watcher it also implies `--no-audit`.
 
 ## Post-install patches
 

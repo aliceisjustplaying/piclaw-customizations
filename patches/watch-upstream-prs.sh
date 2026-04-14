@@ -9,16 +9,18 @@ MANIFEST_FILE="${SCRIPT_DIR}/manifest.json"
 STATE_FILE="${SCRIPT_DIR}/.state/upstream-pr-watch-state.json"
 RUN_AUDIT_ON_MERGE=1
 PRINT_JSON=0
+DRY_RUN=0
 
 usage() {
 	cat <<'EOF'
-Usage: watch-upstream-prs.sh [--manifest PATH] [--state-file PATH] [--no-audit] [--json]
+Usage: watch-upstream-prs.sh [--manifest PATH] [--state-file PATH] [--no-audit] [--json] [--dry-run]
 
 Options:
   --manifest PATH    Patch metadata manifest (default: patches/manifest.json)
   --state-file PATH  Persist watcher state here (default: patches/.state/upstream-pr-watch-state.json)
   --no-audit         Do not run audit-upstream.sh after merge transitions
   --json             Print the resulting watcher state JSON to stdout
+  --dry-run          Do not write state; implies --no-audit
   -h, --help         Show this help text
 EOF
 }
@@ -39,6 +41,11 @@ while [ "$#" -gt 0 ]; do
 		;;
 	--json)
 		PRINT_JSON=1
+		shift
+		;;
+	--dry-run)
+		DRY_RUN=1
+		RUN_AUDIT_ON_MERGE=0
 		shift
 		;;
 	-h | --help)
@@ -68,7 +75,9 @@ if [ ! -f "$MANIFEST_FILE" ]; then
 	exit 1
 fi
 
-mkdir -p "$(dirname "$STATE_FILE")"
+if [ "$DRY_RUN" -eq 0 ]; then
+	mkdir -p "$(dirname "$STATE_FILE")"
+fi
 WORK_DIR="$(mktemp -d)"
 RESULTS_NDJSON="$WORK_DIR/results.ndjson"
 NEXT_STATE="$WORK_DIR/state.json"
@@ -104,10 +113,14 @@ if [ "${#TRACKED_ROWS[@]}" -eq 0 ]; then
 	jq -n \
 		--arg checked_at "$(date -Iseconds)" \
 		--arg repo "$GITHUB_REPO" \
-		'{version:1,checked_at:$checked_at,repo:$repo,entries:[]}' |
-		tee "$STATE_FILE" >/dev/null
+		'{version:1,checked_at:$checked_at,repo:$repo,entries:[]}' >"$NEXT_STATE"
+	if [ "$DRY_RUN" -eq 0 ]; then
+		cp "$NEXT_STATE" "$STATE_FILE"
+	else
+		echo "[watch-upstream-prs] Dry run: state file not written"
+	fi
 	if [ "$PRINT_JSON" -eq 1 ]; then
-		cat "$STATE_FILE"
+		cat "$NEXT_STATE"
 	fi
 	exit 0
 fi
@@ -202,15 +215,22 @@ jq -s \
 	--arg repo "$GITHUB_REPO" \
 	'{version:1,checked_at:$checked_at,repo:$repo,entries:.}' \
 	"$RESULTS_NDJSON" >"$NEXT_STATE"
-mv "$NEXT_STATE" "$STATE_FILE"
+
+OUTPUT_FILE="$NEXT_STATE"
+if [ "$DRY_RUN" -eq 0 ]; then
+	cp "$NEXT_STATE" "$STATE_FILE"
+	OUTPUT_FILE="$STATE_FILE"
+else
+	echo "[watch-upstream-prs] Dry run: state file not written"
+fi
 
 if [ "$other_changes" -gt 0 ]; then
 	echo "[watch-upstream-prs] PR state changes detected: $other_changes"
-	jq -r '.entries[] | select(.changed) | "  - patch \(.patch_number) / PR #\(.pr): \(.change_summary // "changed")"' "$STATE_FILE"
+	jq -r '.entries[] | select(.changed) | "  - patch \(.patch_number) / PR #\(.pr): \(.change_summary // "changed")"' "$OUTPUT_FILE"
 fi
 
 if [ "$PRINT_JSON" -eq 1 ]; then
-	cat "$STATE_FILE"
+	cat "$OUTPUT_FILE"
 fi
 
 if [ "$merged_changes" -gt 0 ] && [ "$RUN_AUDIT_ON_MERGE" -eq 1 ]; then
