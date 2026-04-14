@@ -222,7 +222,7 @@ index 093638db..4354d4f8 100644
        provider_usage: providerUsage,
      };
 diff --git a/runtime/src/channels/web/handlers/agent.ts b/runtime/src/channels/web/handlers/agent.ts
-index 3a323750..5b2e35c8 100644
+index 3a323750..17d4eeee 100644
 --- a/runtime/src/channels/web/handlers/agent.ts
 +++ b/runtime/src/channels/web/handlers/agent.ts
 @@ -330,11 +330,13 @@ export async function handleAgentMessage(
@@ -247,6 +247,15 @@ index 3a323750..5b2e35c8 100644
          supports_thinking: supportsThinking,
        });
        if (command.type === "model" || command.type === "cycle_model") {
+@@ -357,7 +360,7 @@ export async function handleAgentMessage(
+     return channel.json(
+       {
+         thread_id: null,
+-        command: { ...result, model_label: nextModel, thinking_level: thinkingLevel, supports_thinking: supportsThinking },
++        command: { ...result, model_label: nextModel, thinking_level: thinkingLevel, thinking_level_label: thinkingLevelLabel ?? thinkingLevel, supports_thinking: supportsThinking },
+         ui_only: true,
+       },
+       200,
 @@ -580,12 +583,14 @@ export async function handleAgentMessage(
      if (result.status === "success" && modelCommands.includes(command.type)) {
        let nextModel = result.model_label ?? null;
