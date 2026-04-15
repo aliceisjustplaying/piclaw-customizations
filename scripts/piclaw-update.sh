@@ -511,36 +511,14 @@ capture_tool_versions_before_updates() {
 }
 
 update_codex_cli() {
-  if ! command -v npm >/dev/null 2>&1; then
-    CODEX_VERSION_AFTER="${CODEX_VERSION_BEFORE}"
-    status "Codex update skipped (npm not installed)"
-    return 0
-  fi
-
-  status "Updating Codex CLI"
-  if ! quiet npm update -g @openai/codex; then
-    if ! quiet npm install -g @openai/codex; then
-      status "Codex CLI update failed; continuing"
-    fi
-  fi
-
   CODEX_VERSION_AFTER="$(get_codex_version)"
+  status "Codex CLI is Nix-managed; skipping self-update"
   status "$(update_report_line "Codex" "${CODEX_VERSION_BEFORE}" "${CODEX_VERSION_AFTER}")"
 }
 
 update_claude_cli() {
-  if ! command -v claude >/dev/null 2>&1; then
-    CLAUDE_VERSION_AFTER="${CLAUDE_VERSION_BEFORE}"
-    status "$(update_report_line "Claude" "${CLAUDE_VERSION_BEFORE}" "${CLAUDE_VERSION_AFTER}")"
-    return 0
-  fi
-
-  status "Updating Claude CLI"
-  if ! quiet claude update; then
-    status "Claude CLI update failed; continuing"
-  fi
-
   CLAUDE_VERSION_AFTER="$(get_claude_version)"
+  status "Claude CLI is Nix-managed; skipping self-update"
   status "$(update_report_line "Claude" "${CLAUDE_VERSION_BEFORE}" "${CLAUDE_VERSION_AFTER}")"
 }
 
