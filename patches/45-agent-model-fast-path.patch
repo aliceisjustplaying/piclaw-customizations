@@ -122,7 +122,7 @@ index a940d757..db7c5bf4 100644
 +  usageRefreshInFlight.clear();
  }
 diff --git a/runtime/src/agent-pool/runtime-facade.ts b/runtime/src/agent-pool/runtime-facade.ts
-index 48ca2b1d..5897995f 100644
+index 4354d4f8..5897995f 100644
 --- a/runtime/src/agent-pool/runtime-facade.ts
 +++ b/runtime/src/agent-pool/runtime-facade.ts
 @@ -11,7 +11,7 @@ import { applyControlCommand, type AgentControlCommand, type AgentControlResult
@@ -143,19 +143,48 @@ index 48ca2b1d..5897995f 100644
  }
  
  /** Dependencies required by AgentRuntimeFacade. */
-@@ -435,8 +435,11 @@ export class AgentRuntimeFacade {
+@@ -409,8 +409,13 @@ export class AgentRuntimeFacade {
+   }
+ 
+   async getAvailableModels(chatJid: string): Promise<AvailableModelsResult> {
+-    const session = (await this.options.getOrCreateRuntime(chatJid)).session;
+-    const registry = (session as AgentSession & { modelRegistry?: ModelRegistry }).modelRegistry ?? this.options.modelRegistry;
++    // Passive UI refreshes (thread switching, wake refresh, branch-picker
++    // updates) should not cold-start an AgentSession just to paint model state.
++    // When a runtime is already cached, return the full session-specific state.
++    // Otherwise, fall back to the shared registry so the UI can still render the
++    // available model list without paying multi-second runtime hydration costs.
++    const session = this.options.pool.get(chatJid)?.runtime.session ?? null;
++    const registry = (session as (AgentSession & { modelRegistry?: ModelRegistry }) | null)?.modelRegistry ?? this.options.modelRegistry;
+     registry.refresh();
+     const available = registry.getAvailable();
+     const modelOptions = available.map((model) => ({
+@@ -424,15 +429,18 @@ export class AgentRuntimeFacade {
+       reasoning: Boolean(model.reasoning),
+     }));
+     const models = modelOptions.map((model) => model.label);
+-    const currentModel = session.model ? `${session.model.provider}/${session.model.id}` : null;
+-    const thinkingLevel = session.thinkingLevel ?? null;
+-    const supportsThinking = typeof (session as AgentSession & { supportsThinking?: () => boolean }).supportsThinking === "function"
++    const currentModel = session?.model ? `${session.model.provider}/${session.model.id}` : null;
++    const thinkingLevel = session?.thinkingLevel ?? null;
++    const supportsThinking = session && typeof (session as AgentSession & { supportsThinking?: () => boolean }).supportsThinking === "function"
        ? (session as AgentSession & { supportsThinking: () => boolean }).supportsThinking()
-       : Boolean(session?.model?.reasoning);
-     const providerUsage = session?.model?.provider
+-      : Boolean(session.model?.reasoning);
+-    const providerUsage = session.model?.provider
 -      ? await getProviderUsage(this.options.authStorage, session.model.provider)
++      : Boolean(session?.model?.reasoning);
++    const providerUsage = session?.model?.provider
 +      ? (peekProviderUsage(session.model.provider, { allowStale: true }) ?? null)
        : null;
+-    const thinkingLevelLabel = thinkingLevel && session.model?.provider
 +    if (session?.model?.provider) {
 +      void warmProviderUsage(this.options.authStorage, session.model.provider);
 +    }
-     const thinkingLevelLabel = thinkingLevel && session?.model?.provider
++    const thinkingLevelLabel = thinkingLevel && session?.model?.provider
        ? formatThinkingLevelForDisplay(thinkingLevel, session.model.provider)
        : thinkingLevel;
+     return {
 diff --git a/runtime/test/agent-pool/provider-usage.test.ts b/runtime/test/agent-pool/provider-usage.test.ts
 index b1461c8d..77a9917c 100644
 --- a/runtime/test/agent-pool/provider-usage.test.ts

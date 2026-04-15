@@ -1,17 +1,17 @@
-From 7be88b90e5b06068c547867f6bb298dcd4db4bad Mon Sep 17 00:00:00 2001
+From c3475d1b2ee852f738bdecb9705e3e864ec2059c Mon Sep 17 00:00:00 2001
 From: alice <aliceisjustplaying@gmail.com>
-Date: Wed, 15 Apr 2026 12:03:10 +0000
+Date: Wed, 15 Apr 2026 12:14:18 +0000
 Subject: [PATCH] perf: cache recent timelines in memory
 
 ---
  .../web/app-chat-refresh-lifecycle.test.ts    |  29 +++-
  runtime/test/web/app-timeline-cache.test.ts   |  57 ++++++++
  runtime/web/src/app.ts                        |   2 +
- .../web/src/ui/app-chat-refresh-lifecycle.ts  |  46 ++++++-
- .../src/ui/app-main-timeline-composition.ts   |  44 +++---
+ .../web/src/ui/app-chat-refresh-lifecycle.ts  |  42 +++++-
+ .../src/ui/app-main-timeline-composition.ts   |  12 +-
  runtime/web/src/ui/app-timeline-cache.ts      | 128 ++++++++++++++++++
  runtime/web/src/ui/use-timeline.ts            | 116 +++++++++++++---
- 7 files changed, 377 insertions(+), 45 deletions(-)
+ 7 files changed, 362 insertions(+), 24 deletions(-)
  create mode 100644 runtime/test/web/app-timeline-cache.test.ts
  create mode 100644 runtime/web/src/ui/app-timeline-cache.ts
 
@@ -138,7 +138,7 @@ index 00000000..7a97f6cd
 +  clearTimelineSnapshotCache();
 +});
 diff --git a/runtime/web/src/app.ts b/runtime/web/src/app.ts
-index 9aab2b15..ee137a74 100644
+index 0348aa41..d371d69d 100644
 --- a/runtime/web/src/app.ts
 +++ b/runtime/web/src/app.ts
 @@ -153,6 +153,8 @@ function MainApp({ locationParams, navigate }) {
@@ -151,7 +151,7 @@ index 9aab2b15..ee137a74 100644
      });
  
 diff --git a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
-index becb07bf..400eb987 100644
+index becb07bf..e36234d3 100644
 --- a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
 +++ b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
 @@ -15,6 +15,8 @@ import {
@@ -234,14 +234,9 @@ index becb07bf..400eb987 100644
            currentChatJid,
            getActiveChatAgents: async () => {
              if (traceId) {
-@@ -281,7 +307,18 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
-           },
+@@ -282,6 +308,13 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
            activeChatJidRef,
            setActiveChatAgents,
-+          ...(prewarmRecent ? {
-+            prewarmRecent: true,
-+            prewarmLimit,
-+          } : {}),
          });
 +        if (prewarmRecent) {
 +          prewarmRecentTimelineChats({
@@ -253,7 +248,7 @@ index becb07bf..400eb987 100644
          return null;
        },
      });
-@@ -336,6 +373,7 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -336,6 +369,7 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
        refreshQueueState,
        refreshContextUsage,
        refreshAutoresearchStatus,
@@ -262,7 +257,7 @@ index becb07bf..400eb987 100644
    }, [refreshActiveChatAgents, refreshAutoresearchStatus, refreshContextUsage, refreshCurrentChatBranches, refreshModelState, refreshQueueState]);
  
 diff --git a/runtime/web/src/ui/app-main-timeline-composition.ts b/runtime/web/src/ui/app-main-timeline-composition.ts
-index e16dc681..cdea396f 100644
+index e16dc681..0c19c471 100644
 --- a/runtime/web/src/ui/app-main-timeline-composition.ts
 +++ b/runtime/web/src/ui/app-main-timeline-composition.ts
 @@ -29,6 +29,8 @@ export function useMainAppTimelineComposition(options: {
@@ -283,22 +278,12 @@ index e16dc681..cdea396f 100644
      followupQueueItems,
    } = options;
  
-@@ -55,38 +59,34 @@ export function useMainAppTimelineComposition(options: {
-     scrollToBottom,
-   });
- 
--  const {
--    posts: rawPosts,
--    setPosts,
--    hasMore,
--    setHasMore,
--    hasMoreRef,
--    loadPosts,
--    refreshTimeline,
--    loadMore,
--    loadMoreRef,
+@@ -65,7 +69,13 @@ export function useMainAppTimelineComposition(options: {
+     refreshTimeline,
+     loadMore,
+     loadMoreRef,
 -  } = useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop, chatJid: currentChatJid });
-+  const timelineState = useTimeline({
++  } = useTimeline({
 +    preserveTimelineScroll,
 +    preserveTimelineScrollTop,
 +    chatJid: currentChatJid,
@@ -307,39 +292,7 @@ index e16dc681..cdea396f 100644
 +  });
  
    const posts = useMemo(() => deriveVisibleTimelinePosts({
--    rawPosts,
-+    rawPosts: timelineState.posts,
-     followupQueueItems,
-     filterQueuedPosts,
--  }), [filterQueuedPosts, followupQueueItems, rawPosts]);
-+  }), [filterQueuedPosts, followupQueueItems, timelineState.posts]);
- 
-   return {
-     scrollToBottomRef,
-     scrollToBottom,
-     preserveTimelineScroll,
-     preserveTimelineScrollTop,
--    rawPosts,
--    setPosts,
--    hasMore,
--    setHasMore,
--    hasMoreRef,
--    loadPosts,
--    refreshTimeline,
--    loadMore,
--    loadMoreRef,
-+    rawPosts: timelineState.posts,
-+    setPosts: timelineState.setPosts,
-+    hasMore: timelineState.hasMore,
-+    setHasMore: timelineState.setHasMore,
-+    hasMoreRef: timelineState.hasMoreRef,
-+    loadPosts: timelineState.loadPosts,
-+    refreshTimeline: timelineState.refreshTimeline,
-+    loadMore: timelineState.loadMore,
-+    loadMoreRef: timelineState.loadMoreRef,
-     posts,
-   };
- }
+     rawPosts,
 diff --git a/runtime/web/src/ui/app-timeline-cache.ts b/runtime/web/src/ui/app-timeline-cache.ts
 new file mode 100644
 index 00000000..ce9df33d
@@ -644,3 +597,6 @@ index 60909478..fa739a6b 100644
        }
      } catch (error) {
        if (token !== chatTokenRef.current) return;
+-- 
+2.51.2
+

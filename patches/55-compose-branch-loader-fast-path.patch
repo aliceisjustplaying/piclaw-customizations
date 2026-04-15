@@ -1,0 +1,97 @@
+From 2d38b0cebf3134db9c65a6308972a69130366308 Mon Sep 17 00:00:00 2001
+From: alice <aliceisjustplaying@gmail.com>
+Date: Wed, 15 Apr 2026 12:28:43 +0000
+Subject: [PATCH] perf: route compose branch creation through branch loader
+
+---
+ runtime/test/web/app-window-actions.test.ts | 22 ++++++++++++++-------
+ runtime/web/src/ui/app-window-actions.ts    | 17 ++++++++++++++++
+ 2 files changed, 32 insertions(+), 7 deletions(-)
+
+diff --git a/runtime/test/web/app-window-actions.test.ts b/runtime/test/web/app-window-actions.test.ts
+index 8698f2b0..8dd26de3 100644
+--- a/runtime/test/web/app-window-actions.test.ts
++++ b/runtime/test/web/app-window-actions.test.ts
+@@ -18,15 +18,19 @@ afterEach(() => {
+   }
+ });
+ 
+-test('createSessionFromCompose refreshes branch state and navigates to the new chat', async () => {
++test('createSessionFromCompose navigates immediately to the branch-loader route', async () => {
+   const toasts: Array<[string, string, string, number]> = [];
+   const navigateCalls: string[] = [];
+   const refreshes: string[] = [];
++  let forkCalls = 0;
+ 
+   const created = await createSessionFromCompose({
+     currentChatJid: 'web:root',
+     chatOnlyMode: true,
+-    forkChatBranch: async () => ({ branch: { chat_jid: 'web:new', agent_name: 'feature' } }),
++    forkChatBranch: async () => {
++      forkCalls += 1;
++      return { branch: { chat_jid: 'web:new', agent_name: 'feature' } };
++    },
+     refreshActiveChatAgents: async () => { refreshes.push('active'); },
+     refreshCurrentChatBranches: async () => { refreshes.push('branches'); },
+     showIntentToast: (title: string, message: string, kind: string, timeout: number) => {
+@@ -37,9 +41,11 @@ test('createSessionFromCompose refreshes branch state and navigates to the new c
+   });
+ 
+   expect(created).toBe(true);
+-  expect(refreshes.sort()).toEqual(['active', 'branches']);
+-  expect(toasts).toContainEqual(['New branch created', 'Switched to @feature.', 'info', 2500]);
+-  expect(navigateCalls[0]).toContain('chat_jid=web%3Anew');
++  expect(forkCalls).toBe(0);
++  expect(refreshes).toEqual([]);
++  expect(toasts).toEqual([]);
++  expect(navigateCalls[0]).toContain('branch_loader=1');
++  expect(navigateCalls[0]).toContain('branch_source_chat_jid=web%3Aroot');
+ 
+   const traces = getAppPerfTracing().getTraces();
+   expect(traces).toHaveLength(1);
+@@ -47,10 +53,12 @@ test('createSessionFromCompose refreshes branch state and navigates to the new c
+   expect(traces[0]?.chatJid).toBe('web:root');
+   expect(traces[0]?.phases.map((phase) => phase.phase)).toEqual([
+     'intent',
+-    'fork-request-start',
+-    'fork-request-ready',
+     'navigation-dispatched',
+   ]);
++  expect(traces[0]?.phases[1]?.detail).toMatchObject({
++    mode: 'branch-loader',
++    sourceChatJid: 'web:root',
++  });
+ });
+ 
+ test('popOutPane transfers pane state and closes the source tab after navigation', async () => {
+diff --git a/runtime/web/src/ui/app-window-actions.ts b/runtime/web/src/ui/app-window-actions.ts
+index 9cba035e..a0c8594a 100644
+--- a/runtime/web/src/ui/app-window-actions.ts
++++ b/runtime/web/src/ui/app-window-actions.ts
+@@ -62,6 +62,23 @@ export async function createSessionFromCompose(options: CreateSessionFromCompose
+     currentChatJid,
+   });
+ 
++  if (typeof navigate === 'function') {
++    try {
++      const loaderUrl = buildBranchLoaderUrl(baseHref, currentChatJid, { chatOnly: chatOnlyMode });
++      navigate(loaderUrl);
++      markAppPerfTrace(traceId, 'navigation-dispatched', {
++        mode: 'branch-loader',
++        sourceChatJid: currentChatJid,
++        url: loaderUrl,
++      });
++      return true;
++    } catch (error) {
++      failAppPerfTrace(traceId, error, 'branch-loader-navigation-failed');
++      showIntentToast?.('Could not create branch', describeBranchOpenError(error), 'warning', 5000);
++      return false;
++    }
++  }
++
+   try {
+     markAppPerfTrace(traceId, 'fork-request-start');
+     const response = await forkChatBranch(currentChatJid);
+-- 
+2.51.2
+

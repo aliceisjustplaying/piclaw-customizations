@@ -1,0 +1,39 @@
+From 201cd377528de6669cca58d50bd5265bd311fc99 Mon Sep 17 00:00:00 2001
+From: alice <aliceisjustplaying@gmail.com>
+Date: Wed, 15 Apr 2026 12:29:25 +0000
+Subject: [PATCH] perf: keep warmed sessions alive longer
+
+---
+ runtime/src/agent-pool.ts                  | 2 +-
+ runtime/test/agent-pool/agent-pool.test.ts | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/runtime/src/agent-pool.ts b/runtime/src/agent-pool.ts
+index b37f29ae..fbde6bba 100644
+--- a/runtime/src/agent-pool.ts
++++ b/runtime/src/agent-pool.ts
+@@ -91,7 +91,7 @@ export type {
+ } from "./agent-pool/contracts.js";
+ 
+ /** How long (ms) an idle session stays cached before being disposed. */
+-const DEFAULT_IDLE_TTL = 2 * 60 * 1000; // 2 minutes
++const DEFAULT_IDLE_TTL = 15 * 60 * 1000; // 15 minutes
+ const DEFAULT_CLEANUP_INTERVAL = 30 * 1000; // check every 30 seconds
+ 
+ function parsePositiveMs(value: string | undefined, fallback: number): number {
+diff --git a/runtime/test/agent-pool/agent-pool.test.ts b/runtime/test/agent-pool/agent-pool.test.ts
+index cb6e3900..45eb6ca7 100644
+--- a/runtime/test/agent-pool/agent-pool.test.ts
++++ b/runtime/test/agent-pool/agent-pool.test.ts
+@@ -278,7 +278,7 @@ test("agent pool evicts idle sessions and recreates them", async () => {
+   expect(createCalls).toBe(1);
+ 
+   const entry = (pool as any).pool.get("web:default");
+-  entry.lastUsed = Date.now() - 11 * 60 * 1000;
++  entry.lastUsed = Date.now() - 16 * 60 * 1000;
+   (pool as any).evictIdle();
+ 
+   expect(disposed).toBe(1);
+-- 
+2.51.2
+

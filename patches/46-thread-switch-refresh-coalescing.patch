@@ -1,3 +1,16 @@
+From 136f9bfb0c88a1cb92b694b9d7e220a4cb64804a Mon Sep 17 00:00:00 2001
+From: Pix <pix@example.invalid>
+Date: Wed, 15 Apr 2026 10:31:41 +0000
+Subject: [PATCH] perf: coalesce overlapping thread-switch refresh work
+
+---
+ .../test/web/app-refresh-coordination.test.ts | 130 ++++++++++++++++++
+ .../web/src/ui/app-chat-refresh-lifecycle.ts  |  61 +++++---
+ .../web/src/ui/app-refresh-coordination.ts    | 118 ++++++++++++++++
+ 3 files changed, 293 insertions(+), 16 deletions(-)
+ create mode 100644 runtime/test/web/app-refresh-coordination.test.ts
+ create mode 100644 runtime/web/src/ui/app-refresh-coordination.ts
+
 diff --git a/runtime/test/web/app-refresh-coordination.test.ts b/runtime/test/web/app-refresh-coordination.test.ts
 new file mode 100644
 index 00000000..2d42deca
@@ -135,7 +148,7 @@ index 00000000..2d42deca
 +  expect(callCount).toBe(1);
 +});
 diff --git a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
-index ac9fffd4..20ed666c 100644
+index 93358993..3e67baf3 100644
 --- a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
 +++ b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
 @@ -10,6 +10,10 @@ import {
@@ -149,9 +162,9 @@ index ac9fffd4..20ed666c 100644
  
  type StateSetter<T> = (next: T | ((prev: T) => T)) => void;
  
-@@ -135,6 +139,10 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -126,6 +130,10 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
      });
-   }, [activeChatJidRef, appShellRef, currentChatJid, getActiveChatAgents, getChatBranches, loadAgents, readStoredNumber, setActiveChatAgents, sidebarWidthRef]);
+   }, [appShellRef, loadAgents, readStoredNumber, sidebarWidthRef]);
  
 +  useEffect(() => {
 +    noteAppChatActivation({ chatJid: currentChatJid });
@@ -160,7 +173,7 @@ index ac9fffd4..20ed666c 100644
    const updateAgentProfile = useCallback((payload: any) => {
      updateAgentProfileFromEvent({
        payload,
-@@ -164,31 +172,52 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -155,31 +163,52 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
    }, [setActiveModel, setActiveModelUsage, setActiveThinkingLevel, setAgentModelsPayload, setHasLoadedAgentModels, setSupportsThinking]);
  
    const refreshModelState = useCallback(() => {
@@ -353,3 +366,6 @@ index 00000000..5bb3184c
 +  refreshStates.clear();
 +  recentChatActivationAt.clear();
 +}
+-- 
+2.51.2
+

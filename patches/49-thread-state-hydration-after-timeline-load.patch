@@ -1,15 +1,15 @@
-From 4e499416bab6114b41979fe82e74098fa39a7938 Mon Sep 17 00:00:00 2001
+From ab5e2e2299363f9e3017d16bf92cf645ef3a502d Mon Sep 17 00:00:00 2001
 From: alice <aliceisjustplaying@gmail.com>
-Date: Wed, 15 Apr 2026 12:00:22 +0000
+Date: Wed, 15 Apr 2026 12:11:42 +0000
 Subject: [PATCH] perf: hydrate thread state after timeline load settles
 
 ---
  .../web/app-chat-refresh-lifecycle.test.ts    |  52 ++++++-
  .../web/app-view-refresh-lifecycle.test.ts    |  22 ++-
- .../web/src/ui/app-chat-refresh-lifecycle.ts  | 147 +++++++++++++++---
+ .../web/src/ui/app-chat-refresh-lifecycle.ts  | 136 ++++++++++++++++--
  .../src/ui/app-main-lifecycle-composition.ts  |   3 +
- .../web/src/ui/app-view-refresh-lifecycle.ts  |  66 +++++++-
- 5 files changed, 262 insertions(+), 28 deletions(-)
+ .../web/src/ui/app-view-refresh-lifecycle.ts  |  66 +++++++--
+ 5 files changed, 261 insertions(+), 18 deletions(-)
 
 diff --git a/runtime/test/web/app-chat-refresh-lifecycle.test.ts b/runtime/test/web/app-chat-refresh-lifecycle.test.ts
 index dc80866e..410830d6 100644
@@ -114,7 +114,7 @@ index 95b132a9..6bb8fb47 100644
 +  expect(calls).toEqual(['post-paint', 'agent-status']);
 +});
 diff --git a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
-index 20ed666c..becb07bf 100644
+index 3e67baf3..becb07bf 100644
 --- a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
 +++ b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
 @@ -10,6 +10,11 @@ import {
@@ -186,25 +186,7 @@ index 20ed666c..becb07bf 100644
  export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions) {
    const {
      getAgents,
-@@ -128,16 +162,7 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
-       sidebarWidthRef,
-       shellElement: appShellRef.current,
-     });
--    refreshActiveChatAgentsState({
--      currentChatJid,
--      getActiveChatAgents,
--      getChatBranches,
--      activeChatJidRef,
--      setActiveChatAgents,
--      prewarmRecent: true,
--      prewarmLimit: 5,
--    });
--  }, [activeChatJidRef, appShellRef, currentChatJid, getActiveChatAgents, getChatBranches, loadAgents, readStoredNumber, setActiveChatAgents, sidebarWidthRef]);
-+  }, [appShellRef, loadAgents, readStoredNumber, sidebarWidthRef]);
- 
-   useEffect(() => {
-     noteAppChatActivation({ chatJid: currentChatJid });
-@@ -171,53 +196,126 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -162,53 +196,126 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
      });
    }, [setActiveModel, setActiveModelUsage, setActiveThinkingLevel, setAgentModelsPayload, setHasLoadedAgentModels, setSupportsThinking]);
  
@@ -338,7 +320,7 @@ index 20ed666c..becb07bf 100644
  
    const refreshModelAndQueueState = useCallback(() => {
      refreshModelAndQueueStateBundle({
-@@ -230,12 +328,24 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -221,12 +328,24 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
      });
    }, [refreshActiveChatAgents, refreshAutoresearchStatus, refreshContextUsage, refreshCurrentChatBranches, refreshModelState, refreshQueueState]);
  
@@ -363,7 +345,7 @@ index 20ed666c..becb07bf 100644
    }), [refreshActiveChatAgents, refreshCurrentChatBranches, refreshModelAndQueueState, refreshModelState, refreshQueueState]);
  
    return {
-@@ -246,5 +356,6 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -237,5 +356,6 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
      refreshActiveChatAgents,
      refreshCurrentChatBranches,
      refreshModelAndQueueState,
@@ -537,3 +519,6 @@ index b58a0f94..47cf60d6 100644
      restoreChatPaneState,
      snapshotCurrentChatPaneState,
    ]);
+-- 
+2.51.2
+

@@ -1,17 +1,17 @@
-From 591b07f516db8c7108510055120acc6e70fd8910 Mon Sep 17 00:00:00 2001
+From 3adeffc718652ea74e52b8cced2fae1d091d4959 Mon Sep 17 00:00:00 2001
 From: alice <aliceisjustplaying@gmail.com>
-Date: Wed, 15 Apr 2026 12:01:24 +0000
+Date: Wed, 15 Apr 2026 12:12:59 +0000
 Subject: [PATCH] perf: coalesce cold-open reconnect refreshes
 
 ---
  .../test/web/app-connection-lifecycle.test.ts |  37 +++++-
  runtime/test/web/app-sse-events.test.ts       |  35 +++++-
- .../web/src/ui/app-agent-status-lifecycle.ts  | 107 +++++++++++-------
- runtime/web/src/ui/app-auth-bootstrap.ts      |  85 +++++++-------
+ .../web/src/ui/app-agent-status-lifecycle.ts  | 109 +++++++++++-------
+ runtime/web/src/ui/app-auth-bootstrap.ts      |  69 +++++------
  .../web/src/ui/app-connection-lifecycle.ts    |   7 ++
  runtime/web/src/ui/app-sse-events.ts          |   4 +
  .../ui/app-status-refresh-orchestration.ts    |  55 +++++----
- 7 files changed, 219 insertions(+), 111 deletions(-)
+ 7 files changed, 212 insertions(+), 104 deletions(-)
 
 diff --git a/runtime/test/web/app-connection-lifecycle.test.ts b/runtime/test/web/app-connection-lifecycle.test.ts
 index 883b6313..84206cf9 100644
@@ -131,7 +131,7 @@ index 7b03c604..90670b97 100644
    const state = createDeps();
  
 diff --git a/runtime/web/src/ui/app-agent-status-lifecycle.ts b/runtime/web/src/ui/app-agent-status-lifecycle.ts
-index c23f898a..2178e471 100644
+index c23f898a..f3ae14b1 100644
 --- a/runtime/web/src/ui/app-agent-status-lifecycle.ts
 +++ b/runtime/web/src/ui/app-agent-status-lifecycle.ts
 @@ -13,6 +13,7 @@ import {
@@ -274,8 +274,17 @@ index c23f898a..2178e471 100644
        status,
        setConnectionStatus,
        setAgentStatus,
+@@ -243,7 +272,7 @@ export function useAgentStatusLifecycle(options: UseAgentStatusLifecycleOptions)
+       refreshQueueState,
+       refreshContextUsage,
+     });
+-  }, [clearAgentRunState, hasConnectedOnceRef, pendingRequestRef, refreshAgentStatus, refreshContextUsage, refreshQueueState, refreshTimeline, setAgentDraft, setAgentPlan, setAgentStatus, setAgentThought, setConnectionStatus, setPendingRequestForConnection, viewStateRef]);
++  }, [clearAgentRunState, currentChatJid, hasConnectedOnceRef, pendingRequestRef, refreshAgentStatus, refreshContextUsage, refreshQueueState, refreshTimeline, setAgentDraft, setAgentPlan, setAgentStatus, setAgentThought, setConnectionStatus, setPendingRequestForConnection, viewStateRef]);
+ 
+   return {
+     refreshQueueState,
 diff --git a/runtime/web/src/ui/app-auth-bootstrap.ts b/runtime/web/src/ui/app-auth-bootstrap.ts
-index 7c8260b6..815d145d 100644
+index 4fe41c40..c9048bed 100644
 --- a/runtime/web/src/ui/app-auth-bootstrap.ts
 +++ b/runtime/web/src/ui/app-auth-bootstrap.ts
 @@ -130,7 +130,7 @@ export interface RefreshModelStateOptions {
@@ -311,8 +320,8 @@ index 7c8260b6..815d145d 100644
  }
  
  export interface RefreshActiveChatAgentsOptions {
-@@ -160,7 +159,7 @@ export interface RefreshActiveChatAgentsOptions {
-   prewarmLimit?: number;
+@@ -158,7 +157,7 @@ export interface RefreshActiveChatAgentsOptions {
+   setActiveChatAgents: StateSetter<any[]>;
  }
  
 -export function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions): void {
@@ -320,21 +329,13 @@ index 7c8260b6..815d145d 100644
    const {
      currentChatJid,
      getActiveChatAgents,
-@@ -173,29 +172,32 @@ export function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions)
+@@ -169,21 +168,24 @@ export function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions)
  
    const targetChatJid = currentChatJid;
  
 -  Promise.all([
 -    getActiveChatAgents().catch(() => ({ chats: [] /* expected: active-agent refresh is best-effort. */ })),
--    getChatBranches(null, {
--      includeArchived: true,
--      ...(prewarmRecent ? {
--        prewarmRecent: true,
--        prewarmLimit,
--        excludeChatJid: targetChatJid,
--        prewarmChatJid: targetChatJid,
--      } : {}),
--    }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
+-    getChatBranches(null, { includeArchived: true }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
 -  ])
 -    .then(([activePayload, branchPayload]) => {
 -      if (activeChatJidRef.current !== targetChatJid) return;
@@ -350,15 +351,7 @@ index 7c8260b6..815d145d 100644
 +  try {
 +    const [activePayload, branchPayload] = await Promise.all([
 +      getActiveChatAgents().catch(() => ({ chats: [] /* expected: active-agent refresh is best-effort. */ })),
-+      getChatBranches(null, {
-+        includeArchived: true,
-+        ...(prewarmRecent ? {
-+          prewarmRecent: true,
-+          prewarmLimit,
-+          excludeChatJid: targetChatJid,
-+          prewarmChatJid: targetChatJid,
-+        } : {}),
-+      }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
++      getChatBranches(null, { includeArchived: true }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
 +    ]);
 +
 +    if (activeChatJidRef.current !== targetChatJid) return [];
@@ -376,7 +369,7 @@ index 7c8260b6..815d145d 100644
  }
  
  export interface RefreshCurrentChatBranchesOptions {
-@@ -204,20 +206,19 @@ export interface RefreshCurrentChatBranchesOptions {
+@@ -192,20 +194,19 @@ export interface RefreshCurrentChatBranchesOptions {
    setCurrentChatBranches: StateSetter<any[]>;
  }
  
@@ -536,3 +529,6 @@ index d508aee2..49b4aceb 100644
  }
  
  export interface RefreshContextUsageForChatOptions {
+-- 
+2.51.2
+

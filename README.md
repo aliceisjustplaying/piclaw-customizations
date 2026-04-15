@@ -40,10 +40,10 @@ scripts/
 
 See [`patches/README.md`](patches/README.md) for the full patch table, retired patches, terminal patch outcomes, and upstream-audit automation.
 
-Active source patches: `01`, `02`, `04`, `05`, `11`, `24`, `28`, `29–32`, `45–51`
-Retired patches kept under `patches/retired/`: `06` (folded into `21`), `15` (folded into `05`), `20–23`, `25–27` (merged upstream), `29–44` (retired after consolidation into `29–32`)
+Active source patches: `01`, `02`, `04`, `05`, `11`, `24`, `28`, `30–32`, `45–56`
+Retired patches kept under `patches/retired/`: `06` (folded into `21`), `15` (folded into `05`), `20–23`, `25–27` (merged upstream), `29–44` (retired after consolidation into `29–32`), consolidated active `29` (retired after re-splitting into `52–56`)
 Post-install patches: `01` (jiti/Bun fix), `02` (context usage)
-Next available number: **52**
+Next available number: **57**
 
 Upstream maintenance helpers:
 - `./patches/audit-upstream.sh` audits every active patch against current upstream

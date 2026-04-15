@@ -37,11 +37,6 @@
       "track_upstream": false,
       "upstream_prs": []
     },
-    "29": {
-      "name": "thread-startup-and-prewarm-performance",
-      "track_upstream": false,
-      "upstream_prs": []
-    },
     "30": {
       "name": "web-push-and-notification-delivery",
       "track_upstream": false,
@@ -89,6 +84,31 @@
     },
     "51": {
       "name": "recent-thread-timeline-cache",
+      "track_upstream": true,
+      "upstream_prs": []
+    },
+    "52": {
+      "name": "deferred-branch-session-seeding",
+      "track_upstream": true,
+      "upstream_prs": []
+    },
+    "53": {
+      "name": "recent-branch-warmup",
+      "track_upstream": true,
+      "upstream_prs": []
+    },
+    "54": {
+      "name": "priority-session-warmup",
+      "track_upstream": true,
+      "upstream_prs": []
+    },
+    "55": {
+      "name": "compose-branch-loader-fast-path",
+      "track_upstream": true,
+      "upstream_prs": []
+    },
+    "56": {
+      "name": "longer-idle-session-ttl",
       "track_upstream": true,
       "upstream_prs": []
     }

@@ -20,7 +20,6 @@ Automation helpers in this directory:
 | 11 | `runtime/src/db/connection.ts` | Lazy DB init for Jiti-loaded extension module graphs |
 | 24 | `package.json`, `bun.lock` | Pin `ghostty-web` vendoring to the forked commit that carries the upstream bootstrap/open-reset fix |
 | 28 | `provider-usage.ts`, `provider-usage.test.ts`, `compose-box.ts` | Local-only Anthropic OAuth provider usage: show 5h/week usage windows, fetch funded overage grant state, and keep extra-usage details in the model tooltip without adding them to the inline hint |
-| 29 | `agent-pool.ts`, `branch-manager.ts`, `branch-seeding.ts`, `session-manager.ts`, startup/bootstrap web callers, related tests | Consolidated thread-startup performance work: reduce branch/thread switch latency, defer branch seeding, prioritize current/default chat warmup, and keep the extension-binding regression test with the session startup lane |
 | 30 | `dispatch-agent.ts`, push routes/store/service, `use-notifications.ts`, `sw.js`, push client/server tests, docs | Consolidated web push and notification delivery: subscription/storage foundation, outbound delivery, Bun-safe request generation, real VAPID subject, reply notifications, source markers, and per-device per-chat delivery coordination |
 | 31 | `agent-status.ts`, `channel-endpoint-facade-service.ts`, `content-endpoints.ts`, `server-timing.ts`, `request-router-service.ts`, `api.ts`, `app-perf-tracing.ts`, related tests | Correlated backend timing for hot web paths: add `Server-Timing` and request-id capture so browser-visible traces can separate backend work from client latency |
 | 32 | `app-resume.ts`, `use-sse-connection.ts`, related web tests | Consolidated iOS Safari share-sheet mitigation: guarded return-to-app detection and SSE wake/focus reconnect suppression |
@@ -31,16 +30,22 @@ Automation helpers in this directory:
 | 49 | `app-chat-refresh-lifecycle.ts`, `app-view-refresh-lifecycle.ts`, `app-main-lifecycle-composition.ts`, related tests | Move thread-state hydration behind timeline load completion and failure so cold opens do not show stale status/queue/context state |
 | 50 | `app-agent-status-lifecycle.ts`, `app-auth-bootstrap.ts`, `app-connection-lifecycle.ts`, `app-sse-events.ts`, related tests | Coalesce cold-open reconnect refreshes so first-connect and SSE reconnect recovery do not duplicate the foreground hydration lane |
 | 51 | `app-timeline-cache.ts`, `use-timeline.ts`, `app-main-timeline-composition.ts`, `app.ts`, related tests | Keep a bounded in-memory recent-thread timeline cache and best-effort nearby-thread prewarm for faster thread switches without synchronous storage writes |
+| 52 | `branch-seeding.ts`, `branch-manager.ts`, `session-manager.ts`, related branch/session tests | Defer branch session seeding so branch creation persists fork context immediately and realizes the new session on first access or background warmup |
+| 53 | `agent-pool.ts`, `db/messages.ts`, branch refresh endpoint/UI glue, related tests | Warm recent chats from branch refreshes so nearby chats start hydrating in the background after active-chat/branch list updates |
+| 54 | `session-manager.ts`, `startup.ts`, branch refresh endpoint/UI glue, related tests | Serialize background warmups, prioritize the default chat at startup, and let branch refreshes explicitly prewarm the current chat first |
+| 55 | `app-window-actions.ts`, related tests | Route compose-triggered branch creation through the existing branch-loader surface so navigation happens immediately instead of waiting on fork hydration |
+| 56 | `agent-pool.ts`, `agent-pool.test.ts` | Raise the default idle session TTL from 2 minutes to 15 minutes so warmed sessions survive long enough to benefit the startup/thread-switch warmup lane |
 
 ## Retired patches
 
 Retired patches that are still useful for history/reference are kept under `patches/retired/`.
-Numbering preserved — next new patch is **52**.
+Numbering preserved — next new patch is **57**.
 
 Historical note:
 - the pre-consolidation split patches `29` through `44` were retired into `patches/retired/` on 2026-04-15 and first replaced by consolidated active patches `29` through `32`
 - the upstreamable subset of that consolidated perf lane was then re-split on 2026-04-15 into active patches `31`, `45`, `46`, and `47`
 - the remaining cold-open UI lane was then fixed and re-split on 2026-04-15 into active patches `48`, `49`, `50`, and `51`
+- the remaining consolidated startup/perf lane in active patch `29` was then retired and re-split on 2026-04-15 into active patches `52`, `53`, `54`, `55`, and `56`
 
 | # | Status | Reason |
 |---|--------|--------|

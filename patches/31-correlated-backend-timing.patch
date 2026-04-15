@@ -1,3 +1,25 @@
+From 74a15e420eaee972f09d5897321a53d96d56a1aa Mon Sep 17 00:00:00 2001
+From: alice <aliceisjustplaying@gmail.com>
+Date: Wed, 15 Apr 2026 11:25:22 +0000
+Subject: [PATCH] perf: add correlated backend timing to hot web routes
+
+---
+ .../src/channels/web/agent/agent-status.ts    |  73 +++--
+ .../channel-endpoint-facade-service.ts        |  35 ++-
+ .../web/endpoints/content-endpoints.ts        |  45 ++-
+ .../src/channels/web/http/server-timing.ts    |  73 +++++
+ .../channels/web/request-router-service.ts    |   7 +-
+ .../channels/web/agent/agent-status.test.ts   |   4 +
+ .../web/endpoints/content-endpoints.test.ts   |   7 +
+ .../channels/web/security-hardening.test.ts   |   1 +
+ runtime/test/web/app-perf-tracing.test.ts     |  83 ++++++
+ runtime/web/src/api.ts                        |  42 ++-
+ runtime/web/src/ui/app-perf-tracing.ts        | 267 ++++++++++++++++++
+ 11 files changed, 578 insertions(+), 59 deletions(-)
+ create mode 100644 runtime/src/channels/web/http/server-timing.ts
+ create mode 100644 runtime/test/web/app-perf-tracing.test.ts
+ create mode 100644 runtime/web/src/ui/app-perf-tracing.ts
+
 diff --git a/runtime/src/channels/web/agent/agent-status.ts b/runtime/src/channels/web/agent/agent-status.ts
 index b134071c..df2861ea 100644
 --- a/runtime/src/channels/web/agent/agent-status.ts
@@ -100,7 +122,7 @@ index b134071c..df2861ea 100644
 +  });
  }
 diff --git a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
-index d990bd83..f0e9bba0 100644
+index a2e4e6aa..9079d06a 100644
 --- a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
 +++ b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
 @@ -28,6 +28,7 @@ import {
@@ -111,7 +133,7 @@ index d990bd83..f0e9bba0 100644
  import type {
    WebChannelEndpointContexts,
    WebChannelIdentitySnapshot,
-@@ -177,48 +178,58 @@ export class WebChannelEndpointFacadeService {
+@@ -177,21 +178,31 @@ export class WebChannelEndpointFacadeService {
    }
  
    handleAgentActiveChats(): Response {
@@ -131,23 +153,10 @@ index d990bd83..f0e9bba0 100644
 -    const includeArchived = ["1", "true", "yes", "on"].includes(
 -      String(url.searchParams.get("include_archived") || "").trim().toLowerCase(),
 -    );
--    const prewarmRecent = ["1", "true", "yes", "on"].includes(
--      String(url.searchParams.get("prewarm_recent") || "").trim().toLowerCase(),
--    );
--    const prewarmLimitRaw = Number.parseInt(String(url.searchParams.get("prewarm_limit") || "").trim(), 10);
--    const prewarmLimit = Number.isFinite(prewarmLimitRaw)
--      ? Math.max(1, Math.min(8, prewarmLimitRaw))
--      : 5;
--    const excludeChatJid = typeof url.searchParams.get("exclude_chat_jid") === "string"
--      ? url.searchParams.get("exclude_chat_jid")!.trim()
--      : "";
--    const prewarmChatJid = typeof url.searchParams.get("prewarm_chat_jid") === "string"
--      ? url.searchParams.get("prewarm_chat_jid")!.trim()
--      : "";
--
--    if (!rootChatJid) {
--      if (prewarmChatJid && typeof this.options.agentPool.scheduleChatWarmup === "function") {
--        this.options.agentPool.scheduleChatWarmup(prewarmChatJid, { priority: true });
+-    const chats = typeof this.options.listKnownChats === "function"
+-      ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
+-      : this.options.listActiveChats();
+-    return this.options.json({ chats }, 200);
 +    const { result, durationMs } = measureSync(() => {
 +      const url = new URL(req.url);
 +      const rootChatJid = typeof url.searchParams.get("root_chat_jid") === "string"
@@ -156,45 +165,6 @@ index d990bd83..f0e9bba0 100644
 +      const includeArchived = ["1", "true", "yes", "on"].includes(
 +        String(url.searchParams.get("include_archived") || "").trim().toLowerCase(),
 +      );
-+      const prewarmRecent = ["1", "true", "yes", "on"].includes(
-+        String(url.searchParams.get("prewarm_recent") || "").trim().toLowerCase(),
-+      );
-+      const prewarmLimitRaw = Number.parseInt(String(url.searchParams.get("prewarm_limit") || "").trim(), 10);
-+      const prewarmLimit = Number.isFinite(prewarmLimitRaw)
-+        ? Math.max(1, Math.min(8, prewarmLimitRaw))
-+        : 5;
-+      const excludeChatJid = typeof url.searchParams.get("exclude_chat_jid") === "string"
-+        ? url.searchParams.get("exclude_chat_jid")!.trim()
-+        : "";
-+      const prewarmChatJid = typeof url.searchParams.get("prewarm_chat_jid") === "string"
-+        ? url.searchParams.get("prewarm_chat_jid")!.trim()
-+        : "";
-+
-+      if (!rootChatJid) {
-+        if (prewarmChatJid && typeof this.options.agentPool.scheduleChatWarmup === "function") {
-+          this.options.agentPool.scheduleChatWarmup(prewarmChatJid, { priority: true });
-+        }
-+        if (prewarmRecent && typeof this.options.agentPool.scheduleRecentChatWarmup === "function") {
-+          const excludeChatJids = [excludeChatJid, prewarmChatJid].filter(Boolean);
-+          this.options.agentPool.scheduleRecentChatWarmup({
-+            limit: prewarmLimit,
-+            excludeChatJids,
-+          });
-+        }
-       }
--      if (prewarmRecent && typeof this.options.agentPool.scheduleRecentChatWarmup === "function") {
--        const excludeChatJids = [excludeChatJid, prewarmChatJid].filter(Boolean);
--        this.options.agentPool.scheduleRecentChatWarmup({
--          limit: prewarmLimit,
--          excludeChatJids,
--        });
--      }
--    }
- 
--    const chats = typeof this.options.listKnownChats === "function"
--      ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
--      : this.options.listActiveChats();
--    return this.options.json({ chats }, 200);
 +      const chats = typeof this.options.listKnownChats === "function"
 +        ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
 +        : this.options.listActiveChats();
@@ -579,7 +549,7 @@ index 00000000..aaf80a72
 +  expect(requests[0]?.detail).toEqual({ chatJid: 'web:branch' });
 +});
 diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
-index c8b83899..2d773e42 100644
+index a4c49719..72756d0f 100644
 --- a/runtime/web/src/api.ts
 +++ b/runtime/web/src/api.ts
 @@ -3,18 +3,48 @@
@@ -910,3 +880,6 @@ index 00000000..da7cd67c
 +export function recordAppPerfRequest(entry: Omit<RequestEntry, 'id'>): string {
 +  return getAppPerfTracing().recordRequest(entry);
 +}
+-- 
+2.51.2
+

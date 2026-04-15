@@ -1,0 +1,426 @@
+From 1fd9a75ed3cdb246a1512e460069eebe55b7cdc2 Mon Sep 17 00:00:00 2001
+From: alice <aliceisjustplaying@gmail.com>
+Date: Wed, 15 Apr 2026 12:28:39 +0000
+Subject: [PATCH] perf: prioritize startup session warmup
+
+---
+ runtime/src/agent-pool.ts                     |  4 +
+ runtime/src/agent-pool/session-manager.ts     | 78 +++++++++++++------
+ .../channel-endpoint-facade-service.ts        | 21 +++--
+ runtime/src/runtime/startup.ts                | 22 ++++++
+ runtime/test/agent-pool/agent-pool.test.ts    |  9 ++-
+ .../channel-endpoint-facade-service.test.ts   | 15 +++-
+ runtime/test/runtime/startup.test.ts          | 47 ++++++++---
+ runtime/test/web/app-auth-bootstrap.test.ts   |  2 +-
+ runtime/web/src/api.ts                        |  1 +
+ runtime/web/src/ui/app-auth-bootstrap.ts      |  7 +-
+ 10 files changed, 159 insertions(+), 47 deletions(-)
+
+diff --git a/runtime/src/agent-pool.ts b/runtime/src/agent-pool.ts
+index d5d4e582..b37f29ae 100644
+--- a/runtime/src/agent-pool.ts
++++ b/runtime/src/agent-pool.ts
+@@ -285,6 +285,10 @@ export class AgentPool {
+     return scheduled;
+   }
+ 
++  scheduleChatWarmup(chatJid: string, options: { priority?: boolean } = {}): boolean {
++    return this.sessionManager.prewarm(chatJid, options);
++  }
++
+   getSessionTreeForChat(chatJid: string): { leafId: string | null; nodes: unknown[]; flat?: boolean; total?: number; capped?: boolean } | null {
+     return this.runtimeFacade.getSessionTreeForChat(chatJid);
+   }
+diff --git a/runtime/src/agent-pool/session-manager.ts b/runtime/src/agent-pool/session-manager.ts
+index 9cf50aa2..e1865c3b 100644
+--- a/runtime/src/agent-pool/session-manager.ts
++++ b/runtime/src/agent-pool/session-manager.ts
+@@ -46,6 +46,9 @@ export interface AgentSessionManagerOptions {
+ export class AgentSessionManager {
+   private readonly branchSeedRealizationInFlight = new Map<string, Promise<boolean>>();
+   private readonly prewarmInFlight = new Set<string>();
++  private readonly queuedPrewarms = new Set<string>();
++  private readonly prewarmQueue: string[] = [];
++  private prewarmLoopActive = false;
+ 
+   constructor(private readonly options: AgentSessionManagerOptions) {}
+ 
+@@ -183,28 +186,20 @@ export class AgentSessionManager {
+     await this.disposeEntry(this.options.sidePool, chatJid, "recreate.dispose_side_session", true);
+   }
+ 
+-  prewarm(chatJid: string): void {
+-    if (!chatJid || this.prewarmInFlight.has(chatJid)) return;
+-    if (this.options.pool.has(chatJid) && !readDeferredBranchSeed(chatJid)) return;
+-
+-    this.prewarmInFlight.add(chatJid);
+-    void (async () => {
+-      try {
+-        await this.getOrCreate(chatJid);
+-        this.options.onInfo?.("Prewarmed chat session", {
+-          operation: "prewarm_session",
+-          chatJid,
+-        });
+-      } catch (err) {
+-        this.options.onWarn?.("Failed to prewarm chat session", {
+-          operation: "prewarm_session",
+-          chatJid,
+-          err,
+-        });
+-      } finally {
+-        this.prewarmInFlight.delete(chatJid);
+-      }
+-    })();
++  prewarm(chatJid: string, options: { priority?: boolean } = {}): boolean {
++    const normalizedChatJid = String(chatJid || "").trim();
++    if (!normalizedChatJid) return false;
++    if (this.options.pool.has(normalizedChatJid) && !readDeferredBranchSeed(normalizedChatJid)) return false;
++    if (this.prewarmInFlight.has(normalizedChatJid) || this.queuedPrewarms.has(normalizedChatJid)) return false;
++
++    this.queuedPrewarms.add(normalizedChatJid);
++    if (options.priority) {
++      this.prewarmQueue.unshift(normalizedChatJid);
++    } else {
++      this.prewarmQueue.push(normalizedChatJid);
++    }
++    this.drainPrewarmQueue();
++    return true;
+   }
+ 
+   async shutdown(): Promise<void> {
+@@ -378,4 +373,43 @@ export class AgentSessionManager {
+       });
+     }
+   }
++
++  private drainPrewarmQueue(): void {
++    if (this.prewarmLoopActive) return;
++    this.prewarmLoopActive = true;
++
++    void (async () => {
++      try {
++        while (this.prewarmQueue.length > 0) {
++          const chatJid = this.prewarmQueue.shift();
++          if (!chatJid) continue;
++          this.queuedPrewarms.delete(chatJid);
++          if (this.prewarmInFlight.has(chatJid)) continue;
++          if (this.options.pool.has(chatJid) && !readDeferredBranchSeed(chatJid)) continue;
++
++          this.prewarmInFlight.add(chatJid);
++          try {
++            await this.getOrCreate(chatJid);
++            this.options.onInfo?.("Prewarmed chat session", {
++              operation: "prewarm_session",
++              chatJid,
++            });
++          } catch (err) {
++            this.options.onWarn?.("Failed to prewarm chat session", {
++              operation: "prewarm_session",
++              chatJid,
++              err,
++            });
++          } finally {
++            this.prewarmInFlight.delete(chatJid);
++          }
++        }
++      } finally {
++        this.prewarmLoopActive = false;
++        if (this.prewarmQueue.length > 0) {
++          this.drainPrewarmQueue();
++        }
++      }
++    })();
++  }
+ }
+diff --git a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
+index bab203d5..c29f96a1 100644
+--- a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
++++ b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
+@@ -200,16 +200,25 @@ export class WebChannelEndpointFacadeService {
+       const prewarmLimitRaw = Number.parseInt(String(url.searchParams.get("prewarm_limit") || "").trim(), 10);
+       const prewarmLimit = Number.isFinite(prewarmLimitRaw)
+         ? Math.max(1, Math.min(8, prewarmLimitRaw))
+-        : 3;
++        : 5;
+       const excludeChatJid = typeof url.searchParams.get("exclude_chat_jid") === "string"
+         ? url.searchParams.get("exclude_chat_jid")!.trim()
+         : "";
++      const prewarmChatJid = typeof url.searchParams.get("prewarm_chat_jid") === "string"
++        ? url.searchParams.get("prewarm_chat_jid")!.trim()
++        : "";
+ 
+-      if (!rootChatJid && prewarmRecent) {
+-        this.options.agentPool.scheduleRecentChatWarmup({
+-          limit: prewarmLimit,
+-          excludeChatJids: excludeChatJid ? [excludeChatJid] : [],
+-        });
++      if (!rootChatJid) {
++        if (prewarmChatJid) {
++          this.options.agentPool.scheduleChatWarmup(prewarmChatJid, { priority: true });
++        }
++        if (prewarmRecent) {
++          const excludeChatJids = [excludeChatJid, prewarmChatJid].filter(Boolean);
++          this.options.agentPool.scheduleRecentChatWarmup({
++            limit: prewarmLimit,
++            excludeChatJids,
++          });
++        }
+       }
+ 
+       const chats = typeof this.options.listKnownChats === "function"
+diff --git a/runtime/src/runtime/startup.ts b/runtime/src/runtime/startup.ts
+index 0b5d0aa5..fb20ed41 100644
+--- a/runtime/src/runtime/startup.ts
++++ b/runtime/src/runtime/startup.ts
+@@ -80,10 +80,32 @@ export function initializeRuntimeEnvironment(state: RuntimeState): void {
+   state.loadChats();
+ }
+ 
++export function queueStartupSessionWarmup(
++  agentPool: AgentPool & {
++    scheduleChatWarmup?: (chatJid: string, options?: { priority?: boolean }) => boolean;
++    scheduleRecentChatWarmup?: (options?: { limit?: number; excludeChatJids?: string[] }) => string[];
++  },
++  options: { defaultChatJid?: string; recentLimit?: number } = {},
++): void {
++  const defaultChatJid = typeof options.defaultChatJid === "string" && options.defaultChatJid.trim()
++    ? options.defaultChatJid.trim()
++    : "web:default";
++  const recentLimit = Math.max(0, Math.min(8, Math.trunc(options.recentLimit ?? 5) || 5));
++
++  agentPool.scheduleChatWarmup?.(defaultChatJid, { priority: true });
++  if (recentLimit > 0) {
++    agentPool.scheduleRecentChatWarmup?.({
++      limit: recentLimit,
++      excludeChatJids: [defaultChatJid],
++    });
++  }
++}
++
+ /** Start web channel and run immediate crash-recovery bootstrap. */
+ export async function startWebChannel(queue: AgentQueue, agentPool: AgentPool): Promise<WebChannel> {
+   const web = new WebChannel({ queue, agentPool });
+   await web.start();
++  queueStartupSessionWarmup(agentPool);
+   web.recoverInflightRuns();
+   // Run an immediate pending-resume scan at startup so deferred queued
+   // follow-ups are picked up even before IPC workers process resume tasks.
+diff --git a/runtime/test/agent-pool/agent-pool.test.ts b/runtime/test/agent-pool/agent-pool.test.ts
+index fea1d8e8..cb6e3900 100644
+--- a/runtime/test/agent-pool/agent-pool.test.ts
++++ b/runtime/test/agent-pool/agent-pool.test.ts
+@@ -303,6 +303,8 @@ test("agent pool schedules warmup for the most recent inactive chats", async ()
+   const { AgentPool } = await importFresh<typeof import("../src/agent-pool.js")>("../src/agent-pool.js");
+ 
+   const created: string[] = [];
++  let activeCreates = 0;
++  let maxConcurrentCreates = 0;
+   class StubSession {
+     subscribe(_listener: (event: any) => void) {
+       return () => {};
+@@ -315,6 +317,10 @@ test("agent pool schedules warmup for the most recent inactive chats", async ()
+   const pool = new AgentPool({
+     createSession: async (chatJid: string) => {
+       created.push(chatJid);
++      activeCreates += 1;
++      maxConcurrentCreates = Math.max(maxConcurrentCreates, activeCreates);
++      await Bun.sleep(10);
++      activeCreates -= 1;
+       return createRuntime(new StubSession()) as any;
+     },
+   });
+@@ -325,8 +331,9 @@ test("agent pool schedules warmup for the most recent inactive chats", async ()
+   });
+   expect(scheduled).toEqual(["web:newer", "web:older"]);
+ 
+-  await Bun.sleep(20);
++  await Bun.sleep(40);
+   expect(created).toEqual(["web:newer", "web:older"]);
++  expect(maxConcurrentCreates).toBe(1);
+ 
+   await pool.shutdown();
+ });
+diff --git a/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts b/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts
+index 1c25ea35..847aaf68 100644
+--- a/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts
++++ b/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts
+@@ -71,6 +71,7 @@ function createFacade(getIdentitySnapshot: () => WebChannelIdentitySnapshot) {
+ 
+   const ensureCalls: string[] = [];
+   const postCalls: Array<{ isReply: boolean; chatJid: string }> = [];
++  const scheduledChatWarmups: Array<{ chatJid: string; priority?: boolean }> = [];
+   const scheduledWarmups: Array<{ limit?: number; excludeChatJids?: string[] }> = [];
+   const activeChats = [{ chat_jid: "web:default", agent_name: "Pi" }];
+   const knownChats = [{ chat_jid: "web:branch", agent_name: "Branch" }];
+@@ -78,6 +79,10 @@ function createFacade(getIdentitySnapshot: () => WebChannelIdentitySnapshot) {
+     endpointContexts: contexts,
+     defaultChatJid: "web:default",
+     agentPool: {
++      scheduleChatWarmup: (chatJid: string, options?: { priority?: boolean }) => {
++        scheduledChatWarmups.push({ chatJid, priority: options?.priority });
++        return true;
++      },
+       scheduleRecentChatWarmup: (input: { limit?: number; excludeChatJids?: string[] }) => {
+         scheduledWarmups.push(input);
+         return [];
+@@ -102,6 +107,7 @@ function createFacade(getIdentitySnapshot: () => WebChannelIdentitySnapshot) {
+     facade: new WebChannelEndpointFacadeService(options),
+     ensureCalls,
+     postCalls,
++    scheduledChatWarmups,
+     scheduledWarmups,
+     activeChats,
+     knownChats,
+@@ -188,14 +194,15 @@ describe("web channel endpoint facade service", () => {
+     expect(await branchesResponse.json()).toEqual({ chats: knownChats });
+   });
+ 
+-  test("can schedule recent-chat warmup from the branches endpoint without changing payload shape", async () => {
+-    const { facade, knownChats, scheduledWarmups } = createFacade(() => createIdentitySnapshot());
++  test("can schedule prioritized current-chat warmup plus recent-chat warmup from the branches endpoint without changing payload shape", async () => {
++    const { facade, knownChats, scheduledChatWarmups, scheduledWarmups } = createFacade(() => createIdentitySnapshot());
+ 
+     const branchesResponse = facade.handleAgentBranches(
+-      new Request("https://example.com/agent/branches?include_archived=1&prewarm_recent=1&prewarm_limit=4&exclude_chat_jid=web%3Adefault")
++      new Request("https://example.com/agent/branches?include_archived=1&prewarm_recent=1&prewarm_limit=4&exclude_chat_jid=web%3Adefault&prewarm_chat_jid=web%3Abranch")
+     );
+     expect(branchesResponse.status).toBe(200);
+     expect(await branchesResponse.json()).toEqual({ chats: knownChats });
+-    expect(scheduledWarmups).toEqual([{ limit: 4, excludeChatJids: ["web:default"] }]);
++    expect(scheduledChatWarmups).toEqual([{ chatJid: "web:branch", priority: true }]);
++    expect(scheduledWarmups).toEqual([{ limit: 4, excludeChatJids: ["web:default", "web:branch"] }]);
+   });
+ });
+diff --git a/runtime/test/runtime/startup.test.ts b/runtime/test/runtime/startup.test.ts
+index 94f18904..c23f4ed6 100644
+--- a/runtime/test/runtime/startup.test.ts
++++ b/runtime/test/runtime/startup.test.ts
+@@ -1,8 +1,12 @@
+ import { describe, expect, test } from "bun:test";
+ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
+ import { join } from "path";
++import { queueStartupSessionWarmup } from "../../src/runtime/startup.js";
+ import { createTempWorkspace } from "../helpers.js";
+ 
++const TEST_SHELL = process.env.SHELL || "bash";
++const RUNTIME_DIR = join(import.meta.dir, "../..");
++
+ describe("runtime startup helpers", () => {
+   test("initializeRuntimeEnvironment seeds workspace skel files for direct installs", () => {
+     const ws = createTempWorkspace("piclaw-startup-");
+@@ -10,11 +14,11 @@ describe("runtime startup helpers", () => {
+     try {
+       const run = Bun.spawnSync({
+         cmd: [
+-          "bun",
+-          "-e",
+-          'import { initializeRuntimeEnvironment } from "./src/runtime/startup.js"; initializeRuntimeEnvironment({ loadTimestamps() {}, loadChats() {} });',
++          TEST_SHELL,
++          "-lc",
++          "bun -e \"import { initializeRuntimeEnvironment } from './src/runtime/startup.js'; initializeRuntimeEnvironment({ loadTimestamps() {}, loadChats() {} });\"",
+         ],
+-        cwd: "/workspace/piclaw/runtime",
++        cwd: RUNTIME_DIR,
+         env: {
+           ...process.env,
+           PICLAW_WORKSPACE: ws.workspace,
+@@ -43,11 +47,11 @@ describe("runtime startup helpers", () => {
+     try {
+       const run = Bun.spawnSync({
+         cmd: [
+-          "bun",
+-          "-e",
+-          'import { queueStartupResumePendingIpc } from "./src/runtime/startup.js"; queueStartupResumePendingIpc();',
++          TEST_SHELL,
++          "-lc",
++          "bun -e \"import { queueStartupResumePendingIpc } from './src/runtime/startup.js'; queueStartupResumePendingIpc();\"",
+         ],
+-        cwd: "/workspace/piclaw/runtime",
++        cwd: RUNTIME_DIR,
+         env: {
+           ...process.env,
+           PICLAW_WORKSPACE: ws.workspace,
+@@ -82,11 +86,11 @@ describe("runtime startup helpers", () => {
+ 
+       const run = Bun.spawnSync({
+         cmd: [
+-          "bun",
+-          "-e",
+-          'import { queueStartupResumePendingIpc } from "./src/runtime/startup.js"; queueStartupResumePendingIpc();',
++          TEST_SHELL,
++          "-lc",
++          "bun -e \"import { queueStartupResumePendingIpc } from './src/runtime/startup.js'; queueStartupResumePendingIpc();\"",
+         ],
+-        cwd: "/workspace/piclaw/runtime",
++        cwd: RUNTIME_DIR,
+         env: {
+           ...process.env,
+           PICLAW_WORKSPACE: ws.workspace,
+@@ -107,4 +111,23 @@ describe("runtime startup helpers", () => {
+       ws.cleanup();
+     }
+   });
++
++  test("queueStartupSessionWarmup prioritizes the default chat and queues five recent chats by default", () => {
++    const scheduled: Array<{ chatJid: string; priority?: boolean }> = [];
++    const recentCalls: Array<{ limit?: number; excludeChatJids?: string[] }> = [];
++
++    queueStartupSessionWarmup({
++      scheduleChatWarmup: (chatJid: string, options?: { priority?: boolean }) => {
++        scheduled.push({ chatJid, priority: options?.priority });
++        return true;
++      },
++      scheduleRecentChatWarmup: (options?: { limit?: number; excludeChatJids?: string[] }) => {
++        recentCalls.push(options || {});
++        return [];
++      },
++    } as any);
++
++    expect(scheduled).toEqual([{ chatJid: "web:default", priority: true }]);
++    expect(recentCalls).toEqual([{ limit: 5, excludeChatJids: ["web:default"] }]);
++  });
+ });
+diff --git a/runtime/test/web/app-auth-bootstrap.test.ts b/runtime/test/web/app-auth-bootstrap.test.ts
+index 11e6954f..d0e5f724 100644
+--- a/runtime/test/web/app-auth-bootstrap.test.ts
++++ b/runtime/test/web/app-auth-bootstrap.test.ts
+@@ -226,5 +226,5 @@ test('refreshActiveChatAgents merges active + archived branch rows for target ch
+   await new Promise((resolve) => setTimeout(resolve, 0));
+ 
+   expect(rows.map((row) => row.chat_jid).sort()).toEqual(['chat-a', 'chat-b']);
+-  expect(branchOptions).toEqual([{ includeArchived: true, prewarmRecent: true, prewarmLimit: 4, excludeChatJid: 'chat-a' }]);
++  expect(branchOptions).toEqual([{ includeArchived: true, prewarmRecent: true, prewarmLimit: 4, excludeChatJid: 'chat-a', prewarmChatJid: 'chat-a' }]);
+ });
+diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
+index 35a367c9..ba6bdf0b 100644
+--- a/runtime/web/src/api.ts
++++ b/runtime/web/src/api.ts
+@@ -205,6 +205,7 @@ export async function getChatBranches(rootChatJid = null, options = {}) {
+     if (options?.prewarmRecent) params.set('prewarm_recent', '1');
+     if (Number.isFinite(options?.prewarmLimit)) params.set('prewarm_limit', String(options.prewarmLimit));
+     if (options?.excludeChatJid) params.set('exclude_chat_jid', String(options.excludeChatJid));
++    if (options?.prewarmChatJid) params.set('prewarm_chat_jid', String(options.prewarmChatJid));
+     const query = params.toString() ? `?${params.toString()}` : '';
+     return request(`/agent/branches${query}`);
+ }
+diff --git a/runtime/web/src/ui/app-auth-bootstrap.ts b/runtime/web/src/ui/app-auth-bootstrap.ts
+index 2f421ddb..815d145d 100644
+--- a/runtime/web/src/ui/app-auth-bootstrap.ts
++++ b/runtime/web/src/ui/app-auth-bootstrap.ts
+@@ -177,7 +177,12 @@ export async function refreshActiveChatAgents(options: RefreshActiveChatAgentsOp
+       getActiveChatAgents().catch(() => ({ chats: [] /* expected: active-agent refresh is best-effort. */ })),
+       getChatBranches(null, {
+         includeArchived: true,
+-        ...(prewarmRecent ? { prewarmRecent: true, prewarmLimit, excludeChatJid: targetChatJid } : {}),
++        ...(prewarmRecent ? {
++          prewarmRecent: true,
++          prewarmLimit,
++          excludeChatJid: targetChatJid,
++          prewarmChatJid: targetChatJid,
++        } : {}),
+       }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
+     ]);
+ 
+-- 
+2.51.2
+
