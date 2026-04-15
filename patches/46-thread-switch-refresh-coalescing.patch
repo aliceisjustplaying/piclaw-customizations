@@ -1,4 +1,4 @@
-From 136f9bfb0c88a1cb92b694b9d7e220a4cb64804a Mon Sep 17 00:00:00 2001
+From 8e03f2f4f1137ebc8d6a02810f1bdfc9ddb87bb1 Mon Sep 17 00:00:00 2001
 From: Pix <pix@example.invalid>
 Date: Wed, 15 Apr 2026 10:31:41 +0000
 Subject: [PATCH] perf: coalesce overlapping thread-switch refresh work

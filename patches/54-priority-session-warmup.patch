@@ -1,4 +1,4 @@
-From d37f3ab0a4e6a4282d981e32505343f47f951201 Mon Sep 17 00:00:00 2001
+From 173e0d31f14e45154377bdb35506f1061686efdc Mon Sep 17 00:00:00 2001
 From: alice <aliceisjustplaying@gmail.com>
 Date: Wed, 15 Apr 2026 12:28:39 +0000
 Subject: [PATCH] perf: prioritize startup session warmup

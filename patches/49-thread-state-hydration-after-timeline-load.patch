@@ -1,4 +1,4 @@
-From ab5e2e2299363f9e3017d16bf92cf645ef3a502d Mon Sep 17 00:00:00 2001
+From 89d74abab5408b922dd4efe50bae3d63c0d185d2 Mon Sep 17 00:00:00 2001
 From: alice <aliceisjustplaying@gmail.com>
 Date: Wed, 15 Apr 2026 12:11:42 +0000
 Subject: [PATCH] perf: hydrate thread state after timeline load settles

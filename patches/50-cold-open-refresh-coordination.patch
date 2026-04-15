@@ -1,4 +1,4 @@
-From 3adeffc718652ea74e52b8cced2fae1d091d4959 Mon Sep 17 00:00:00 2001
+From 0d638815f81daaba8418913199b6cc388e6491e7 Mon Sep 17 00:00:00 2001
 From: alice <aliceisjustplaying@gmail.com>
 Date: Wed, 15 Apr 2026 12:12:59 +0000
 Subject: [PATCH] perf: coalesce cold-open reconnect refreshes

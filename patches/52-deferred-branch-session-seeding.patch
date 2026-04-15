@@ -1,4 +1,4 @@
-From 20d71f37dce2a73ffcba0edbfdc446e9d8041c7c Mon Sep 17 00:00:00 2001
+From d9642d60551cf5dac684216df09f49f55824e413 Mon Sep 17 00:00:00 2001
 From: alice <aliceisjustplaying@gmail.com>
 Date: Wed, 15 Apr 2026 12:23:11 +0000
 Subject: [PATCH] perf: defer branch session seeding
