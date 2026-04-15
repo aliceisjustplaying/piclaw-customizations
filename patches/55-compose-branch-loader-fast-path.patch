@@ -1,4 +1,4 @@
-From 2d38b0cebf3134db9c65a6308972a69130366308 Mon Sep 17 00:00:00 2001
+From ef528c453de7e5b30354d03368c85ff3a6cd1205 Mon Sep 17 00:00:00 2001
 From: alice <aliceisjustplaying@gmail.com>
 Date: Wed, 15 Apr 2026 12:28:43 +0000
 Subject: [PATCH] perf: route compose branch creation through branch loader

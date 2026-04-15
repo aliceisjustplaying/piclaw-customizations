@@ -21,7 +21,6 @@ Automation helpers in this directory:
 | 24 | `package.json`, `bun.lock` | Pin `ghostty-web` vendoring to the forked commit that carries the upstream bootstrap/open-reset fix |
 | 28 | `provider-usage.ts`, `provider-usage.test.ts`, `compose-box.ts` | Local-only Anthropic OAuth provider usage: show 5h/week usage windows, fetch funded overage grant state, and keep extra-usage details in the model tooltip without adding them to the inline hint |
 | 30 | `dispatch-agent.ts`, push routes/store/service, `use-notifications.ts`, `sw.js`, push client/server tests, docs | Consolidated web push and notification delivery: subscription/storage foundation, outbound delivery, Bun-safe request generation, real VAPID subject, reply notifications, source markers, and per-device per-chat delivery coordination |
-| 31 | `agent-status.ts`, `channel-endpoint-facade-service.ts`, `content-endpoints.ts`, `server-timing.ts`, `request-router-service.ts`, `api.ts`, `app-perf-tracing.ts`, related tests | Correlated backend timing for hot web paths: add `Server-Timing` and request-id capture so browser-visible traces can separate backend work from client latency |
 | 32 | `app-resume.ts`, `use-sse-connection.ts`, related web tests | Consolidated iOS Safari share-sheet mitigation: guarded return-to-app detection and SSE wake/focus reconnect suppression |
 | 45 | `provider-usage.ts`, `runtime-facade.ts`, related tests | Fast-path `/agent/models` responses during thread opens by serving provider usage stale-while-revalidate on top of the local provider-usage patch |
 | 46 | `app-chat-refresh-lifecycle.ts`, `app-refresh-coordination.ts`, related tests | Coalesce overlapping thread-switch refresh work so duplicate foreground refresh bundles collapse into one unit |
@@ -46,6 +45,7 @@ Historical note:
 - the upstreamable subset of that consolidated perf lane was then re-split on 2026-04-15 into active patches `31`, `45`, `46`, and `47`
 - the remaining cold-open UI lane was then fixed and re-split on 2026-04-15 into active patches `48`, `49`, `50`, and `51`
 - the remaining consolidated startup/perf lane in active patch `29` was then retired and re-split on 2026-04-15 into active patches `52`, `53`, `54`, `55`, and `56`
+- active patch `31` then merged upstream via PR #42 and was retired on 2026-04-15
 
 | # | Status | Reason |
 |---|--------|--------|
@@ -65,6 +65,7 @@ Historical note:
 | ~~25~~ | Merged upstream | PR #37; upstream commit `610dda1c` |
 | ~~26~~ | Merged upstream | PR #38; upstream commit `f66f1035` |
 | ~~27~~ | Merged upstream | Upstream commit `581830a` |
+| ~~31~~ | Merged upstream | PR #42; upstream commit `63f3aae4` |
 
 ## Terminal patch outcomes
 

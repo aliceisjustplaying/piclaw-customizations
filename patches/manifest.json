@@ -42,11 +42,6 @@
       "track_upstream": false,
       "upstream_prs": []
     },
-    "31": {
-      "name": "correlated-backend-timing",
-      "track_upstream": true,
-      "upstream_prs": [42]
-    },
     "32": {
       "name": "ios-share-sheet-resume-and-sse-guards",
       "track_upstream": false,
@@ -55,7 +50,7 @@
     "45": {
       "name": "agent-model-fast-path",
       "track_upstream": true,
-      "upstream_prs": []
+      "upstream_prs": [43]
     },
     "46": {
       "name": "thread-switch-refresh-coalescing",

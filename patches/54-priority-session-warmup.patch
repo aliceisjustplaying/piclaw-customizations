@@ -1,4 +1,4 @@
-From 1fd9a75ed3cdb246a1512e460069eebe55b7cdc2 Mon Sep 17 00:00:00 2001
+From d37f3ab0a4e6a4282d981e32505343f47f951201 Mon Sep 17 00:00:00 2001
 From: alice <aliceisjustplaying@gmail.com>
 Date: Wed, 15 Apr 2026 12:28:39 +0000
 Subject: [PATCH] perf: prioritize startup session warmup
@@ -32,10 +32,10 @@ index d5d4e582..b37f29ae 100644
      return this.runtimeFacade.getSessionTreeForChat(chatJid);
    }
 diff --git a/runtime/src/agent-pool/session-manager.ts b/runtime/src/agent-pool/session-manager.ts
-index 9cf50aa2..e1865c3b 100644
+index 8b942231..b351361e 100644
 --- a/runtime/src/agent-pool/session-manager.ts
 +++ b/runtime/src/agent-pool/session-manager.ts
-@@ -46,6 +46,9 @@ export interface AgentSessionManagerOptions {
+@@ -47,6 +47,9 @@ export interface AgentSessionManagerOptions {
  export class AgentSessionManager {
    private readonly branchSeedRealizationInFlight = new Map<string, Promise<boolean>>();
    private readonly prewarmInFlight = new Set<string>();
@@ -45,13 +45,13 @@ index 9cf50aa2..e1865c3b 100644
  
    constructor(private readonly options: AgentSessionManagerOptions) {}
  
-@@ -183,28 +186,20 @@ export class AgentSessionManager {
+@@ -198,28 +201,20 @@ export class AgentSessionManager {
      await this.disposeEntry(this.options.sidePool, chatJid, "recreate.dispose_side_session", true);
    }
  
 -  prewarm(chatJid: string): void {
 -    if (!chatJid || this.prewarmInFlight.has(chatJid)) return;
--    if (this.options.pool.has(chatJid) && !readDeferredBranchSeed(chatJid)) return;
+-    if (this.options.pool.has(chatJid) && !hasDeferredBranchSeed(chatJid)) return;
 -
 -    this.prewarmInFlight.add(chatJid);
 -    void (async () => {
@@ -74,7 +74,7 @@ index 9cf50aa2..e1865c3b 100644
 +  prewarm(chatJid: string, options: { priority?: boolean } = {}): boolean {
 +    const normalizedChatJid = String(chatJid || "").trim();
 +    if (!normalizedChatJid) return false;
-+    if (this.options.pool.has(normalizedChatJid) && !readDeferredBranchSeed(normalizedChatJid)) return false;
++    if (this.options.pool.has(normalizedChatJid) && !hasDeferredBranchSeed(normalizedChatJid)) return false;
 +    if (this.prewarmInFlight.has(normalizedChatJid) || this.queuedPrewarms.has(normalizedChatJid)) return false;
 +
 +    this.queuedPrewarms.add(normalizedChatJid);
@@ -88,7 +88,7 @@ index 9cf50aa2..e1865c3b 100644
    }
  
    async shutdown(): Promise<void> {
-@@ -378,4 +373,43 @@ export class AgentSessionManager {
+@@ -393,4 +388,43 @@ export class AgentSessionManager {
        });
      }
    }
@@ -104,7 +104,7 @@ index 9cf50aa2..e1865c3b 100644
 +          if (!chatJid) continue;
 +          this.queuedPrewarms.delete(chatJid);
 +          if (this.prewarmInFlight.has(chatJid)) continue;
-+          if (this.options.pool.has(chatJid) && !readDeferredBranchSeed(chatJid)) continue;
++          if (this.options.pool.has(chatJid) && !hasDeferredBranchSeed(chatJid)) continue;
 +
 +          this.prewarmInFlight.add(chatJid);
 +          try {
