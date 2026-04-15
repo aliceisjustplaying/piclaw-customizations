@@ -49,6 +49,71 @@ index 674ee8fd..e8c31d45 100644
  });
  
  test('invokePaneBeforeDetachFromHost calls the pane detach lifecycle hook when present', async () => {
+diff --git a/runtime/test/web/app-main-surface-state.test.ts b/runtime/test/web/app-main-surface-state.test.ts
+index 76d92a7e..1e8274dc 100644
+--- a/runtime/test/web/app-main-surface-state.test.ts
++++ b/runtime/test/web/app-main-surface-state.test.ts
+@@ -3,37 +3,35 @@ import { expect, test } from 'bun:test';
+ import {
+   createBranchLoaderState,
+   resolveCurrentBranchRecord,
++  resolveStableRootChatJid,
+ } from '../../web/src/ui/app-main-surface-state.js';
+ 
+-test('resolveCurrentBranchRecord prefers current branch records over active chat fallbacks', () => {
+-  expect(resolveCurrentBranchRecord({
+-    activeChatAgents: [{ chat_jid: 'chat-1', source: 'active' }],
+-    currentChatBranches: [{ chat_jid: 'chat-1', source: 'branch' }],
+-    currentChatJid: 'chat-1',
+-  })).toEqual({ chat_jid: 'chat-1', source: 'branch' });
++test('createBranchLoaderState reflects branch-loader mode', () => {
++  expect(createBranchLoaderState(false)).toEqual({ status: 'idle', message: '' });
++  expect(createBranchLoaderState(true)).toEqual({ status: 'running', message: 'Preparing a new chat branch…' });
+ });
+ 
+-test('resolveCurrentBranchRecord falls back to active chat records or null', () => {
+-  expect(resolveCurrentBranchRecord({
+-    activeChatAgents: [{ chat_jid: 'chat-2', source: 'active' }],
+-    currentChatBranches: [],
+-    currentChatJid: 'chat-2',
+-  })).toEqual({ chat_jid: 'chat-2', source: 'active' });
++test('resolveCurrentBranchRecord prefers current root branch rows before active chat rows', () => {
++  const currentBranch = { chat_jid: 'web:default:branch:abc', root_chat_jid: 'web:default', source: 'branches' };
++  const activeBranch = { chat_jid: 'web:default:branch:abc', root_chat_jid: 'wrong-root', source: 'active' };
+ 
+   expect(resolveCurrentBranchRecord({
+-    activeChatAgents: [],
+-    currentChatBranches: [],
+-    currentChatJid: 'missing',
+-  })).toBeNull();
++    currentChatJid: 'web:default:branch:abc',
++    currentChatBranches: [currentBranch],
++    activeChatAgents: [activeBranch],
++  })).toEqual(currentBranch);
++});
++
++test('resolveStableRootChatJid uses branch metadata when available', () => {
++  expect(resolveStableRootChatJid('web:default:branch:abc', { root_chat_jid: 'web:default' })).toBe('web:default');
++});
++
++test('resolveStableRootChatJid derives the root chat from nested branch ids before metadata arrives', () => {
++  expect(resolveStableRootChatJid('web:default:branch:abc')).toBe('web:default');
++  expect(resolveStableRootChatJid('web:default:branch:abc:branch:def')).toBe('web:default');
+ });
+ 
+-test('createBranchLoaderState preserves running and idle defaults', () => {
+-  expect(createBranchLoaderState(true)).toEqual({
+-    status: 'running',
+-    message: 'Preparing a new chat branch…',
+-  });
+-  expect(createBranchLoaderState(false)).toEqual({
+-    status: 'idle',
+-    message: '',
+-  });
++test('resolveStableRootChatJid leaves root chats unchanged and falls back sanely for blanks', () => {
++  expect(resolveStableRootChatJid('web:default')).toBe('web:default');
++  expect(resolveStableRootChatJid('')).toBe('web:default');
+ });
 diff --git a/runtime/test/web/app-perf-tracing.test.ts b/runtime/test/web/app-perf-tracing.test.ts
 new file mode 100644
 index 00000000..7114c7f1
@@ -960,6 +1025,46 @@ index ac9fffd4..c92adbe7 100644
  
    const refreshModelAndQueueState = useCallback(() => {
      refreshModelAndQueueStateBundle({
+diff --git a/runtime/web/src/ui/app-main-surface-state.ts b/runtime/web/src/ui/app-main-surface-state.ts
+index 8134a092..84f9831b 100644
+--- a/runtime/web/src/ui/app-main-surface-state.ts
++++ b/runtime/web/src/ui/app-main-surface-state.ts
+@@ -33,6 +33,23 @@ export function createBranchLoaderState(branchLoaderMode: boolean) {
+   };
+ }
+ 
++export function resolveStableRootChatJid(currentChatJid: string, currentBranchRecord?: { root_chat_jid?: string | null } | null): string {
++  const recordRoot = typeof currentBranchRecord?.root_chat_jid === 'string'
++    ? currentBranchRecord.root_chat_jid.trim()
++    : '';
++  if (recordRoot) return recordRoot;
++
++  const normalizedChatJid = typeof currentChatJid === 'string' ? currentChatJid.trim() : '';
++  if (!normalizedChatJid) return 'web:default';
++
++  const branchMarkerIndex = normalizedChatJid.indexOf(':branch:');
++  if (branchMarkerIndex <= 0) {
++    return normalizedChatJid;
++  }
++
++  return normalizedChatJid.slice(0, branchMarkerIndex) || normalizedChatJid;
++}
++
+ export function useMainAppSurfaceState(options: {
+   currentChatJid: string;
+   branchLoaderMode: boolean;
+@@ -74,7 +91,10 @@ export function useMainAppSurfaceState(options: {
+     currentChatBranches,
+     currentChatJid,
+   }), [activeChatAgents, currentChatBranches, currentChatJid]);
+-  const currentRootChatJid = currentBranchRecord?.root_chat_jid || currentChatJid;
++  const currentRootChatJid = useMemo(
++    () => resolveStableRootChatJid(currentChatJid, currentBranchRecord),
++    [currentBranchRecord, currentChatJid],
++  );
+   const activeSearchScopeLabel = describeSearchScope(searchScope);
+   const [branchLoaderState, setBranchLoaderState] = useState(() => createBranchLoaderState(branchLoaderMode));
+   const followupQueueCount = followupQueueItems.length;
 diff --git a/runtime/web/src/ui/app-perf-tracing.ts b/runtime/web/src/ui/app-perf-tracing.ts
 new file mode 100644
 index 00000000..c9b6b56c
