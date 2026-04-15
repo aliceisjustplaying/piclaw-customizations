@@ -27,16 +27,20 @@ Automation helpers in this directory:
 | 45 | `provider-usage.ts`, `runtime-facade.ts`, related tests | Fast-path `/agent/models` responses during thread opens by serving provider usage stale-while-revalidate on top of the local provider-usage patch |
 | 46 | `app-chat-refresh-lifecycle.ts`, `app-refresh-coordination.ts`, related tests | Coalesce overlapping thread-switch refresh work so duplicate foreground refresh bundles collapse into one unit |
 | 47 | `app-main-surface-state.ts`, related tests | Stabilize root chat resolution for direct branch opens so wrong-root route replay does not churn the UI |
-| 48 | `app-agent-status-lifecycle.ts`, `app-auth-bootstrap.ts`, boot/timeline refresh orchestration files, `app-timeline-cache.ts`, related tests | Remaining local-only cold-open UI work: initial-connect gating, post-first-paint hydration ordering, bounded recent-thread timeline cache/prewarm, and the perf trace/runtime contract glue around that flow |
+| 48 | `app-perf-tracing.ts`, `app-shell-bootstrap.ts`, branch/timeline load orchestration files, branch/window action tests | Add web UI perf trace hooks for thread switches and branch creation so timeline/runtime phases can be correlated in the browser |
+| 49 | `app-chat-refresh-lifecycle.ts`, `app-view-refresh-lifecycle.ts`, `app-main-lifecycle-composition.ts`, related tests | Move thread-state hydration behind timeline load completion and failure so cold opens do not show stale status/queue/context state |
+| 50 | `app-agent-status-lifecycle.ts`, `app-auth-bootstrap.ts`, `app-connection-lifecycle.ts`, `app-sse-events.ts`, related tests | Coalesce cold-open reconnect refreshes so first-connect and SSE reconnect recovery do not duplicate the foreground hydration lane |
+| 51 | `app-timeline-cache.ts`, `use-timeline.ts`, `app-main-timeline-composition.ts`, `app.ts`, related tests | Keep a bounded in-memory recent-thread timeline cache and best-effort nearby-thread prewarm for faster thread switches without synchronous storage writes |
 
 ## Retired patches
 
 Retired patches that are still useful for history/reference are kept under `patches/retired/`.
-Numbering preserved — next new patch is **49**.
+Numbering preserved — next new patch is **52**.
 
 Historical note:
 - the pre-consolidation split patches `29` through `44` were retired into `patches/retired/` on 2026-04-15 and first replaced by consolidated active patches `29` through `32`
-- the upstreamable subset of that consolidated perf lane was then re-split on 2026-04-15 into active patches `31`, `45`, `46`, and `47`, leaving active patch `48` as the remaining local-only cold-open UI layer
+- the upstreamable subset of that consolidated perf lane was then re-split on 2026-04-15 into active patches `31`, `45`, `46`, and `47`
+- the remaining cold-open UI lane was then fixed and re-split on 2026-04-15 into active patches `48`, `49`, `50`, and `51`
 
 | # | Status | Reason |
 |---|--------|--------|

@@ -1,0 +1,336 @@
+From 9d1973c9a3147425d2f2d8a8dd7ec46c06f49b3b Mon Sep 17 00:00:00 2001
+From: alice <aliceisjustplaying@gmail.com>
+Date: Wed, 15 Apr 2026 11:58:54 +0000
+Subject: [PATCH] perf: add web ui tracing hooks
+
+---
+ .../web/app-boot-load-orchestration.test.ts   |  5 +-
+ .../web/app-branch-pane-orchestration.test.ts | 13 ++++-
+ runtime/test/web/app-window-actions.test.ts   |  8 ++++
+ .../web/src/ui/app-boot-load-orchestration.ts | 48 ++++++++++++++++++-
+ .../src/ui/app-branch-pane-orchestration.ts   | 11 +++++
+ runtime/web/src/ui/app-perf-tracing.ts        |  4 +-
+ runtime/web/src/ui/app-shell-bootstrap.ts     |  2 +
+ runtime/web/src/ui/app-window-actions.ts      | 25 ++++++++++
+ 8 files changed, 110 insertions(+), 6 deletions(-)
+
+diff --git a/runtime/test/web/app-boot-load-orchestration.test.ts b/runtime/test/web/app-boot-load-orchestration.test.ts
+index ec5271e4..56807e3b 100644
+--- a/runtime/test/web/app-boot-load-orchestration.test.ts
++++ b/runtime/test/web/app-boot-load-orchestration.test.ts
+@@ -95,7 +95,10 @@ test('runTimelineLoadFlow loads main timeline and triggers deferred scroll', asy
+     isCancelled: () => false,
+     scheduleRaf: (callback) => callback(),
+     scheduleTimeout: (callback) => callback(),
++    onTimelineLoadStart: () => calls.push('load-start'),
++    onTimelineDataReady: () => calls.push('data-ready'),
++    onTimelineFirstPaint: () => calls.push('first-paint'),
+   });
+ 
+-  expect(calls).toEqual(['load', 'scroll']);
++  expect(calls).toEqual(['load-start', 'load', 'data-ready', 'first-paint', 'scroll']);
+ });
+diff --git a/runtime/test/web/app-branch-pane-orchestration.test.ts b/runtime/test/web/app-branch-pane-orchestration.test.ts
+index 674ee8fd..e8c31d45 100644
+--- a/runtime/test/web/app-branch-pane-orchestration.test.ts
++++ b/runtime/test/web/app-branch-pane-orchestration.test.ts
+@@ -1,4 +1,4 @@
+-import { expect, test } from 'bun:test';
++import { afterEach, expect, test } from 'bun:test';
+ 
+ import {
+   applyStoredPaneLayout,
+@@ -7,6 +7,11 @@ import {
+   navigateToSelectedBranch,
+   resolvePanePopoutTransfer,
+ } from '../../web/src/ui/app-branch-pane-orchestration.js';
++import { getAppPerfTracing } from '../../web/src/ui/app-perf-tracing.js';
++
++afterEach(() => {
++  getAppPerfTracing().clear();
++});
+ 
+ test('navigateToSelectedBranch ignores same/blank chats and navigates when selection changes', () => {
+   const calls: string[] = [];
+@@ -31,6 +36,12 @@ test('navigateToSelectedBranch ignores same/blank chats and navigates when selec
+ 
+   expect(calls).toHaveLength(1);
+   expect(calls[0]).toContain('chat_jid=web%3Abranch');
++
++  const traces = getAppPerfTracing().getTraces();
++  expect(traces).toHaveLength(1);
++  expect(traces[0]?.type).toBe('thread-switch');
++  expect(traces[0]?.chatJid).toBe('web:branch');
++  expect(traces[0]?.phases.map((phase) => phase.phase)).toEqual(['intent', 'navigation-dispatched']);
+ });
+ 
+ test('invokePaneBeforeDetachFromHost calls the pane detach lifecycle hook when present', async () => {
+diff --git a/runtime/test/web/app-window-actions.test.ts b/runtime/test/web/app-window-actions.test.ts
+index 60644f8c..d83a8b99 100644
+--- a/runtime/test/web/app-window-actions.test.ts
++++ b/runtime/test/web/app-window-actions.test.ts
+@@ -5,10 +5,12 @@ import {
+   popOutChat,
+   popOutPane,
+ } from '../../web/src/ui/app-window-actions.js';
++import { getAppPerfTracing } from '../../web/src/ui/app-perf-tracing.js';
+ 
+ const originalWindow = globalThis.window;
+ 
+ afterEach(() => {
++  getAppPerfTracing().clear();
+   if (originalWindow === undefined) {
+     delete globalThis.window;
+   } else {
+@@ -44,6 +46,12 @@ test('createSessionFromCompose navigates immediately to the branch-loader route'
+   expect(toasts).toEqual([]);
+   expect(navigateCalls[0]).toContain('branch_loader=1');
+   expect(navigateCalls[0]).toContain('branch_source_chat_jid=web%3Aroot');
++
++  const traces = getAppPerfTracing().getTraces();
++  expect(traces).toHaveLength(1);
++  expect(traces[0]?.type).toBe('branch-create');
++  expect(traces[0]?.chatJid).toBe('web:root');
++  expect(traces[0]?.phases.map((phase) => phase.phase)).toEqual(['intent', 'navigation-dispatched']);
+ });
+ 
+ test('popOutPane transfers pane state and closes the source tab after navigation', async () => {
+diff --git a/runtime/web/src/ui/app-boot-load-orchestration.ts b/runtime/web/src/ui/app-boot-load-orchestration.ts
+index 8bfb209a..5e41878e 100644
+--- a/runtime/web/src/ui/app-boot-load-orchestration.ts
++++ b/runtime/web/src/ui/app-boot-load-orchestration.ts
+@@ -58,6 +58,10 @@ export interface RunTimelineLoadFlowOptions {
+   isCancelled: () => boolean;
+   scheduleRaf?: RafLike;
+   scheduleTimeout?: (callback: () => void, delayMs: number) => void;
++  onTimelineLoadStart?: (detail?: Record<string, unknown>) => void;
++  onTimelineDataReady?: (detail?: Record<string, unknown>) => void;
++  onTimelineFirstPaint?: (detail?: Record<string, unknown>) => void;
++  onTimelineError?: (error: unknown, detail?: Record<string, unknown>) => void;
+ }
+ 
+ /**
+@@ -77,12 +81,33 @@ export async function runTimelineLoadFlow(options: RunTimelineLoadFlowOptions):
+     setHasMore,
+     scrollToBottom,
+     isCancelled,
+-    scheduleRaf = (callback) => requestAnimationFrame(callback),
++    scheduleRaf = (callback) => {
++      if (typeof requestAnimationFrame === 'function') {
++        requestAnimationFrame(callback);
++        return;
++      }
++      setTimeout(callback, 0);
++    },
+     scheduleTimeout = (callback, delayMs) => {
+       setTimeout(callback, delayMs);
+     },
++    onTimelineLoadStart,
++    onTimelineDataReady,
++    onTimelineFirstPaint,
++    onTimelineError,
+   } = options;
+ 
++  const noteFirstPaint = (detail?: Record<string, unknown>) => {
++    if (isCancelled()) return;
++    scheduleRaf(() => {
++      if (isCancelled()) return;
++      scheduleRaf(() => {
++        if (isCancelled()) return;
++        onTimelineFirstPaint?.(detail);
++      });
++    });
++  };
++
+   const safeScrollToBottom = () => {
+     if (isCancelled()) return;
+     scheduleRaf(() => {
+@@ -95,18 +120,32 @@ export async function runTimelineLoadFlow(options: RunTimelineLoadFlowOptions):
+   };
+ 
+   if (currentHashtag) {
+-    await loadPosts(currentHashtag);
++    onTimelineLoadStart?.({ mode: 'hashtag', hashtag: currentHashtag });
++    try {
++      await loadPosts(currentHashtag);
++      if (isCancelled()) return;
++      onTimelineDataReady?.({ mode: 'hashtag', hashtag: currentHashtag });
++      noteFirstPaint({ mode: 'hashtag' });
++    } catch (error) {
++      if (isCancelled()) return;
++      onTimelineError?.(error, { mode: 'hashtag', hashtag: currentHashtag });
++      throw error;
++    }
+     return;
+   }
+ 
+   if (searchQuery) {
++    onTimelineLoadStart?.({ mode: 'search', searchQuery, searchScope });
+     try {
+       const result = await searchPosts(searchQuery, 50, 0, currentChatJid, searchScope, currentRootChatJid);
+       if (isCancelled()) return;
+       setPosts(Array.isArray(result?.results) ? result.results : []);
+       setHasMore(false);
++      onTimelineDataReady?.({ mode: 'search', resultCount: Array.isArray(result?.results) ? result.results.length : 0 });
++      noteFirstPaint({ mode: 'search' });
+     } catch (error) {
+       if (isCancelled()) return;
++      onTimelineError?.(error, { mode: 'search', searchQuery, searchScope });
+       console.error('Failed to search:', error);
+       setPosts([]);
+       setHasMore(false);
+@@ -114,11 +153,16 @@ export async function runTimelineLoadFlow(options: RunTimelineLoadFlowOptions):
+     return;
+   }
+ 
++  onTimelineLoadStart?.({ mode: 'timeline' });
+   try {
+     await loadPosts();
++    if (isCancelled()) return;
++    onTimelineDataReady?.({ mode: 'timeline' });
++    noteFirstPaint({ mode: 'timeline' });
+     safeScrollToBottom();
+   } catch (error) {
+     if (isCancelled()) return;
++    onTimelineError?.(error, { mode: 'timeline' });
+     console.error('Failed to load timeline:', error);
+   }
+ }
+diff --git a/runtime/web/src/ui/app-branch-pane-orchestration.ts b/runtime/web/src/ui/app-branch-pane-orchestration.ts
+index df0051fd..56e7bfb7 100644
+--- a/runtime/web/src/ui/app-branch-pane-orchestration.ts
++++ b/runtime/web/src/ui/app-branch-pane-orchestration.ts
+@@ -1,4 +1,5 @@
+ import { buildChatWindowUrl } from './chat-window.js';
++import { markAppPerfTrace, startAppPerfTrace } from './app-perf-tracing.js';
+ 
+ interface RefBox<T> {
+   current: T;
+@@ -36,8 +37,18 @@ export function navigateToSelectedBranch(options: NavigateToSelectedBranchOption
+   if (!hasWindow) return false;
+   const normalized = typeof nextChatJid === 'string' ? nextChatJid.trim() : '';
+   if (!normalized || normalized === currentChatJid) return false;
++  const traceId = startAppPerfTrace('thread-switch', normalized, {
++    sourceChatJid: currentChatJid,
++    trigger: 'branch-picker',
++  });
++  markAppPerfTrace(traceId, 'intent', {
++    sourceChatJid: currentChatJid,
++  });
+   const url = buildChatWindowUrl(currentHref, normalized, { chatOnly: chatOnlyMode });
+   navigate?.(url);
++  markAppPerfTrace(traceId, 'navigation-dispatched', {
++    url,
++  });
+   return true;
+ }
+ 
+diff --git a/runtime/web/src/ui/app-perf-tracing.ts b/runtime/web/src/ui/app-perf-tracing.ts
+index da7cd67c..efba3e71 100644
+--- a/runtime/web/src/ui/app-perf-tracing.ts
++++ b/runtime/web/src/ui/app-perf-tracing.ts
+@@ -95,8 +95,8 @@ function markPerformance(traceId: string, phase: string): void {
+   if (typeof performance === 'undefined' || typeof performance.mark !== 'function') return;
+   try {
+     performance.mark(`piclaw:${traceId}:${phase}`);
+-  } catch (error) {
+-    console.debug('[app-perf] Ignoring performance.mark failure.', error, { traceId, phase });
++  } catch {
++    // Ignore duplicate/invalid marks in older browsers.
+   }
+ }
+ 
+diff --git a/runtime/web/src/ui/app-shell-bootstrap.ts b/runtime/web/src/ui/app-shell-bootstrap.ts
+index df44296a..3ea1b67a 100644
+--- a/runtime/web/src/ui/app-shell-bootstrap.ts
++++ b/runtime/web/src/ui/app-shell-bootstrap.ts
+@@ -18,6 +18,7 @@ import {
+   mindmapPaneExtension,
+   kanbanPaneExtension,
+ } from '../panes/index.js';
++import { installAppPerfTracing } from './app-perf-tracing.js';
+ import { resolveOptionalApi } from './optional-api.js';
+ 
+ interface AppApiSurface {
+@@ -92,6 +93,7 @@ export function initializeAppShellRuntime(): void {
+   installBrowserNoiseFilters(typeof window !== 'undefined' ? window : null);
+   registerAppPaneExtensions();
+   registerAppServiceWorker(typeof window !== 'undefined' ? window : null);
++  installAppPerfTracing(typeof window !== 'undefined' ? window as any : null);
+   initialized = true;
+ }
+ 
+diff --git a/runtime/web/src/ui/app-window-actions.ts b/runtime/web/src/ui/app-window-actions.ts
+index d7954bef..8eac9b84 100644
+--- a/runtime/web/src/ui/app-window-actions.ts
++++ b/runtime/web/src/ui/app-window-actions.ts
+@@ -10,6 +10,7 @@ import {
+   openProvisionalChatWindow,
+   primeProvisionalChatWindow,
+ } from './chat-window.js';
++import { failAppPerfTrace, markAppPerfTrace, startAppPerfTrace } from './app-perf-tracing.js';
+ 
+ type ToastKind = 'info' | 'warning' | 'error' | 'success';
+ type ToastFn = (title: string, message: string, kind: ToastKind, timeout: number) => void;
+@@ -53,6 +54,14 @@ export async function createSessionFromCompose(options: CreateSessionFromCompose
+     baseHref,
+   } = options;
+ 
++  const traceId = startAppPerfTrace('branch-create', currentChatJid, {
++    trigger: 'compose',
++    chatOnlyMode: Boolean(chatOnlyMode),
++  });
++  markAppPerfTrace(traceId, 'intent', {
++    currentChatJid,
++  });
++
+   // Fast path for the main web UI: navigate immediately to the lightweight
+   // branch-loader route so chat creation feels instant. The loader route reuses
+   // the existing async fork flow without blocking the current window on full
+@@ -61,14 +70,20 @@ export async function createSessionFromCompose(options: CreateSessionFromCompose
+     try {
+       const loaderUrl = buildBranchLoaderUrl(baseHref, currentChatJid, { chatOnly: chatOnlyMode });
+       navigate(loaderUrl);
++      markAppPerfTrace(traceId, 'navigation-dispatched', {
++        mode: 'branch-loader',
++        url: loaderUrl,
++      });
+       return true;
+     } catch (error) {
++      failAppPerfTrace(traceId, error, 'navigation-failed');
+       showIntentToast?.('Could not create branch', describeBranchOpenError(error), 'warning', 5000);
+       return false;
+     }
+   }
+ 
+   try {
++    markAppPerfTrace(traceId, 'fork-request-start');
+     const response = await forkChatBranch(currentChatJid);
+     const branch = response?.branch;
+     const nextChatJid = typeof branch?.chat_jid === 'string' && branch.chat_jid.trim() ? branch.chat_jid.trim() : null;
+@@ -76,6 +91,10 @@ export async function createSessionFromCompose(options: CreateSessionFromCompose
+       throw new Error('Branch fork did not return a chat id.');
+     }
+ 
++    markAppPerfTrace(traceId, 'fork-request-ready', {
++      nextChatJid,
++    });
++
+     await Promise.allSettled([
+       refreshActiveChatAgents?.(),
+       refreshCurrentChatBranches?.(),
+@@ -85,8 +104,14 @@ export async function createSessionFromCompose(options: CreateSessionFromCompose
+     showIntentToast?.('New branch created', `Switched to ${label}.`, 'info', 2500);
+     const url = buildChatWindowUrl(baseHref, nextChatJid, { chatOnly: chatOnlyMode });
+     navigate?.(url);
++    markAppPerfTrace(traceId, 'navigation-dispatched', {
++      mode: 'direct',
++      nextChatJid,
++      url,
++    });
+     return true;
+   } catch (error) {
++    failAppPerfTrace(traceId, error, 'fork-failed');
+     showIntentToast?.('Could not create branch', describeBranchOpenError(error), 'warning', 5000);
+     return false;
+   }

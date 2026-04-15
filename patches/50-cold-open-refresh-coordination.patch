@@ -1,0 +1,538 @@
+From 591b07f516db8c7108510055120acc6e70fd8910 Mon Sep 17 00:00:00 2001
+From: alice <aliceisjustplaying@gmail.com>
+Date: Wed, 15 Apr 2026 12:01:24 +0000
+Subject: [PATCH] perf: coalesce cold-open reconnect refreshes
+
+---
+ .../test/web/app-connection-lifecycle.test.ts |  37 +++++-
+ runtime/test/web/app-sse-events.test.ts       |  35 +++++-
+ .../web/src/ui/app-agent-status-lifecycle.ts  | 107 +++++++++++-------
+ runtime/web/src/ui/app-auth-bootstrap.ts      |  85 +++++++-------
+ .../web/src/ui/app-connection-lifecycle.ts    |   7 ++
+ runtime/web/src/ui/app-sse-events.ts          |   4 +
+ .../ui/app-status-refresh-orchestration.ts    |  55 +++++----
+ 7 files changed, 219 insertions(+), 111 deletions(-)
+
+diff --git a/runtime/test/web/app-connection-lifecycle.test.ts b/runtime/test/web/app-connection-lifecycle.test.ts
+index 883b6313..84206cf9 100644
+--- a/runtime/test/web/app-connection-lifecycle.test.ts
++++ b/runtime/test/web/app-connection-lifecycle.test.ts
+@@ -1,10 +1,18 @@
+-import { expect, test } from 'bun:test';
++import { afterEach, expect, test } from 'bun:test';
+ 
+ import {
+   handleConnectionStatusChangeEvent,
+   handleUiVersionDriftEvent,
+   runBackstopRefreshTick,
+ } from '../../web/src/ui/app-connection-lifecycle.js';
++import {
++  noteAppChatActivation,
++  resetAppRefreshCoordination,
++} from '../../web/src/ui/app-refresh-coordination.js';
++
++afterEach(() => {
++  resetAppRefreshCoordination();
++});
+ 
+ test('handleUiVersionDriftEvent ignores missing/unchanged versions', () => {
+   const staleUiVersionRef = { current: null as string | null };
+@@ -52,6 +60,7 @@ test('handleConnectionStatusChangeEvent clears active agent state on disconnect'
+   const pendingRequestRef = { current: { id: 1 } as unknown };
+ 
+   handleConnectionStatusChangeEvent({
++    currentChatJid: 'chat:alpha',
+     status: 'disconnected',
+     setConnectionStatus: (status) => { calls.push(`conn:${status}`); },
+     setAgentStatus: (status) => { calls.push(`status:${status === null ? 'null' : 'set'}`); },
+@@ -81,6 +90,32 @@ test('handleConnectionStatusChangeEvent clears active agent state on disconnect'
+   expect(pendingRequestRef.current).toBeNull();
+ });
+ 
++test('handleConnectionStatusChangeEvent skips the initial reconnect bundle during a fresh cold-open activation', () => {
++  noteAppChatActivation({ chatJid: 'chat:alpha' });
++  const calls: string[] = [];
++
++  handleConnectionStatusChangeEvent({
++    currentChatJid: 'chat:alpha',
++    status: 'connected',
++    setConnectionStatus: (status) => { calls.push(`conn:${status}`); },
++    setAgentStatus: () => { calls.push('status'); },
++    setAgentDraft: () => { calls.push('draft'); },
++    setAgentPlan: () => { calls.push('plan'); },
++    setAgentThought: () => { calls.push('thought'); },
++    setPendingRequest: () => { calls.push('pending'); },
++    pendingRequestRef: { current: null },
++    clearAgentRunState: () => { calls.push('clear'); },
++    hasConnectedOnceRef: { current: false },
++    viewStateRef: { current: { currentHashtag: null, searchQuery: null, searchOpen: false } },
++    refreshTimeline: () => { calls.push('timeline'); },
++    refreshAgentStatus: () => { calls.push('refresh-status'); },
++    refreshQueueState: () => { calls.push('refresh-queue'); },
++    refreshContextUsage: () => { calls.push('refresh-context'); },
++  });
++
++  expect(calls).toEqual(['conn:connected']);
++});
++
+ test('runBackstopRefreshTick refreshes queue only when agent is active', () => {
+   const calls: string[] = [];
+   const run = (isAgentActive: boolean) => {
+diff --git a/runtime/test/web/app-sse-events.test.ts b/runtime/test/web/app-sse-events.test.ts
+index 7b03c604..90670b97 100644
+--- a/runtime/test/web/app-sse-events.test.ts
++++ b/runtime/test/web/app-sse-events.test.ts
+@@ -1,6 +1,14 @@
+-import { expect, test } from 'bun:test';
++import { afterEach, expect, test } from 'bun:test';
+ 
+ import { handleAppSseEvent, type HandleAppSseEventDependencies } from '../../web/src/ui/app-sse-events.js';
++import {
++  noteAppChatActivation,
++  resetAppRefreshCoordination,
++} from '../../web/src/ui/app-refresh-coordination.js';
++
++afterEach(() => {
++  resetAppRefreshCoordination();
++});
+ 
+ function applyUpdate<T>(current: T, next: T | ((prev: T) => T)): T {
+   return typeof next === 'function' ? (next as (prev: T) => T)(current) : next;
+@@ -162,6 +170,31 @@ test('handleAppSseEvent restores active agent status on reconnect', async () =>
+   });
+ });
+ 
++test('handleAppSseEvent skips duplicate reconnect recovery during a fresh cold-open activation', async () => {
++  noteAppChatActivation({ chatJid: 'chat:alpha' });
++  const state = createDeps();
++  let agentStatusCalls = 0;
++  let timelineCalls = 0;
++  let bundleCalls = 0;
++  state.deps.getAgentStatus = async () => {
++    agentStatusCalls += 1;
++    return null;
++  };
++  state.deps.refreshTimeline = () => {
++    timelineCalls += 1;
++  };
++  state.deps.refreshModelAndQueueState = () => {
++    bundleCalls += 1;
++  };
++
++  handleAppSseEvent('connected', { app_asset_version: 'test' }, state.deps);
++  await Promise.resolve();
++
++  expect(agentStatusCalls).toBe(0);
++  expect(timelineCalls).toBe(0);
++  expect(bundleCalls).toBe(0);
++});
++
+ test('handleAppSseEvent refreshes compaction status metadata even when title stays the same', () => {
+   const state = createDeps();
+ 
+diff --git a/runtime/web/src/ui/app-agent-status-lifecycle.ts b/runtime/web/src/ui/app-agent-status-lifecycle.ts
+index c23f898a..2178e471 100644
+--- a/runtime/web/src/ui/app-agent-status-lifecycle.ts
++++ b/runtime/web/src/ui/app-agent-status-lifecycle.ts
+@@ -13,6 +13,7 @@ import {
+   handleConnectionStatusChangeEvent,
+   handleUiVersionDriftEvent,
+ } from './app-connection-lifecycle.js';
++import { runCoalescedAppRefresh } from './app-refresh-coordination.js';
+ 
+ interface RefBox<T> {
+   current: T;
+@@ -129,57 +130,84 @@ export function useAgentStatusLifecycle(options: UseAgentStatusLifecycleOptions)
+   } = options;
+ 
+   const refreshQueueState = useCallback(() => {
+-    refreshQueueStateForChat({
+-      currentChatJid,
+-      queueRefreshGenRef,
+-      activeChatJidRef,
+-      dismissedQueueRowIdsRef,
+-      getAgentQueueState,
+-      setFollowupQueueItems,
+-      clearQueuedSteerStateIfStale,
++    return runCoalescedAppRefresh({
++      kind: 'queue-state',
++      chatJid: currentChatJid,
++      run: async () => {
++        await refreshQueueStateForChat({
++          currentChatJid,
++          queueRefreshGenRef,
++          activeChatJidRef,
++          dismissedQueueRowIdsRef,
++          getAgentQueueState,
++          setFollowupQueueItems,
++          clearQueuedSteerStateIfStale,
++        });
++        return null;
++      },
+     });
+   }, [activeChatJidRef, clearQueuedSteerStateIfStale, currentChatJid, dismissedQueueRowIdsRef, getAgentQueueState, queueRefreshGenRef, setFollowupQueueItems]);
+ 
+   const refreshContextUsage = useCallback(async () => {
+-    await refreshContextUsageForChat({
+-      currentChatJid,
+-      activeChatJidRef,
+-      getAgentContext,
+-      setContextUsage,
++    await runCoalescedAppRefresh({
++      kind: 'context-usage',
++      chatJid: currentChatJid,
++      run: async () => {
++        await refreshContextUsageForChat({
++          currentChatJid,
++          activeChatJidRef,
++          getAgentContext,
++          setContextUsage,
++        });
++        return null;
++      },
+     });
+   }, [activeChatJidRef, currentChatJid, getAgentContext, setContextUsage]);
+ 
+   const refreshAutoresearchStatus = useCallback(async () => {
+-    await refreshAutoresearchStatusForChat({
+-      currentChatJid,
+-      activeChatJidRef,
+-      getAutoresearchStatus,
+-      setExtensionStatusPanels,
+-      setPendingExtensionPanelActions,
++    await runCoalescedAppRefresh({
++      kind: 'autoresearch-status',
++      chatJid: currentChatJid,
++      run: async () => {
++        await refreshAutoresearchStatusForChat({
++          currentChatJid,
++          activeChatJidRef,
++          getAutoresearchStatus,
++          setExtensionStatusPanels,
++          setPendingExtensionPanelActions,
++        });
++        return null;
++      },
+     });
+   }, [activeChatJidRef, currentChatJid, getAutoresearchStatus, setExtensionStatusPanels, setPendingExtensionPanelActions]);
+ 
+   const refreshAgentStatus = useCallback(async () => {
+-    return await refreshAgentStatusForChat({
+-      currentChatJid,
+-      getAgentStatus,
+-      activeChatJidRef,
+-      wasAgentActiveRef,
+-      viewStateRef,
+-      refreshTimeline,
+-      clearAgentRunState,
+-      agentStatusRef,
+-      pendingRequestRef,
+-      thoughtBufferRef,
+-      draftBufferRef,
+-      setAgentStatus,
+-      setAgentDraft,
+-      setAgentPlan,
+-      setAgentThought,
+-      setPendingRequest,
+-      setActiveTurn,
+-      noteAgentActivity,
+-      clearLastActivityFlag,
++    return await runCoalescedAppRefresh({
++      kind: 'agent-status',
++      chatJid: currentChatJid,
++      run: async () => {
++        return await refreshAgentStatusForChat({
++          currentChatJid,
++          getAgentStatus,
++          activeChatJidRef,
++          wasAgentActiveRef,
++          viewStateRef,
++          refreshTimeline,
++          clearAgentRunState,
++          agentStatusRef,
++          pendingRequestRef,
++          thoughtBufferRef,
++          draftBufferRef,
++          setAgentStatus,
++          setAgentDraft,
++          setAgentPlan,
++          setAgentThought,
++          setPendingRequest,
++          setActiveTurn,
++          noteAgentActivity,
++          clearLastActivityFlag,
++        });
++      },
+     });
+   }, [activeChatJidRef, agentStatusRef, clearAgentRunState, clearLastActivityFlag, currentChatJid, draftBufferRef, getAgentStatus, noteAgentActivity, pendingRequestRef, refreshTimeline, setActiveTurn, setAgentDraft, setAgentPlan, setAgentStatus, setAgentThought, setPendingRequest, thoughtBufferRef, viewStateRef, wasAgentActiveRef]);
+ 
+@@ -227,6 +255,7 @@ export function useAgentStatusLifecycle(options: UseAgentStatusLifecycleOptions)
+ 
+   const handleConnectionStatusChange = useCallback((status: string) => {
+     handleConnectionStatusChangeEvent({
++      currentChatJid,
+       status,
+       setConnectionStatus,
+       setAgentStatus,
+diff --git a/runtime/web/src/ui/app-auth-bootstrap.ts b/runtime/web/src/ui/app-auth-bootstrap.ts
+index 7c8260b6..815d145d 100644
+--- a/runtime/web/src/ui/app-auth-bootstrap.ts
++++ b/runtime/web/src/ui/app-auth-bootstrap.ts
+@@ -130,7 +130,7 @@ export interface RefreshModelStateOptions {
+   applyModelState: (payload: Record<string, unknown> | null | undefined) => void;
+ }
+ 
+-export function refreshModelState(options: RefreshModelStateOptions): void {
++export async function refreshModelState(options: RefreshModelStateOptions): Promise<void> {
+   const {
+     currentChatJid,
+     getAgentModels,
+@@ -139,15 +139,14 @@ export function refreshModelState(options: RefreshModelStateOptions): void {
+   } = options;
+ 
+   const targetChatJid = currentChatJid;
+-  getAgentModels(targetChatJid)
+-    .then((payload) => {
+-      if (activeChatJidRef.current && activeChatJidRef.current !== targetChatJid) return;
+-      if (payload) applyModelState(payload);
+-    })
+-    .catch(() => {
+-      if (activeChatJidRef.current && activeChatJidRef.current !== targetChatJid) return;
+-      applyModelState(null);
+-    });
++  try {
++    const payload = await getAgentModels(targetChatJid);
++    if (activeChatJidRef.current && activeChatJidRef.current !== targetChatJid) return;
++    if (payload) applyModelState(payload);
++  } catch {
++    if (activeChatJidRef.current && activeChatJidRef.current !== targetChatJid) return;
++    applyModelState(null);
++  }
+ }
+ 
+ export interface RefreshActiveChatAgentsOptions {
+@@ -160,7 +159,7 @@ export interface RefreshActiveChatAgentsOptions {
+   prewarmLimit?: number;
+ }
+ 
+-export function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions): void {
++export async function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions): Promise<any[]> {
+   const {
+     currentChatJid,
+     getActiveChatAgents,
+@@ -173,29 +172,32 @@ export function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions)
+ 
+   const targetChatJid = currentChatJid;
+ 
+-  Promise.all([
+-    getActiveChatAgents().catch(() => ({ chats: [] /* expected: active-agent refresh is best-effort. */ })),
+-    getChatBranches(null, {
+-      includeArchived: true,
+-      ...(prewarmRecent ? {
+-        prewarmRecent: true,
+-        prewarmLimit,
+-        excludeChatJid: targetChatJid,
+-        prewarmChatJid: targetChatJid,
+-      } : {}),
+-    }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
+-  ])
+-    .then(([activePayload, branchPayload]) => {
+-      if (activeChatJidRef.current !== targetChatJid) return;
+-
+-      const activeChats = normalizeActiveChatRows(activePayload?.chats);
+-      const branchChats = normalizeActiveChatRows(branchPayload?.chats);
+-      setActiveChatAgents(mergeActiveAndBranchChats(activeChats, branchChats, targetChatJid));
+-    })
+-    .catch(() => {
+-      if (activeChatJidRef.current !== targetChatJid) return;
+-      setActiveChatAgents([]);
+-    });
++  try {
++    const [activePayload, branchPayload] = await Promise.all([
++      getActiveChatAgents().catch(() => ({ chats: [] /* expected: active-agent refresh is best-effort. */ })),
++      getChatBranches(null, {
++        includeArchived: true,
++        ...(prewarmRecent ? {
++          prewarmRecent: true,
++          prewarmLimit,
++          excludeChatJid: targetChatJid,
++          prewarmChatJid: targetChatJid,
++        } : {}),
++      }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
++    ]);
++
++    if (activeChatJidRef.current !== targetChatJid) return [];
++
++    const activeChats = normalizeActiveChatRows(activePayload?.chats);
++    const branchChats = normalizeActiveChatRows(branchPayload?.chats);
++    const mergedChats = mergeActiveAndBranchChats(activeChats, branchChats, targetChatJid);
++    setActiveChatAgents(mergedChats);
++    return mergedChats;
++  } catch {
++    if (activeChatJidRef.current !== targetChatJid) return [];
++    setActiveChatAgents([]);
++    return [];
++  }
+ }
+ 
+ export interface RefreshCurrentChatBranchesOptions {
+@@ -204,20 +206,19 @@ export interface RefreshCurrentChatBranchesOptions {
+   setCurrentChatBranches: StateSetter<any[]>;
+ }
+ 
+-export function refreshCurrentChatBranches(options: RefreshCurrentChatBranchesOptions): void {
++export async function refreshCurrentChatBranches(options: RefreshCurrentChatBranchesOptions): Promise<void> {
+   const {
+     currentRootChatJid,
+     getChatBranches,
+     setCurrentChatBranches,
+   } = options;
+ 
+-  getChatBranches(currentRootChatJid)
+-    .then((payload) => {
+-      setCurrentChatBranches(normalizeCurrentRootBranchRows(payload?.chats));
+-    })
+-    .catch(() => {
+-      setCurrentChatBranches([]);
+-    });
++  try {
++    const payload = await getChatBranches(currentRootChatJid);
++    setCurrentChatBranches(normalizeCurrentRootBranchRows(payload?.chats));
++  } catch {
++    setCurrentChatBranches([]);
++  }
+ }
+ 
+ export interface HandleMessageResponseOptions {
+diff --git a/runtime/web/src/ui/app-connection-lifecycle.ts b/runtime/web/src/ui/app-connection-lifecycle.ts
+index 2c7be49b..29fbbb97 100644
+--- a/runtime/web/src/ui/app-connection-lifecycle.ts
++++ b/runtime/web/src/ui/app-connection-lifecycle.ts
+@@ -1,3 +1,5 @@
++import { isAppChatActivationRecent } from './app-refresh-coordination.js';
++
+ type ViewStateLike = {
+   currentHashtag?: unknown;
+   searchQuery?: unknown;
+@@ -64,6 +66,7 @@ export function handleUiVersionDriftEvent(options: HandleUiVersionDriftOptions):
+ }
+ 
+ export interface HandleConnectionStatusChangeOptions {
++  currentChatJid: string;
+   status: string;
+   setConnectionStatus: (status: string) => void;
+   setAgentStatus: (status: Record<string, unknown> | null) => void;
+@@ -92,6 +95,7 @@ function shouldRefreshMainTimeline(viewState: ViewStateLike | null | undefined):
+ 
+ export function handleConnectionStatusChangeEvent(options: HandleConnectionStatusChangeOptions): void {
+   const {
++    currentChatJid,
+     status,
+     setConnectionStatus,
+     setAgentStatus,
+@@ -123,6 +127,9 @@ export function handleConnectionStatusChangeEvent(options: HandleConnectionStatu
+ 
+   if (!hasConnectedOnceRef.current) {
+     hasConnectedOnceRef.current = true;
++    if (isAppChatActivationRecent(currentChatJid)) {
++      return;
++    }
+     if (shouldRefreshMainTimeline(viewStateRef.current)) {
+       refreshTimeline();
+     }
+diff --git a/runtime/web/src/ui/app-sse-events.ts b/runtime/web/src/ui/app-sse-events.ts
+index 3d54e0c6..e8e9b686 100644
+--- a/runtime/web/src/ui/app-sse-events.ts
++++ b/runtime/web/src/ui/app-sse-events.ts
+@@ -39,6 +39,7 @@ import {
+   isNoisyAgentSseEvent,
+   resolveSseEventRoutingContext,
+ } from './app-sse-event-routing.js';
++import { isAppChatActivationRecent } from './app-refresh-coordination.js';
+ 
+ type StateSetter<T> = (next: T | ((prev: T) => T)) => void;
+ 
+@@ -215,6 +216,9 @@ export function handleAppSseEvent(
+     if (handleUiVersionDrift(data?.app_asset_version)) {
+       return;
+     }
++    if (isAppChatActivationRecent(currentChatJid)) {
++      return;
++    }
+     setAgentStatus(null);
+     setAgentDraft({ text: '', totalLines: 0 });
+     setAgentPlan('');
+diff --git a/runtime/web/src/ui/app-status-refresh-orchestration.ts b/runtime/web/src/ui/app-status-refresh-orchestration.ts
+index d508aee2..49b4aceb 100644
+--- a/runtime/web/src/ui/app-status-refresh-orchestration.ts
++++ b/runtime/web/src/ui/app-status-refresh-orchestration.ts
+@@ -28,9 +28,9 @@ export interface RefreshQueueStateForChatOptions<TItem extends FollowupQueueItem
+ /**
+  * Refresh follow-up queue state for the active chat, dropping stale responses.
+  */
+-export function refreshQueueStateForChat<TItem extends FollowupQueueItemLike = FollowupQueueItemLike>(
++export async function refreshQueueStateForChat<TItem extends FollowupQueueItemLike = FollowupQueueItemLike>(
+   options: RefreshQueueStateForChatOptions<TItem>,
+-): void {
++): Promise<void> {
+   const {
+     currentChatJid,
+     queueRefreshGenRef,
+@@ -44,32 +44,31 @@ export function refreshQueueStateForChat<TItem extends FollowupQueueItemLike = F
+   const gen = ++queueRefreshGenRef.current;
+   const targetChatJid = currentChatJid;
+ 
+-  getAgentQueueState(targetChatJid)
+-    .then((payload) => {
+-      if (gen !== queueRefreshGenRef.current) return;
+-      if (activeChatJidRef.current !== targetChatJid) return;
+-
+-      const dismissed = dismissedQueueRowIdsRef.current;
+-      const rawItems = Array.isArray(payload?.items) ? payload.items : [];
+-      const items = normalizeFollowupQueueItems(rawItems, dismissed);
+-      if (items.length) {
+-        setFollowupQueueItems((prev) => (haveSameFollowupQueueRows(prev, items) ? prev : items));
+-        return;
+-      }
+-
+-      if (rawItems.length > 0) {
+-        return;
+-      }
+-
+-      dismissed.clear();
+-      clearQueuedSteerStateIfStale(0);
+-      setFollowupQueueItems((prev) => (prev.length === 0 ? prev : []));
+-    })
+-    .catch(() => {
+-      if (gen !== queueRefreshGenRef.current) return;
+-      if (activeChatJidRef.current !== targetChatJid) return;
+-      setFollowupQueueItems((prev) => (prev.length === 0 ? prev : []));
+-    });
++  try {
++    const payload = await getAgentQueueState(targetChatJid);
++    if (gen !== queueRefreshGenRef.current) return;
++    if (activeChatJidRef.current !== targetChatJid) return;
++
++    const dismissed = dismissedQueueRowIdsRef.current;
++    const rawItems = Array.isArray(payload?.items) ? payload.items : [];
++    const items = normalizeFollowupQueueItems(rawItems, dismissed);
++    if (items.length) {
++      setFollowupQueueItems((prev) => (haveSameFollowupQueueRows(prev, items) ? prev : items));
++      return;
++    }
++
++    if (rawItems.length > 0) {
++      return;
++    }
++
++    dismissed.clear();
++    clearQueuedSteerStateIfStale(0);
++    setFollowupQueueItems((prev) => (prev.length === 0 ? prev : []));
++  } catch {
++    if (gen !== queueRefreshGenRef.current) return;
++    if (activeChatJidRef.current !== targetChatJid) return;
++    setFollowupQueueItems((prev) => (prev.length === 0 ? prev : []));
++  }
+ }
+ 
+ export interface RefreshContextUsageForChatOptions {

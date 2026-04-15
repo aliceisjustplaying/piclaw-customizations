@@ -73,8 +73,23 @@
       "upstream_prs": []
     },
     "48": {
-      "name": "cold-open-ui-hydration-and-timeline-cache",
-      "track_upstream": false,
+      "name": "web-ui-tracing-hooks",
+      "track_upstream": true,
+      "upstream_prs": []
+    },
+    "49": {
+      "name": "thread-state-hydration-after-timeline-load",
+      "track_upstream": true,
+      "upstream_prs": []
+    },
+    "50": {
+      "name": "cold-open-refresh-coordination",
+      "track_upstream": true,
+      "upstream_prs": []
+    },
+    "51": {
+      "name": "recent-thread-timeline-cache",
+      "track_upstream": true,
       "upstream_prs": []
     }
   }
