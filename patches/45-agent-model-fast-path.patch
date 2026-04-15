@@ -352,3 +352,173 @@ index 3459bc63..43fcc9cd 100644
  test("AgentRuntimeFacade removes one queued follow-up and replays the remaining queue", async () => {
    const prompts: Array<{ text: string; behavior: string }> = [];
    const session = {
+diff --git a/runtime/test/web/app-main-render-composition.test.ts b/runtime/test/web/app-main-render-composition.test.ts
+index 71931f22..8a78debb 100644
+--- a/runtime/test/web/app-main-render-composition.test.ts
++++ b/runtime/test/web/app-main-render-composition.test.ts
+@@ -170,6 +170,7 @@ test('composeRenderedMainAppOptions builds final shell options from grouped app
+   expect(result.mainShellOptions.searchQuery).toBe('hello');
+   expect(result.mainShellOptions.oobePanelState).toEqual({ kind: 'provider-ready' });
+   expect(result.mainShellOptions.composePrefillRequest).toEqual({ token: 'prefill-2', text: '/model' });
++  expect(result.mainShellOptions.agentModelsPayload).toEqual({ models: ['openai/gpt-4.1'] });
+   expect(typeof result.mainShellOptions.openEditor).toBe('function');
+   expect(typeof result.mainShellOptions.openTerminalTab).toBe('function');
+   expect(typeof result.mainShellOptions.openVncTab).toBe('function');
+diff --git a/runtime/test/web/compose-box.test.ts b/runtime/test/web/compose-box.test.ts
+index 2b8615c2..a1cff31d 100644
+--- a/runtime/test/web/compose-box.test.ts
++++ b/runtime/test/web/compose-box.test.ts
+@@ -7,6 +7,7 @@ import {
+   getComposeHistoryStorageKey,
+   getModelPickerOptionSearchLabel,
+   normalizeModelPickerOptions,
++  resolveComposeModelPickerState,
+   parseQueuedContent,
+   resolveComposePrefillRequest,
+   resolveUiOnlyCommandNotice,
+@@ -150,6 +151,32 @@ test('model picker helpers expose searchable names and formatted context windows
+   expect(getModelPickerOptionSearchLabel(option)).toContain('200K ctx');
+ });
+ 
++test('resolveComposeModelPickerState keeps the model picker visible for cold chats with available models', () => {
++  expect(resolveComposeModelPickerState(null, {
++    current: null,
++    model_options: [{ label: 'openai/gpt-5', provider: 'openai', id: 'gpt-5' }],
++  })).toEqual({
++    showPicker: true,
++    label: 'Select model',
++    hasAvailableModels: true,
++  });
++
++  expect(resolveComposeModelPickerState('openai/gpt-5', {
++    current: null,
++    model_options: [{ label: 'openai/gpt-5', provider: 'openai', id: 'gpt-5' }],
++  })).toEqual({
++    showPicker: true,
++    label: 'openai/gpt-5',
++    hasAvailableModels: true,
++  });
++
++  expect(resolveComposeModelPickerState(null, { current: null, model_options: [] })).toEqual({
++    showPicker: false,
++    label: '',
++    hasAvailableModels: false,
++  });
++});
++
+ test('resolveUiOnlyCommandNotice only surfaces read-only model and thinking queries', () => {
+   expect(resolveUiOnlyCommandNotice('/thinking', {
+     ui_only: true,
+diff --git a/runtime/web/src/components/compose-box.ts b/runtime/web/src/components/compose-box.ts
+index 72ce4619..67b2fea6 100644
+--- a/runtime/web/src/components/compose-box.ts
++++ b/runtime/web/src/components/compose-box.ts
+@@ -249,6 +249,24 @@ export function getModelPickerOptionSearchLabel(option) {
+     ].filter(Boolean).join(' ');
+ }
+ 
++export function resolveComposeModelPickerState(activeModel, agentModelsPayload) {
++    const modelLabel = typeof activeModel === 'string' ? activeModel.trim() : '';
++    if (modelLabel) {
++        return {
++            showPicker: true,
++            label: modelLabel,
++            hasAvailableModels: true,
++        };
++    }
++
++    const hasAvailableModels = normalizeModelPickerOptions(agentModelsPayload).length > 0;
++    return {
++        showPicker: hasAvailableModels,
++        label: hasAvailableModels ? 'Select model' : '',
++        hasAvailableModels,
++    };
++}
++
+ function unwrapQueuedTranscriptContent(value) {
+     if (!value) return value;
+     const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+@@ -513,6 +531,7 @@ export function ComposeBox({
+     onRemoveMessageRef,
+     onClearMessageRefs,
+     activeModel = null,
++    agentModelsPayload = null,
+     modelUsage = null,
+     thinkingLevel = null,
+     supportsThinking = false,
+@@ -704,7 +723,9 @@ export function ComposeBox({
+     const canCreateSession = !searchMode && typeof onCreateSession === 'function';
+     const canDeleteSession = !searchMode && typeof onDeleteSession === 'function' && !isCurrentRootSession;
+     const showSessionSwitcherButton = !searchMode && (canSwitchSession || canRestoreSession || canRenameSession || canCreateSession || canDeleteSession);
+-    const modelHintLabel = activeModel || '';
++    const modelPickerState = resolveComposeModelPickerState(activeModel, agentModelsPayload);
++    const showModelPickerHint = modelPickerState.showPicker;
++    const modelHintLabel = modelPickerState.label;
+     const modelHintSuffix = supportsThinking && thinkingLevel ? ` (${thinkingLevel})` : '';
+     const modelThinkingLabel = modelHintSuffix.trim() ? `${thinkingLevel}` : '';
+     const modelUsageLabel = typeof modelUsage?.hint_short === 'string' ? modelUsage.hint_short.trim() : '';
+@@ -713,7 +734,7 @@ export function ComposeBox({
+         modelUsageLabel || null,
+     ].filter(Boolean).join(' • ');
+     const modelUsageTitleParts = [
+-        modelHintLabel ? `Current model: ${modelHintLabel}${modelHintSuffix}` : null,
++        activeModel ? `Current model: ${modelHintLabel}${modelHintSuffix}` : null,
+         modelUsage?.plan ? `Plan: ${modelUsage.plan}` : null,
+         modelUsageLabel || null,
+         modelUsage?.primary?.reset_description || null,
+@@ -721,7 +742,10 @@ export function ComposeBox({
+     ].filter(Boolean);
+     const modelHintTitle = switchingModel
+         ? 'Switching model…'
+-        : (modelUsageTitleParts.join(' • ') || `Current model: ${modelHintLabel}${modelHintSuffix} (tap to open model picker)`);
++        : (modelUsageTitleParts.join(' • ') || (showModelPickerHint
++            ? 'Select a model (tap to open model picker)'
++            : `Current model: ${modelHintLabel}${modelHintSuffix} (tap to open model picker)`));
++    const showComposeMetaRow = !searchMode && (showModelPickerHint || (contextUsage && contextUsage.percent != null));
+ 
+     const emitModelState = (payload) => {
+         if (!payload || typeof payload !== 'object') return;
+@@ -2032,9 +2056,9 @@ export function ComposeBox({
+                     `}
+                 </div>
+                 <div class="compose-footer" ref=${footerRef}>
+-                    ${!searchMode && activeModel && html`
++                    ${showComposeMetaRow && html`
+                     <div class="compose-meta-row">
+-                        ${!searchMode && activeModel && html`
++                        ${showModelPickerHint && html`
+                             <div class="compose-model-meta">
+                                 <button
+                                     ref=${modelHintRef}
+diff --git a/runtime/web/src/ui/app-main-render-composition.ts b/runtime/web/src/ui/app-main-render-composition.ts
+index ec5caec8..b3a1a4ff 100644
+--- a/runtime/web/src/ui/app-main-render-composition.ts
++++ b/runtime/web/src/ui/app-main-render-composition.ts
+@@ -175,6 +175,7 @@ export function composeRenderedMainAppOptions(input: {
+       activeChatAgents: input.surface.activeChatAgents,
+       connectionStatus: input.surface.connectionStatus,
+       activeModel: input.surface.activeModel,
++      agentModelsPayload: input.surface.agentModelsPayload,
+       activeModelUsage: input.surface.activeModelUsage,
+       activeThinkingLevel: input.surface.activeThinkingLevel,
+       supportsThinking: input.surface.supportsThinking,
+diff --git a/runtime/web/src/ui/app-main-shell-render.ts b/runtime/web/src/ui/app-main-shell-render.ts
+index 901b205b..9e635b97 100644
+--- a/runtime/web/src/ui/app-main-shell-render.ts
++++ b/runtime/web/src/ui/app-main-shell-render.ts
+@@ -240,6 +240,7 @@ export function renderMainShell(options: MainShellRenderOptions): any {
+     activeChatAgents,
+     connectionStatus,
+     activeModel,
++    agentModelsPayload,
+     activeModelUsage,
+     activeThinkingLevel,
+     supportsThinking,
+@@ -610,6 +611,7 @@ export function renderMainShell(options: MainShellRenderOptions): any {
+           currentChatJid=${currentChatJid}
+           connectionStatus=${connectionStatus}
+           activeModel=${activeModel}
++          agentModelsPayload=${agentModelsPayload}
+           modelUsage=${activeModelUsage}
+           thinkingLevel=${activeThinkingLevel}
+           supportsThinking=${supportsThinking}
