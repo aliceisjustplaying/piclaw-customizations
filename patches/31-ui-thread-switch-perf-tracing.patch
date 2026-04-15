@@ -122,7 +122,7 @@ index a940d757..db7c5bf4 100644
 +  usageRefreshInFlight.clear();
  }
 diff --git a/runtime/src/agent-pool/runtime-facade.ts b/runtime/src/agent-pool/runtime-facade.ts
-index 48ca2b1d..1dd2b5eb 100644
+index 48ca2b1d..5897995f 100644
 --- a/runtime/src/agent-pool/runtime-facade.ts
 +++ b/runtime/src/agent-pool/runtime-facade.ts
 @@ -11,7 +11,7 @@ import { applyControlCommand, type AgentControlCommand, type AgentControlResult
@@ -134,6 +134,15 @@ index 48ca2b1d..1dd2b5eb 100644
  import { resolveModelLabel } from "../utils/model-utils.js";
  import { createLogger } from "../utils/logger.js";
  import { withChatContext } from "../core/chat-context.js";
+@@ -367,7 +367,7 @@ export interface AvailableModelsResult {
+   thinking_level: string | null;
+   thinking_level_label: string | null;
+   supports_thinking: boolean;
+-  provider_usage: Awaited<ReturnType<typeof getProviderUsage>>;
++  provider_usage: Awaited<ReturnType<typeof warmProviderUsage>>;
+ }
+ 
+ /** Dependencies required by AgentRuntimeFacade. */
 @@ -435,8 +435,11 @@ export class AgentRuntimeFacade {
        ? (session as AgentSession & { supportsThinking: () => boolean }).supportsThinking()
        : Boolean(session?.model?.reasoning);
