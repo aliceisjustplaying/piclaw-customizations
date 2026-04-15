@@ -44,7 +44,7 @@ declare -A PATCH_FILES=(
   ["02-bootstrap-broadcast-event.patch"]="runtime/src/runtime/bootstrap.ts"
   # 04-web-codex-action-handler.patch is multi-file (dispatch-agent.ts + web UI), cannot be regenerated from installed bundle
   # 05-web-update-autocomplete.patch is web-source only, cannot be regenerated from installed bundle
-  # 06-terminal-dock-and-popout-fixes.patch is web-source only, cannot be regenerated from installed bundle
+  # retired/06-terminal-dock-and-popout-fixes.patch is web-source only, cannot be regenerated from installed bundle
   # 15-web-rebuild-autocomplete.patch is web-source only, cannot be regenerated from installed bundle
   # 16-terminal-dock-reopen-cleanly.patch is web-source only, cannot be regenerated from installed bundle
   # 17-terminal-detach-listeners-on-reopen.patch is web-source only, cannot be regenerated from installed bundle

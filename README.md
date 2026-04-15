@@ -40,11 +40,10 @@ scripts/
 
 See [`patches/README.md`](patches/README.md) for the full patch table, retired patches, terminal patch outcomes, and upstream-audit automation.
 
-Active source patches: `01`, `02`, `04`, `05`, `11`, `15`, `24`, `28`
-Retired after upstream merge: `20`, `21`, `22`, `23`, `25`, `26`, `27` (stored under `patches/retired/`)
-Superseded locally: `06` (`patches/06-terminal-dock-and-popout-fixes.patch.superseded`)
+Active source patches: `01`, `02`, `04`, `05`, `11`, `24`, `28`, `29–32`
+Retired patches kept under `patches/retired/`: `06` (folded into `21`), `15` (folded into `05`), `20–23`, `25–27` (merged upstream), `29–44` (retired after consolidation into `29–32`)
 Post-install patches: `01` (jiti/Bun fix), `02` (context usage)
-Next available number: **29**
+Next available number: **45**
 
 Upstream maintenance helpers:
 - `./patches/audit-upstream.sh` audits every active patch against current upstream
