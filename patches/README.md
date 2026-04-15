@@ -19,18 +19,24 @@ Automation helpers in this directory:
 | 05 | `compose-box.ts` | Add `/update`, `/rebuild`, and `/fast` to slash command autocomplete |
 | 11 | `runtime/src/db/connection.ts` | Lazy DB init for Jiti-loaded extension module graphs |
 | 24 | `package.json`, `bun.lock` | Pin `ghostty-web` vendoring to the forked commit that carries the upstream bootstrap/open-reset fix |
-| 28 | `provider-usage.ts`, `provider-usage.test.ts`, `compose-box.ts` | Anthropic OAuth provider usage: show 5h/week usage windows, fetch funded overage grant state, and keep extra-usage details in the model tooltip without adding them to the inline hint |
+| 28 | `provider-usage.ts`, `provider-usage.test.ts`, `compose-box.ts` | Local-only Anthropic OAuth provider usage: show 5h/week usage windows, fetch funded overage grant state, and keep extra-usage details in the model tooltip without adding them to the inline hint |
 | 29 | `agent-pool.ts`, `branch-manager.ts`, `branch-seeding.ts`, `session-manager.ts`, startup/bootstrap web callers, related tests | Consolidated thread-startup performance work: reduce branch/thread switch latency, defer branch seeding, prioritize current/default chat warmup, and keep the extension-binding regression test with the session startup lane |
 | 30 | `dispatch-agent.ts`, push routes/store/service, `use-notifications.ts`, `sw.js`, push client/server tests, docs | Consolidated web push and notification delivery: subscription/storage foundation, outbound delivery, Bun-safe request generation, real VAPID subject, reply notifications, source markers, and per-device per-chat delivery coordination |
-| 31 | `api.ts`, thread-switch web UI lifecycle/orchestration + surface-state files, refresh coordination helpers, web request-router/endpoint timing helpers, timeline cache/prewarm helpers, agent runtime/provider-usage files, related tests | Consolidated UI perf tracing for thread switching and branch creation, switch-aware refresh coalescing to cut duplicate hydration/status fetches, stable root-chat resolution so direct branch opens do not replay the route load, initial-connect gating so cold opens avoid redundant reconnect recovery, stale-while-revalidate model/provider-usage caching so `/agent/models` stops blocking on remote usage APIs, timeline-first cold-open hydration so non-critical status/sidebar refresh work moves behind first paint while recent threads still prewarm in background, correlated backend timing via `Server-Timing` plus request-id capture on the hot web endpoints, and bounded browser-side timeline cache/prewarm so recent threads can reopen from cached posts with explicit TTL/invalidation paths, all while preserving the `window.__PICLAW_PERF__` runtime contract |
+| 31 | `agent-status.ts`, `channel-endpoint-facade-service.ts`, `content-endpoints.ts`, `server-timing.ts`, `request-router-service.ts`, `api.ts`, `app-perf-tracing.ts`, related tests | Correlated backend timing for hot web paths: add `Server-Timing` and request-id capture so browser-visible traces can separate backend work from client latency |
 | 32 | `app-resume.ts`, `use-sse-connection.ts`, related web tests | Consolidated iOS Safari share-sheet mitigation: guarded return-to-app detection and SSE wake/focus reconnect suppression |
+| 45 | `provider-usage.ts`, `runtime-facade.ts`, related tests | Fast-path `/agent/models` responses during thread opens by serving provider usage stale-while-revalidate on top of the local provider-usage patch |
+| 46 | `app-chat-refresh-lifecycle.ts`, `app-refresh-coordination.ts`, related tests | Coalesce overlapping thread-switch refresh work so duplicate foreground refresh bundles collapse into one unit |
+| 47 | `app-main-surface-state.ts`, related tests | Stabilize root chat resolution for direct branch opens so wrong-root route replay does not churn the UI |
+| 48 | `app-agent-status-lifecycle.ts`, `app-auth-bootstrap.ts`, boot/timeline refresh orchestration files, `app-timeline-cache.ts`, related tests | Remaining local-only cold-open UI work: initial-connect gating, post-first-paint hydration ordering, bounded recent-thread timeline cache/prewarm, and the perf trace/runtime contract glue around that flow |
 
 ## Retired patches
 
 Retired patches that are still useful for history/reference are kept under `patches/retired/`.
-Numbering preserved — next new patch is **45**.
+Numbering preserved — next new patch is **49**.
 
-Historical note: the pre-consolidation split patches `29` through `44` were retired into `patches/retired/` on 2026-04-15 and replaced by the consolidated active patches `29` through `32`.
+Historical note:
+- the pre-consolidation split patches `29` through `44` were retired into `patches/retired/` on 2026-04-15 and first replaced by consolidated active patches `29` through `32`
+- the upstreamable subset of that consolidated perf lane was then re-split on 2026-04-15 into active patches `31`, `45`, `46`, and `47`, leaving active patch `48` as the remaining local-only cold-open UI layer
 
 | # | Status | Reason |
 |---|--------|--------|

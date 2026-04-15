@@ -1,819 +1,3 @@
-diff --git a/runtime/src/agent-pool/provider-usage.ts b/runtime/src/agent-pool/provider-usage.ts
-index a940d757..db7c5bf4 100644
---- a/runtime/src/agent-pool/provider-usage.ts
-+++ b/runtime/src/agent-pool/provider-usage.ts
-@@ -44,8 +44,11 @@ type CachedUsage = {
-   value: ProviderUsageSnapshot | null;
- };
- 
-+type SupportedProviderId = ProviderUsageSnapshot["provider"];
-+
- const USAGE_CACHE_TTL_MS = Number(process.env.PICLAW_PROVIDER_USAGE_TTL_MS || "60000");
- const usageCache = new Map<string, CachedUsage>();
-+const usageRefreshInFlight = new Map<string, Promise<ProviderUsageSnapshot | null>>();
- const log = createLogger("agent-pool.provider-usage");
- 
- function clampPercent(value: unknown): number | null {
-@@ -442,36 +445,85 @@ async function fetchAnthropicUsage(authStorage: AuthStorage): Promise<ProviderUs
-   };
- }
- 
--export async function getProviderUsage(authStorage: AuthStorage, providerId: string): Promise<ProviderUsageSnapshot | null> {
--  if (providerId !== "openai-codex" && providerId !== "github-copilot" && providerId !== "anthropic") return null;
-+function isSupportedProviderId(providerId: string): providerId is SupportedProviderId {
-+  return providerId === "openai-codex" || providerId === "github-copilot" || providerId === "anthropic";
-+}
- 
--  const cached = usageCache.get(providerId);
--  if (cached && cached.expiresAt > Date.now()) {
-+function getCachedUsageEntry(providerId: string): CachedUsage | null {
-+  return usageCache.get(providerId) ?? null;
-+}
-+
-+function hasFreshCachedUsage(providerId: string): boolean {
-+  const cached = getCachedUsageEntry(providerId);
-+  return Boolean(cached && cached.expiresAt > Date.now());
-+}
-+
-+async function fetchProviderUsage(authStorage: AuthStorage, providerId: SupportedProviderId): Promise<ProviderUsageSnapshot | null> {
-+  return providerId === "openai-codex"
-+    ? await fetchCodexUsage(authStorage)
-+    : providerId === "github-copilot"
-+      ? await fetchGitHubCopilotUsage(authStorage)
-+      : await fetchAnthropicUsage(authStorage);
-+}
-+
-+export function peekProviderUsage(providerId: string, options: { allowStale?: boolean } = {}): ProviderUsageSnapshot | null {
-+  if (!isSupportedProviderId(providerId)) return null;
-+  const cached = getCachedUsageEntry(providerId);
-+  if (!cached) return null;
-+  if (options.allowStale === true) {
-     return cached.value;
-   }
-+  return cached.expiresAt > Date.now() ? cached.value : null;
-+}
- 
--  let value: ProviderUsageSnapshot | null;
--  try {
--    value = providerId === "openai-codex"
--      ? await fetchCodexUsage(authStorage)
--      : providerId === "github-copilot"
--        ? await fetchGitHubCopilotUsage(authStorage)
--        : await fetchAnthropicUsage(authStorage);
--  } catch (error) {
--    debugSuppressedError(log, "Provider usage refresh failed; returning the cached usage snapshot when available.", error, {
--      providerId,
--      hasCachedValue: cached?.value != null,
-+export async function warmProviderUsage(authStorage: AuthStorage, providerId: string): Promise<ProviderUsageSnapshot | null> {
-+  if (!isSupportedProviderId(providerId)) return null;
-+  if (hasFreshCachedUsage(providerId)) {
-+    return peekProviderUsage(providerId);
-+  }
-+
-+  const existing = usageRefreshInFlight.get(providerId);
-+  if (existing) {
-+    return await existing;
-+  }
-+
-+  const cached = getCachedUsageEntry(providerId);
-+  const refreshPromise = (async () => {
-+    let value: ProviderUsageSnapshot | null;
-+    try {
-+      value = await fetchProviderUsage(authStorage, providerId);
-+    } catch (error) {
-+      debugSuppressedError(log, "Provider usage refresh failed; returning the cached usage snapshot when available.", error, {
-+        providerId,
-+        hasCachedValue: cached?.value != null,
-+      });
-+      value = cached?.value ?? null;
-+    }
-+
-+    usageCache.set(providerId, {
-+      expiresAt: Date.now() + USAGE_CACHE_TTL_MS,
-+      value,
-     });
--    value = cached?.value ?? null;
-+    usageRefreshInFlight.delete(providerId);
-+    return value;
-+  })();
-+
-+  usageRefreshInFlight.set(providerId, refreshPromise);
-+  return await refreshPromise;
-+}
-+
-+export async function getProviderUsage(authStorage: AuthStorage, providerId: string): Promise<ProviderUsageSnapshot | null> {
-+  if (!isSupportedProviderId(providerId)) return null;
-+
-+  const cached = getCachedUsageEntry(providerId);
-+  if (cached && cached.expiresAt > Date.now()) {
-+    return cached.value;
-   }
- 
--  usageCache.set(providerId, {
--    expiresAt: Date.now() + USAGE_CACHE_TTL_MS,
--    value,
--  });
--  return value;
-+  return await warmProviderUsage(authStorage, providerId);
- }
- 
- export function clearProviderUsageCache(): void {
-   usageCache.clear();
-+  usageRefreshInFlight.clear();
- }
-diff --git a/runtime/src/agent-pool/runtime-facade.ts b/runtime/src/agent-pool/runtime-facade.ts
-index 48ca2b1d..5897995f 100644
---- a/runtime/src/agent-pool/runtime-facade.ts
-+++ b/runtime/src/agent-pool/runtime-facade.ts
-@@ -11,7 +11,7 @@ import { applyControlCommand, type AgentControlCommand, type AgentControlResult
- import { formatThinkingLevelForDisplay } from "../agent-control/agent-control-helpers.js";
- import { detectChannel } from "../router.js";
- import { executeSlashCommand } from "./slash-command.js";
--import { getProviderUsage } from "./provider-usage.js";
-+import { peekProviderUsage, warmProviderUsage } from "./provider-usage.js";
- import { resolveModelLabel } from "../utils/model-utils.js";
- import { createLogger } from "../utils/logger.js";
- import { withChatContext } from "../core/chat-context.js";
-@@ -367,7 +367,7 @@ export interface AvailableModelsResult {
-   thinking_level: string | null;
-   thinking_level_label: string | null;
-   supports_thinking: boolean;
--  provider_usage: Awaited<ReturnType<typeof getProviderUsage>>;
-+  provider_usage: Awaited<ReturnType<typeof warmProviderUsage>>;
- }
- 
- /** Dependencies required by AgentRuntimeFacade. */
-@@ -435,8 +435,11 @@ export class AgentRuntimeFacade {
-       ? (session as AgentSession & { supportsThinking: () => boolean }).supportsThinking()
-       : Boolean(session?.model?.reasoning);
-     const providerUsage = session?.model?.provider
--      ? await getProviderUsage(this.options.authStorage, session.model.provider)
-+      ? (peekProviderUsage(session.model.provider, { allowStale: true }) ?? null)
-       : null;
-+    if (session?.model?.provider) {
-+      void warmProviderUsage(this.options.authStorage, session.model.provider);
-+    }
-     const thinkingLevelLabel = thinkingLevel && session?.model?.provider
-       ? formatThinkingLevelForDisplay(thinkingLevel, session.model.provider)
-       : thinkingLevel;
-diff --git a/runtime/src/channels/web/agent/agent-status.ts b/runtime/src/channels/web/agent/agent-status.ts
-index b134071c..df2861ea 100644
---- a/runtime/src/channels/web/agent/agent-status.ts
-+++ b/runtime/src/channels/web/agent/agent-status.ts
-@@ -3,6 +3,7 @@
-  */
- 
- import type { WebAgentBufferEntry } from "./agent-buffers.js";
-+import { appendServerTiming, measureAsync, measureSync } from "../http/server-timing.js";
- 
- /** Context contract used by web agent status/context/model endpoint handlers. */
- export interface AgentStatusContext {
-@@ -23,43 +24,61 @@ function resolveChatJid(req: Request, defaultChatJid: string): string {
- 
- /** Return active/idle agent status plus streamed thought/draft buffers when available. */
- export function handleAgentStatusRequest(req: Request, ctx: AgentStatusContext): Response {
--  const chatJid = resolveChatJid(req, ctx.defaultChatJid);
--  const status = ctx.getAgentStatus(chatJid);
--  if (!status) {
--    return ctx.json({ status: "idle", data: null });
--  }
-+  const { result, durationMs } = measureSync(() => {
-+    const chatJid = resolveChatJid(req, ctx.defaultChatJid);
-+    const status = ctx.getAgentStatus(chatJid);
-+    if (!status) {
-+      return ctx.json({ status: "idle", data: null });
-+    }
- 
--  const turnId = (status.turn_id || status.turnId) as string | undefined;
--  let thought: { text: string; totalLines: number } | undefined;
--  let draft: { text: string; totalLines: number } | undefined;
--  if (turnId) {
--    const tb = ctx.getBuffer(turnId, "thought");
--    if (tb) thought = { text: tb.text, totalLines: tb.totalLines };
--    const db = ctx.getBuffer(turnId, "draft");
--    if (db) draft = { text: db.text, totalLines: db.totalLines };
--  }
-+    const turnId = (status.turn_id || status.turnId) as string | undefined;
-+    let thought: { text: string; totalLines: number } | undefined;
-+    let draft: { text: string; totalLines: number } | undefined;
-+    if (turnId) {
-+      const tb = ctx.getBuffer(turnId, "thought");
-+      if (tb) thought = { text: tb.text, totalLines: tb.totalLines };
-+      const db = ctx.getBuffer(turnId, "draft");
-+      if (db) draft = { text: db.text, totalLines: db.totalLines };
-+    }
- 
--  return ctx.json({ status: "active", data: status, thought, draft });
-+    return ctx.json({ status: "active", data: status, thought, draft });
-+  });
-+  return appendServerTiming(result, {
-+    name: "agent_status",
-+    durationMs,
-+  });
- }
- 
- /** Return context window usage metrics for the requested/default chat. */
- export async function handleAgentContextRequest(req: Request, ctx: AgentStatusContext): Promise<Response> {
--  const chatJid = resolveChatJid(req, ctx.defaultChatJid);
--  const usage = await ctx.getContextUsageForChat(chatJid);
--  if (!usage) {
--    return ctx.json({ tokens: null, contextWindow: null, percent: null });
--  }
-+  const { result, durationMs } = await measureAsync(async () => {
-+    const chatJid = resolveChatJid(req, ctx.defaultChatJid);
-+    const usage = await ctx.getContextUsageForChat(chatJid);
-+    if (!usage) {
-+      return ctx.json({ tokens: null, contextWindow: null, percent: null });
-+    }
- 
--  return ctx.json({
--    tokens: usage.tokens,
--    contextWindow: usage.contextWindow,
--    percent: usage.percent,
-+    return ctx.json({
-+      tokens: usage.tokens,
-+      contextWindow: usage.contextWindow,
-+      percent: usage.percent,
-+    });
-+  });
-+  return appendServerTiming(result, {
-+    name: "agent_context",
-+    durationMs,
-   });
- }
- 
- /** Return available model options for the requested/default chat. */
- export async function handleAgentModelsRequest(req: Request, ctx: AgentStatusContext): Promise<Response> {
--  const chatJid = resolveChatJid(req, ctx.defaultChatJid);
--  const payload = await ctx.getAvailableModels(chatJid);
--  return ctx.json(payload, 200);
-+  const { result, durationMs } = await measureAsync(async () => {
-+    const chatJid = resolveChatJid(req, ctx.defaultChatJid);
-+    const payload = await ctx.getAvailableModels(chatJid);
-+    return ctx.json(payload, 200);
-+  });
-+  return appendServerTiming(result, {
-+    name: "agent_models",
-+    durationMs,
-+  });
- }
-diff --git a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
-index d990bd83..f0e9bba0 100644
---- a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
-+++ b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
-@@ -28,6 +28,7 @@ import {
-   handleThoughtVisibilityRequest,
-   handleWorkspaceVisibilityRequest,
- } from "./ui-endpoints.js";
-+import { appendServerTiming, measureSync } from "../http/server-timing.js";
- import type {
-   WebChannelEndpointContexts,
-   WebChannelIdentitySnapshot,
-@@ -177,48 +178,58 @@ export class WebChannelEndpointFacadeService {
-   }
- 
-   handleAgentActiveChats(): Response {
--    return this.options.json({ chats: this.options.listActiveChats() }, 200);
-+    const { result, durationMs } = measureSync(() => this.options.json({ chats: this.options.listActiveChats() }, 200));
-+    return appendServerTiming(result, {
-+      name: "agent_active_chats",
-+      durationMs,
-+    });
-   }
- 
-   handleAgentBranches(req: Request): Response {
--    const url = new URL(req.url);
--    const rootChatJid = typeof url.searchParams.get("root_chat_jid") === "string"
--      ? url.searchParams.get("root_chat_jid")!.trim()
--      : "";
--    const includeArchived = ["1", "true", "yes", "on"].includes(
--      String(url.searchParams.get("include_archived") || "").trim().toLowerCase(),
--    );
--    const prewarmRecent = ["1", "true", "yes", "on"].includes(
--      String(url.searchParams.get("prewarm_recent") || "").trim().toLowerCase(),
--    );
--    const prewarmLimitRaw = Number.parseInt(String(url.searchParams.get("prewarm_limit") || "").trim(), 10);
--    const prewarmLimit = Number.isFinite(prewarmLimitRaw)
--      ? Math.max(1, Math.min(8, prewarmLimitRaw))
--      : 5;
--    const excludeChatJid = typeof url.searchParams.get("exclude_chat_jid") === "string"
--      ? url.searchParams.get("exclude_chat_jid")!.trim()
--      : "";
--    const prewarmChatJid = typeof url.searchParams.get("prewarm_chat_jid") === "string"
--      ? url.searchParams.get("prewarm_chat_jid")!.trim()
--      : "";
--
--    if (!rootChatJid) {
--      if (prewarmChatJid && typeof this.options.agentPool.scheduleChatWarmup === "function") {
--        this.options.agentPool.scheduleChatWarmup(prewarmChatJid, { priority: true });
-+    const { result, durationMs } = measureSync(() => {
-+      const url = new URL(req.url);
-+      const rootChatJid = typeof url.searchParams.get("root_chat_jid") === "string"
-+        ? url.searchParams.get("root_chat_jid")!.trim()
-+        : "";
-+      const includeArchived = ["1", "true", "yes", "on"].includes(
-+        String(url.searchParams.get("include_archived") || "").trim().toLowerCase(),
-+      );
-+      const prewarmRecent = ["1", "true", "yes", "on"].includes(
-+        String(url.searchParams.get("prewarm_recent") || "").trim().toLowerCase(),
-+      );
-+      const prewarmLimitRaw = Number.parseInt(String(url.searchParams.get("prewarm_limit") || "").trim(), 10);
-+      const prewarmLimit = Number.isFinite(prewarmLimitRaw)
-+        ? Math.max(1, Math.min(8, prewarmLimitRaw))
-+        : 5;
-+      const excludeChatJid = typeof url.searchParams.get("exclude_chat_jid") === "string"
-+        ? url.searchParams.get("exclude_chat_jid")!.trim()
-+        : "";
-+      const prewarmChatJid = typeof url.searchParams.get("prewarm_chat_jid") === "string"
-+        ? url.searchParams.get("prewarm_chat_jid")!.trim()
-+        : "";
-+
-+      if (!rootChatJid) {
-+        if (prewarmChatJid && typeof this.options.agentPool.scheduleChatWarmup === "function") {
-+          this.options.agentPool.scheduleChatWarmup(prewarmChatJid, { priority: true });
-+        }
-+        if (prewarmRecent && typeof this.options.agentPool.scheduleRecentChatWarmup === "function") {
-+          const excludeChatJids = [excludeChatJid, prewarmChatJid].filter(Boolean);
-+          this.options.agentPool.scheduleRecentChatWarmup({
-+            limit: prewarmLimit,
-+            excludeChatJids,
-+          });
-+        }
-       }
--      if (prewarmRecent && typeof this.options.agentPool.scheduleRecentChatWarmup === "function") {
--        const excludeChatJids = [excludeChatJid, prewarmChatJid].filter(Boolean);
--        this.options.agentPool.scheduleRecentChatWarmup({
--          limit: prewarmLimit,
--          excludeChatJids,
--        });
--      }
--    }
- 
--    const chats = typeof this.options.listKnownChats === "function"
--      ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
--      : this.options.listActiveChats();
--    return this.options.json({ chats }, 200);
-+      const chats = typeof this.options.listKnownChats === "function"
-+        ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
-+        : this.options.listActiveChats();
-+      return this.options.json({ chats }, 200);
-+    });
-+    return appendServerTiming(result, {
-+      name: "agent_branches",
-+      durationMs,
-+    });
-   }
- 
-   async handleAgentRespond(req: Request): Promise<Response> {
-diff --git a/runtime/src/channels/web/endpoints/content-endpoints.ts b/runtime/src/channels/web/endpoints/content-endpoints.ts
-index 854e4a03..022a6f36 100644
---- a/runtime/src/channels/web/endpoints/content-endpoints.ts
-+++ b/runtime/src/channels/web/endpoints/content-endpoints.ts
-@@ -9,6 +9,7 @@ import {
-   getTimelineResponse,
- } from "../timeline-service.js";
- import type { WebAgentBufferEntry } from "../agent/agent-buffers.js";
-+import { appendServerTiming, measureSync } from "../http/server-timing.js";
- 
- /** Shared dependencies for timeline/search/thread/thought endpoint handlers. */
- export interface ContentEndpointsContext {
-@@ -24,8 +25,11 @@ export function handleTimelineRequest(
-   chatJid: string | undefined,
-   ctx: ContentEndpointsContext
- ): Response {
--  const result = getTimelineResponse(chatJid || ctx.defaultChatJid, limit, before);
--  return ctx.json(result.body, result.status);
-+  const { result, durationMs } = measureSync(() => getTimelineResponse(chatJid || ctx.defaultChatJid, limit, before));
-+  return appendServerTiming(ctx.json(result.body, result.status), {
-+    name: "timeline",
-+    durationMs,
-+  });
- }
- 
- /** Return posts for a hashtag in the requested web chat (defaults to the main web chat). */
-@@ -36,8 +40,11 @@ export function handleHashtagRequest(
-   chatJid: string | undefined,
-   ctx: ContentEndpointsContext
- ): Response {
--  const result = getHashtagResponse(chatJid || ctx.defaultChatJid, tag, limit, offset);
--  return ctx.json(result.body, result.status);
-+  const { result, durationMs } = measureSync(() => getHashtagResponse(chatJid || ctx.defaultChatJid, tag, limit, offset));
-+  return appendServerTiming(ctx.json(result.body, result.status), {
-+    name: "hashtag",
-+    durationMs,
-+  });
- }
- 
- /** Return search results for a query in the requested web chat (defaults to the main web chat). */
-@@ -51,14 +58,20 @@ export function handleSearchRequest(
-   ctx: ContentEndpointsContext
- ): Response {
-   const normalizedScope = searchScope === "root" || searchScope === "all" ? searchScope : "current";
--  const result = getSearchResponse(chatJid || ctx.defaultChatJid, query, limit, offset, normalizedScope, rootChatJid || null);
--  return ctx.json(result.body, result.status);
-+  const { result, durationMs } = measureSync(() => getSearchResponse(chatJid || ctx.defaultChatJid, query, limit, offset, normalizedScope, rootChatJid || null));
-+  return appendServerTiming(ctx.json(result.body, result.status), {
-+    name: "search",
-+    durationMs,
-+  });
- }
- 
- /** Return a thread payload rooted at the provided interaction id. */
- export function handleThreadRequest(id: number | null, chatJid: string | undefined, ctx: ContentEndpointsContext): Response {
--  const result = getThreadResponse(chatJid || ctx.defaultChatJid, id);
--  return ctx.json(result.body, result.status);
-+  const { result, durationMs } = measureSync(() => getThreadResponse(chatJid || ctx.defaultChatJid, id));
-+  return appendServerTiming(ctx.json(result.body, result.status), {
-+    name: "thread",
-+    durationMs,
-+  });
- }
- 
- /** Return persisted thought/draft buffer text for a streamed model turn. */
-@@ -67,9 +80,15 @@ export function handleThoughtRequest(
-   turnId: string | null,
-   ctx: ContentEndpointsContext
- ): Response {
--  if (!turnId) return ctx.json({ error: "Missing turn_id" }, 400);
--  const normalized = panel === "draft" ? "draft" : "thought";
--  const buffer = ctx.getBuffer(turnId, normalized);
--  if (!buffer) return ctx.json({ error: "Thought not found" }, 404);
--  return ctx.json({ text: buffer.text, total_lines: buffer.totalLines }, 200);
-+  const { result, durationMs } = measureSync(() => {
-+    if (!turnId) return ctx.json({ error: "Missing turn_id" }, 400);
-+    const normalized = panel === "draft" ? "draft" : "thought";
-+    const buffer = ctx.getBuffer(turnId, normalized);
-+    if (!buffer) return ctx.json({ error: "Thought not found" }, 404);
-+    return ctx.json({ text: buffer.text, total_lines: buffer.totalLines }, 200);
-+  });
-+  return appendServerTiming(result, {
-+    name: "thought",
-+    durationMs,
-+  });
- }
-diff --git a/runtime/src/channels/web/http/server-timing.ts b/runtime/src/channels/web/http/server-timing.ts
-new file mode 100644
-index 00000000..e5d23b01
---- /dev/null
-+++ b/runtime/src/channels/web/http/server-timing.ts
-@@ -0,0 +1,73 @@
-+/**
-+ * web/http/server-timing.ts – minimal helpers for correlated backend timing.
-+ */
-+
-+export interface ServerTimingMetric {
-+  name: string;
-+  durationMs: number;
-+  description?: string | null;
-+}
-+
-+function nowMs(): number {
-+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
-+    return performance.now();
-+  }
-+  return Date.now();
-+}
-+
-+function sanitizeToken(value: string): string {
-+  return String(value || "")
-+    .trim()
-+    .replace(/[^a-zA-Z0-9_\-.]/g, "_")
-+    .slice(0, 64);
-+}
-+
-+function sanitizeDescription(value: string): string {
-+  return String(value || "")
-+    .replace(/["\\]/g, "")
-+    .trim()
-+    .slice(0, 120);
-+}
-+
-+function formatDuration(durationMs: number): string {
-+  if (!Number.isFinite(durationMs)) return "0";
-+  return (Math.max(0, durationMs) + Number.EPSILON).toFixed(1);
-+}
-+
-+function formatMetric(metric: ServerTimingMetric): string | null {
-+  const name = sanitizeToken(metric.name);
-+  if (!name) return null;
-+  const parts = [`${name};dur=${formatDuration(metric.durationMs)}`];
-+  const description = metric.description ? sanitizeDescription(metric.description) : "";
-+  if (description) {
-+    parts.push(`desc="${description}"`);
-+  }
-+  return parts.join(";");
-+}
-+
-+export function appendServerTiming(response: Response, ...metrics: ServerTimingMetric[]): Response {
-+  for (const metric of metrics) {
-+    const formatted = formatMetric(metric);
-+    if (!formatted) continue;
-+    response.headers.append("Server-Timing", formatted);
-+  }
-+  return response;
-+}
-+
-+export function measureSync<T>(run: () => T): { result: T; durationMs: number } {
-+  const startedAt = nowMs();
-+  const result = run();
-+  return {
-+    result,
-+    durationMs: nowMs() - startedAt,
-+  };
-+}
-+
-+export async function measureAsync<T>(run: () => Promise<T> | T): Promise<{ result: T; durationMs: number }> {
-+  const startedAt = nowMs();
-+  const result = await run();
-+  return {
-+    result,
-+    durationMs: nowMs() - startedAt,
-+  };
-+}
-diff --git a/runtime/src/channels/web/request-router-service.ts b/runtime/src/channels/web/request-router-service.ts
-index 2668385f..786c58a5 100644
---- a/runtime/src/channels/web/request-router-service.ts
-+++ b/runtime/src/channels/web/request-router-service.ts
-@@ -44,6 +44,7 @@ import { handleExtensionRoutes } from "./http/extension-routes.js";
- import { enforceRequestGuards } from "./http/request-guards.js";
- import { getRouteFlags } from "./http/route-flags.js";
- import { withSecurityHeaders } from "./http/security.js";
-+import { appendServerTiming, measureAsync } from "./http/server-timing.js";
- 
- const STATIC_DIR = resolve(import.meta.dir, "..", "..", "..", "..", "web", "static");
- const STATIC_MIME_TYPES: Record<string, string> = {
-@@ -90,11 +91,15 @@ export class RequestRouterService {
-    */
-   async handle(req: Request): Promise<Response> {
-     const requestId = createUuid("req");
--    const response = await this.route(req);
-+    const { result: response, durationMs } = await measureAsync(() => this.route(req));
-     // Determine TLS from the request URL scheme to conditionally add HSTS
-     const isTls = req.url.startsWith("https://");
-     const secured = withSecurityHeaders(response, isTls);
-     secured.headers.set("x-request-id", requestId);
-+    appendServerTiming(secured, {
-+      name: "app",
-+      durationMs,
-+    });
-     return secured;
-   }
- 
-diff --git a/runtime/test/agent-pool/provider-usage.test.ts b/runtime/test/agent-pool/provider-usage.test.ts
-index b1461c8d..77a9917c 100644
---- a/runtime/test/agent-pool/provider-usage.test.ts
-+++ b/runtime/test/agent-pool/provider-usage.test.ts
-@@ -1,5 +1,5 @@
- import { beforeEach, describe, expect, mock, test } from "bun:test";
--import { clearProviderUsageCache, getProviderUsage } from "../../src/agent-pool/provider-usage.js";
-+import { clearProviderUsageCache, getProviderUsage, peekProviderUsage, warmProviderUsage } from "../../src/agent-pool/provider-usage.js";
- 
- function createAuthStorage(credentials: Record<string, unknown>) {
-   return {
-@@ -234,6 +234,68 @@ describe("provider usage", () => {
-     }
-   });
- 
-+  test("warms provider usage in the background and reuses the same in-flight refresh", async () => {
-+    let release!: () => void;
-+    const gate = new Promise<void>((resolve) => {
-+      release = resolve;
-+    });
-+    const fetchMock = mock(async () => {
-+      await gate;
-+      return new Response(JSON.stringify({
-+        plan_type: "pro",
-+        rate_limit: {
-+          primary_window: {
-+            used_percent: 10,
-+            reset_at: Math.floor(Date.now() / 1000) + 3600,
-+            limit_window_seconds: 18000,
-+          },
-+        },
-+        credits: {
-+          balance: 50,
-+          unlimited: false,
-+        },
-+      }));
-+    });
-+    const previousFetch = globalThis.fetch;
-+    globalThis.fetch = fetchMock as any;
-+
-+    try {
-+      const first = warmProviderUsage(
-+        createAuthStorage({
-+          "openai-codex": {
-+            type: "oauth",
-+            access: "token",
-+            accountId: "acct_123",
-+            expires: Date.now() + 60_000,
-+          },
-+        }),
-+        "openai-codex"
-+      );
-+      const second = warmProviderUsage(
-+        createAuthStorage({
-+          "openai-codex": {
-+            type: "oauth",
-+            access: "token",
-+            accountId: "acct_123",
-+            expires: Date.now() + 60_000,
-+          },
-+        }),
-+        "openai-codex"
-+      );
-+
-+      expect(peekProviderUsage("openai-codex", { allowStale: true })).toBeNull();
-+      await Promise.resolve();
-+      expect(fetchMock).toHaveBeenCalledTimes(1);
-+
-+      release();
-+      const usage = await first;
-+      expect(await second).toEqual(usage);
-+      expect(peekProviderUsage("openai-codex", { allowStale: true })?.provider).toBe("openai-codex");
-+    } finally {
-+      globalThis.fetch = previousFetch;
-+    }
-+  });
-+
-   test("returns null for unsupported providers", async () => {
-     const usage = await getProviderUsage(createAuthStorage({}), "openai");
-     expect(usage).toBeNull();
-diff --git a/runtime/test/agent-pool/runtime-facade.test.ts b/runtime/test/agent-pool/runtime-facade.test.ts
-index 3459bc63..43fcc9cd 100644
---- a/runtime/test/agent-pool/runtime-facade.test.ts
-+++ b/runtime/test/agent-pool/runtime-facade.test.ts
-@@ -1,4 +1,6 @@
--import { expect, test } from "bun:test";
-+import { afterEach, expect, test } from "bun:test";
-+
-+import { clearProviderUsageCache } from "../../src/agent-pool/provider-usage.js";
- 
- import type { AgentSessionRuntime } from "@mariozechner/pi-coding-agent";
- import { AgentRuntimeFacade } from "../../src/agent-pool/runtime-facade.js";
-@@ -18,6 +20,10 @@ function createRuntime(session: any): AgentSessionRuntime {
-   } as any;
- }
- 
-+afterEach(() => {
-+  clearProviderUsageCache();
-+});
-+
- function createFacade(overrides: Partial<ConstructorParameters<typeof AgentRuntimeFacade>[0]> = {}) {
-   const pool = new Map<string, { runtime: any; lastUsed: number }>();
-   const warnings: string[] = [];
-@@ -138,6 +144,63 @@ test("AgentRuntimeFacade returns registry-backed model options without hydrating
-   });
- });
- 
-+test("AgentRuntimeFacade does not block getAvailableModels on a cold provider-usage refresh", async () => {
-+  const previousFetch = globalThis.fetch;
-+  let release!: () => void;
-+  const gate = new Promise<void>((resolve) => {
-+    release = resolve;
-+  });
-+  globalThis.fetch = (async () => {
-+    await gate;
-+    return new Response(JSON.stringify({
-+      plan_type: "pro",
-+      rate_limit: {
-+        primary_window: {
-+          used_percent: 10,
-+          reset_at: Math.floor(Date.now() / 1000) + 3600,
-+          limit_window_seconds: 18000,
-+        },
-+      },
-+      credits: {
-+        balance: 50,
-+        unlimited: false,
-+      },
-+    }));
-+  }) as any;
-+
-+  try {
-+    const session = {
-+      model: { provider: "openai-codex", id: "gpt-test", reasoning: true },
-+      thinkingLevel: "high",
-+      getContextUsage: () => null,
-+      modelRegistry: {
-+        refresh: () => {},
-+        getAvailable: () => [
-+          { provider: "openai-codex", id: "gpt-test", name: "GPT Test", contextWindow: 128000, reasoning: true },
-+        ],
-+      },
-+    };
-+
-+    const fixture = createFacade({
-+      authStorage: {
-+        get: () => ({ type: "oauth", access: "token", accountId: "acct_123", expires: Date.now() + 60_000 }),
-+      } as any,
-+    });
-+    fixture.pool.set("web:default", { runtime: createRuntime(session), lastUsed: Date.now() });
-+
-+    const available = await Promise.race([
-+      fixture.facade.getAvailableModels("web:default"),
-+      new Promise((_, reject) => setTimeout(() => reject(new Error("timed out waiting for getAvailableModels")), 50)),
-+    ]);
-+
-+    expect((available as any).current).toBe("openai-codex/gpt-test");
-+    expect((available as any).provider_usage).toBeNull();
-+  } finally {
-+    release();
-+    globalThis.fetch = previousFetch;
-+  }
-+});
-+
- test("AgentRuntimeFacade removes one queued follow-up and replays the remaining queue", async () => {
-   const prompts: Array<{ text: string; behavior: string }> = [];
-   const session = {
-diff --git a/runtime/test/channels/web/agent/agent-status.test.ts b/runtime/test/channels/web/agent/agent-status.test.ts
-index c49757cc..3a9d0ebb 100644
---- a/runtime/test/channels/web/agent/agent-status.test.ts
-+++ b/runtime/test/channels/web/agent/agent-status.test.ts
-@@ -25,6 +25,7 @@ describe("web agent status helpers", () => {
-     const res = handleAgentStatusRequest(req, createContext());
- 
-     expect(res.status).toBe(200);
-+    expect(res.headers.get("Server-Timing")).toContain("agent_status;dur=");
-     expect(await res.json()).toEqual({ status: "idle", data: null });
-   });
- 
-@@ -41,6 +42,7 @@ describe("web agent status helpers", () => {
-       })
-     );
- 
-+    expect(res.headers.get("Server-Timing")).toContain("agent_status;dur=");
-     const body = await res.json();
-     expect(body.status).toBe("active");
-     expect(body.data.chatJid).toBe("web:custom");
-@@ -53,6 +55,7 @@ describe("web agent status helpers", () => {
-     const res = await handleAgentContextRequest(req, createContext());
- 
-     expect(res.status).toBe(200);
-+    expect(res.headers.get("Server-Timing")).toContain("agent_context;dur=");
-     expect(await res.json()).toEqual({ tokens: null, contextWindow: null, percent: null });
-   });
- 
-@@ -67,6 +70,7 @@ describe("web agent status helpers", () => {
-     );
- 
-     expect(res.status).toBe(200);
-+    expect(res.headers.get("Server-Timing")).toContain("agent_models;dur=");
-     expect(await res.json()).toEqual(payload);
-   });
- });
-diff --git a/runtime/test/channels/web/endpoints/content-endpoints.test.ts b/runtime/test/channels/web/endpoints/content-endpoints.test.ts
-index c6e07848..e995e2ec 100644
---- a/runtime/test/channels/web/endpoints/content-endpoints.test.ts
-+++ b/runtime/test/channels/web/endpoints/content-endpoints.test.ts
-@@ -27,15 +27,19 @@ describe("web content endpoint helpers", () => {
- 
-     const timeline = handleTimelineRequest(20, undefined, undefined, ctx);
-     expect(timeline.status).toBe(200);
-+    expect(timeline.headers.get("Server-Timing")).toContain("timeline;dur=");
- 
-     const hashtag = handleHashtagRequest("dev", 20, 0, undefined, ctx);
-     expect(hashtag.status).toBe(200);
-+    expect(hashtag.headers.get("Server-Timing")).toContain("hashtag;dur=");
- 
-     const searchBad = handleSearchRequest("", 20, 0, undefined, undefined, undefined, ctx);
-     expect(searchBad.status).toBe(400);
-+    expect(searchBad.headers.get("Server-Timing")).toContain("search;dur=");
- 
-     const threadMissing = handleThreadRequest(null, undefined, ctx);
-     expect(threadMissing.status).toBe(404);
-+    expect(threadMissing.headers.get("Server-Timing")).toContain("thread;dur=");
-   });
- 
-   test("thought helper validates turn id and returns known buffer", async () => {
-@@ -48,12 +52,15 @@ describe("web content endpoint helpers", () => {
- 
-     const missing = handleThoughtRequest("draft", null, ctx);
-     expect(missing.status).toBe(400);
-+    expect(missing.headers.get("Server-Timing")).toContain("thought;dur=");
- 
-     const notFound = handleThoughtRequest("thought", "missing", ctx);
-     expect(notFound.status).toBe(404);
-+    expect(notFound.headers.get("Server-Timing")).toContain("thought;dur=");
- 
-     const ok = handleThoughtRequest("draft", "t1", ctx);
-     expect(ok.status).toBe(200);
-+    expect(ok.headers.get("Server-Timing")).toContain("thought;dur=");
-     expect(await ok.json()).toEqual({ text: "draft body", total_lines: 3 });
-   });
- });
-diff --git a/runtime/test/channels/web/security-hardening.test.ts b/runtime/test/channels/web/security-hardening.test.ts
-index 412888cf..cfb50a4a 100644
---- a/runtime/test/channels/web/security-hardening.test.ts
-+++ b/runtime/test/channels/web/security-hardening.test.ts
-@@ -746,6 +746,7 @@ describe("security headers", () => {
-     expect(res.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
-     expect(res.headers.get("Permissions-Policy")).toContain("camera=");
-     expect(res.headers.get("x-request-id")).toMatch(/^req-/);
-+    expect(res.headers.get("Server-Timing")).toContain("app;dur=");
-     expect(res.headers.get("Strict-Transport-Security")).toBe(null);
-   });
- 
 diff --git a/runtime/test/web/app-boot-load-orchestration.test.ts b/runtime/test/web/app-boot-load-orchestration.test.ts
 index ec5271e4..56807e3b 100644
 --- a/runtime/test/web/app-boot-load-orchestration.test.ts
@@ -1021,296 +205,6 @@ index 883b6313..84206cf9 100644
  test('runBackstopRefreshTick refreshes queue only when agent is active', () => {
    const calls: string[] = [];
    const run = (isAgentActive: boolean) => {
-diff --git a/runtime/test/web/app-main-surface-state.test.ts b/runtime/test/web/app-main-surface-state.test.ts
-index 76d92a7e..1e8274dc 100644
---- a/runtime/test/web/app-main-surface-state.test.ts
-+++ b/runtime/test/web/app-main-surface-state.test.ts
-@@ -3,37 +3,35 @@ import { expect, test } from 'bun:test';
- import {
-   createBranchLoaderState,
-   resolveCurrentBranchRecord,
-+  resolveStableRootChatJid,
- } from '../../web/src/ui/app-main-surface-state.js';
- 
--test('resolveCurrentBranchRecord prefers current branch records over active chat fallbacks', () => {
--  expect(resolveCurrentBranchRecord({
--    activeChatAgents: [{ chat_jid: 'chat-1', source: 'active' }],
--    currentChatBranches: [{ chat_jid: 'chat-1', source: 'branch' }],
--    currentChatJid: 'chat-1',
--  })).toEqual({ chat_jid: 'chat-1', source: 'branch' });
-+test('createBranchLoaderState reflects branch-loader mode', () => {
-+  expect(createBranchLoaderState(false)).toEqual({ status: 'idle', message: '' });
-+  expect(createBranchLoaderState(true)).toEqual({ status: 'running', message: 'Preparing a new chat branch…' });
- });
- 
--test('resolveCurrentBranchRecord falls back to active chat records or null', () => {
--  expect(resolveCurrentBranchRecord({
--    activeChatAgents: [{ chat_jid: 'chat-2', source: 'active' }],
--    currentChatBranches: [],
--    currentChatJid: 'chat-2',
--  })).toEqual({ chat_jid: 'chat-2', source: 'active' });
-+test('resolveCurrentBranchRecord prefers current root branch rows before active chat rows', () => {
-+  const currentBranch = { chat_jid: 'web:default:branch:abc', root_chat_jid: 'web:default', source: 'branches' };
-+  const activeBranch = { chat_jid: 'web:default:branch:abc', root_chat_jid: 'wrong-root', source: 'active' };
- 
-   expect(resolveCurrentBranchRecord({
--    activeChatAgents: [],
--    currentChatBranches: [],
--    currentChatJid: 'missing',
--  })).toBeNull();
-+    currentChatJid: 'web:default:branch:abc',
-+    currentChatBranches: [currentBranch],
-+    activeChatAgents: [activeBranch],
-+  })).toEqual(currentBranch);
-+});
-+
-+test('resolveStableRootChatJid uses branch metadata when available', () => {
-+  expect(resolveStableRootChatJid('web:default:branch:abc', { root_chat_jid: 'web:default' })).toBe('web:default');
-+});
-+
-+test('resolveStableRootChatJid derives the root chat from nested branch ids before metadata arrives', () => {
-+  expect(resolveStableRootChatJid('web:default:branch:abc')).toBe('web:default');
-+  expect(resolveStableRootChatJid('web:default:branch:abc:branch:def')).toBe('web:default');
- });
- 
--test('createBranchLoaderState preserves running and idle defaults', () => {
--  expect(createBranchLoaderState(true)).toEqual({
--    status: 'running',
--    message: 'Preparing a new chat branch…',
--  });
--  expect(createBranchLoaderState(false)).toEqual({
--    status: 'idle',
--    message: '',
--  });
-+test('resolveStableRootChatJid leaves root chats unchanged and falls back sanely for blanks', () => {
-+  expect(resolveStableRootChatJid('web:default')).toBe('web:default');
-+  expect(resolveStableRootChatJid('')).toBe('web:default');
- });
-diff --git a/runtime/test/web/app-perf-tracing.test.ts b/runtime/test/web/app-perf-tracing.test.ts
-new file mode 100644
-index 00000000..aaf80a72
---- /dev/null
-+++ b/runtime/test/web/app-perf-tracing.test.ts
-@@ -0,0 +1,83 @@
-+import { afterEach, expect, test } from 'bun:test';
-+
-+import {
-+  completeAppPerfTrace,
-+  completeAppPerfTraceIfReady,
-+  ensureAppPerfTrace,
-+  getActiveAppPerfTraceId,
-+  getAppPerfTracing,
-+  installAppPerfTracing,
-+  markAppPerfTrace,
-+  recordAppPerfRequest,
-+  startAppPerfTrace,
-+} from '../../web/src/ui/app-perf-tracing.js';
-+
-+afterEach(() => {
-+  getAppPerfTracing().clear();
-+});
-+
-+test('app perf tracing reuses active traces per type/chat and completes them with durations', () => {
-+  const traceId = startAppPerfTrace('thread-switch', 'web:branch', { sourceChatJid: 'web:main' });
-+  markAppPerfTrace(traceId, 'intent');
-+
-+  const ensuredId = ensureAppPerfTrace('thread-switch', 'web:branch', { sourceChatJid: 'web:main' });
-+  expect(ensuredId).toBe(traceId);
-+  expect(getActiveAppPerfTraceId('thread-switch', 'web:branch')).toBe(traceId);
-+
-+  completeAppPerfTrace(traceId, 'runtime-hydration-ready');
-+
-+  const traces = getAppPerfTracing().getTraces();
-+  expect(traces).toHaveLength(1);
-+  expect(traces[0]?.status).toBe('completed');
-+  expect(traces[0]?.phases.map((phase) => phase.phase)).toEqual(['intent', 'runtime-hydration-ready']);
-+  expect(typeof traces[0]?.durationMs).toBe('number');
-+  expect(getActiveAppPerfTraceId('thread-switch', 'web:branch')).toBeNull();
-+});
-+
-+test('app perf tracing installs a stable window global with stable public method names', () => {
-+  const runtimeWindow: Record<string, unknown> = {};
-+  const perf = installAppPerfTracing(runtimeWindow as any);
-+
-+  expect(runtimeWindow['__PICLAW_PERF__']).toBe(perf);
-+  expect(typeof (runtimeWindow['__PICLAW_PERF__'] as any)?.getTraces).toBe('function');
-+  expect(typeof (runtimeWindow['__PICLAW_PERF__'] as any)?.getRequests).toBe('function');
-+  expect(typeof (runtimeWindow['__PICLAW_PERF__'] as any)?.printSummary).toBe('function');
-+});
-+
-+test('app perf tracing only auto-completes once required phases are present', () => {
-+  const traceId = startAppPerfTrace('thread-switch', 'web:branch');
-+  markAppPerfTrace(traceId, 'runtime-hydration-ready');
-+  expect(completeAppPerfTraceIfReady(traceId, ['runtime-hydration-ready', 'timeline-first-paint'])).toBe(false);
-+
-+  markAppPerfTrace(traceId, 'timeline-first-paint');
-+  expect(completeAppPerfTraceIfReady(traceId, ['runtime-hydration-ready', 'timeline-first-paint'])).toBe(true);
-+
-+  const traces = getAppPerfTracing().getTraces();
-+  expect(traces[0]?.status).toBe('completed');
-+  expect(traces[0]?.phases.map((phase) => phase.phase)).toEqual([
-+    'runtime-hydration-ready',
-+    'timeline-first-paint',
-+    'settled',
-+  ]);
-+});
-+
-+test('app perf tracing stores bounded request samples', () => {
-+  const requestId = recordAppPerfRequest({
-+    method: 'GET',
-+    url: '/agent/models?chat_jid=web%3Abranch',
-+    startedAt: 10,
-+    durationMs: 42,
-+    status: 200,
-+    ok: true,
-+    requestId: 'req_backend_123',
-+    serverTiming: 'app;dur=21.5, agent_models;dur=9.7',
-+    detail: { chatJid: 'web:branch' },
-+  });
-+
-+  const requests = getAppPerfTracing().getRequests();
-+  expect(requests).toHaveLength(1);
-+  expect(requests[0]?.id).toBe(requestId);
-+  expect(requests[0]?.requestId).toBe('req_backend_123');
-+  expect(requests[0]?.serverTiming).toBe('app;dur=21.5, agent_models;dur=9.7');
-+  expect(requests[0]?.detail).toEqual({ chatJid: 'web:branch' });
-+});
-diff --git a/runtime/test/web/app-refresh-coordination.test.ts b/runtime/test/web/app-refresh-coordination.test.ts
-new file mode 100644
-index 00000000..2d42deca
---- /dev/null
-+++ b/runtime/test/web/app-refresh-coordination.test.ts
-@@ -0,0 +1,130 @@
-+import { afterEach, expect, test } from 'bun:test';
-+
-+import { getAppPerfTracing, startAppPerfTrace } from '../../web/src/ui/app-perf-tracing.js';
-+import {
-+  isAppChatActivationRecent,
-+  noteAppChatActivation,
-+  resetAppRefreshCoordination,
-+  runCoalescedAppRefresh,
-+} from '../../web/src/ui/app-refresh-coordination.js';
-+
-+afterEach(() => {
-+  resetAppRefreshCoordination();
-+  getAppPerfTracing().clear();
-+});
-+
-+test('noteAppChatActivation marks a chat as recently activated', () => {
-+  noteAppChatActivation({ chatJid: 'web:branch', nowMs: 100 });
-+
-+  expect(isAppChatActivationRecent('web:branch', 500, 400)).toBe(true);
-+  expect(isAppChatActivationRecent('web:branch', 200, 400)).toBe(false);
-+});
-+
-+test('runCoalescedAppRefresh reuses the in-flight refresh for the same kind/chat', async () => {
-+  let release!: () => void;
-+  let callCount = 0;
-+  const gate = new Promise<void>((resolve) => {
-+    release = resolve;
-+  });
-+
-+  const first = runCoalescedAppRefresh({
-+    kind: 'queue-state',
-+    chatJid: 'web:branch',
-+    run: async () => {
-+      callCount += 1;
-+      await gate;
-+      return { ok: true };
-+    },
-+  });
-+
-+  const second = runCoalescedAppRefresh({
-+    kind: 'queue-state',
-+    chatJid: 'web:branch',
-+    run: async () => {
-+      callCount += 1;
-+      return { ok: false };
-+    },
-+  });
-+
-+  release();
-+
-+  expect(await first).toEqual({ ok: true });
-+  expect(await second).toEqual({ ok: true });
-+  expect(callCount).toBe(1);
-+});
-+
-+test('runCoalescedAppRefresh suppresses immediate duplicate refreshes during a thread switch trace', async () => {
-+  const traceId = startAppPerfTrace('thread-switch', 'web:branch');
-+  expect(traceId).toBeTruthy();
-+
-+  let callCount = 0;
-+  const first = await runCoalescedAppRefresh({
-+    kind: 'model-state',
-+    chatJid: 'web:branch',
-+    cooldownMs: 20,
-+    run: async () => {
-+      callCount += 1;
-+      return { run: callCount };
-+    },
-+  });
-+
-+  const second = await runCoalescedAppRefresh({
-+    kind: 'model-state',
-+    chatJid: 'web:branch',
-+    cooldownMs: 20,
-+    run: async () => {
-+      callCount += 1;
-+      return { run: callCount };
-+    },
-+  });
-+
-+  await new Promise((resolve) => setTimeout(resolve, 25));
-+
-+  const third = await runCoalescedAppRefresh({
-+    kind: 'model-state',
-+    chatJid: 'web:branch',
-+    cooldownMs: 20,
-+    run: async () => {
-+      callCount += 1;
-+      return { run: callCount };
-+    },
-+  });
-+
-+  expect(first).toEqual({ run: 1 });
-+  expect(second).toEqual({ run: 1 });
-+  expect(third).toEqual({ run: 2 });
-+  expect(callCount).toBe(2);
-+});
-+
-+test('runCoalescedAppRefresh suppresses immediate duplicate refreshes after chat activation even before trace phases settle', async () => {
-+  noteAppChatActivation({ chatJid: 'web:branch', nowMs: 100 });
-+
-+  let callCount = 0;
-+  const first = await runCoalescedAppRefresh({
-+    kind: 'active-chat-agents',
-+    chatJid: 'web:branch',
-+    cooldownMs: 250,
-+    activationWindowMs: 1_500,
-+    run: async () => {
-+      callCount += 1;
-+      return { run: callCount };
-+    },
-+    nowMs: 110,
-+  });
-+
-+  const second = await runCoalescedAppRefresh({
-+    kind: 'active-chat-agents',
-+    chatJid: 'web:branch',
-+    cooldownMs: 250,
-+    activationWindowMs: 1_500,
-+    run: async () => {
-+      callCount += 1;
-+      return { run: callCount };
-+    },
-+    nowMs: 150,
-+  });
-+
-+  expect(first).toEqual({ run: 1 });
-+  expect(second).toEqual({ run: 1 });
-+  expect(callCount).toBe(1);
-+});
 diff --git a/runtime/test/web/app-sse-events.test.ts b/runtime/test/web/app-sse-events.test.ts
 index 7b03c604..90670b97 100644
 --- a/runtime/test/web/app-sse-events.test.ts
@@ -1513,65 +407,6 @@ index 60644f8c..d83a8b99 100644
  });
  
  test('popOutPane transfers pane state and closes the source tab after navigation', async () => {
-diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
-index c8b83899..2d773e42 100644
---- a/runtime/web/src/api.ts
-+++ b/runtime/web/src/api.ts
-@@ -3,18 +3,48 @@
-  * API client for Vibes backend
-  */
- 
-+import { recordAppPerfRequest } from './ui/app-perf-tracing.js';
-+
- const API_BASE = '';
- 
- /**
-  * Fetch wrapper with error handling
-  */
- async function request(url, options = {}) {
--    const response = await fetch(API_BASE + url, {
--        ...options,
--        headers: {
--            'Content-Type': 'application/json',
--            ...options.headers,
--        },
-+    const startedAt = typeof performance !== 'undefined' && typeof performance.now === 'function'
-+        ? performance.now()
-+        : Date.now();
-+    let response;
-+    try {
-+        response = await fetch(API_BASE + url, {
-+            ...options,
-+            headers: {
-+                'Content-Type': 'application/json',
-+                ...options.headers,
-+            },
-+        });
-+    } catch (error) {
-+        recordAppPerfRequest({
-+            method: String(options.method || 'GET').toUpperCase(),
-+            url,
-+            startedAt,
-+            durationMs: (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now()) - startedAt,
-+            ok: false,
-+            detail: { failedBeforeResponse: true },
-+        });
-+        throw error;
-+    }
-+
-+    const durationMs = (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now()) - startedAt;
-+    recordAppPerfRequest({
-+        method: String(options.method || 'GET').toUpperCase(),
-+        url,
-+        startedAt,
-+        durationMs,
-+        status: response.status,
-+        ok: response.ok,
-+        requestId: response.headers?.get?.('x-request-id') || null,
-+        serverTiming: response.headers?.get?.('Server-Timing') || null,
-     });
-     
-     if (!response.ok) {
 diff --git a/runtime/web/src/app.ts b/runtime/web/src/app.ts
 index 9aab2b15..ee137a74 100644
 --- a/runtime/web/src/app.ts
@@ -1983,10 +818,10 @@ index df0051fd..56e7bfb7 100644
  }
  
 diff --git a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
-index ac9fffd4..4f9eab74 100644
+index 20ed666c..4f9eab74 100644
 --- a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
 +++ b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
-@@ -10,6 +10,17 @@ import {
+@@ -10,6 +10,13 @@ import {
  } from './app-auth-bootstrap.js';
  import { refreshModelAndQueueState as refreshModelAndQueueStateBundle } from './app-status-refresh-orchestration.js';
  import { applyStoredSidebarWidth } from './app-boot-load-orchestration.js';
@@ -1997,14 +832,10 @@ index ac9fffd4..4f9eab74 100644
 +  getActiveAppPerfTraceId,
 +  markAppPerfTrace,
 +} from './app-perf-tracing.js';
-+import {
-+  noteAppChatActivation,
-+  runCoalescedAppRefresh,
-+} from './app-refresh-coordination.js';
- 
- type StateSetter<T> = (next: T | ((prev: T) => T)) => void;
- 
-@@ -45,12 +56,57 @@ interface UseChatRefreshLifecycleOptions {
+ import {
+   noteAppChatActivation,
+   runCoalescedAppRefresh,
+@@ -49,12 +56,57 @@ interface UseChatRefreshLifecycleOptions {
    refreshAutoresearchStatus: () => Promise<void>;
  }
  
@@ -2062,7 +893,7 @@ index ac9fffd4..4f9eab74 100644
    intervalMs?: number;
    scheduleInterval?: (handler: () => void, intervalMs: number) => unknown;
    clearScheduledInterval?: (handle: unknown) => void;
-@@ -61,12 +117,15 @@ export function startModelAndQueueRefreshEffect(options: {
+@@ -65,12 +117,15 @@ export function startModelAndQueueRefreshEffect(options: {
      refreshActiveChatAgents,
      refreshCurrentChatBranches,
      refreshQueueState,
@@ -2079,10 +910,11 @@ index ac9fffd4..4f9eab74 100644
    const intervalHandle = scheduleInterval(() => {
      refreshModelState();
      refreshActiveChatAgents();
-@@ -118,22 +177,8 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -121,24 +176,6 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+     });
    }, [applyBranding, getAgents, setAgents, setUserProfile]);
  
-   useEffect(() => {
+-  useEffect(() => {
 -    loadAgents();
 -    applyStoredSidebarWidth({
 -      readStoredNumber,
@@ -2099,35 +931,30 @@ index ac9fffd4..4f9eab74 100644
 -      prewarmLimit: 5,
 -    });
 -  }, [activeChatJidRef, appShellRef, currentChatJid, getActiveChatAgents, getChatBranches, loadAgents, readStoredNumber, setActiveChatAgents, sidebarWidthRef]);
-+    noteAppChatActivation({ chatJid: currentChatJid });
-+  }, [currentChatJid]);
- 
-   const updateAgentProfile = useCallback((payload: any) => {
-     updateAgentProfileFromEvent({
-@@ -163,32 +208,152 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+-
+   useEffect(() => {
+     noteAppChatActivation({ chatJid: currentChatJid });
+   }, [currentChatJid]);
+@@ -171,53 +208,152 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
      });
    }, [setActiveModel, setActiveModelUsage, setActiveThinkingLevel, setAgentModelsPayload, setHasLoadedAgentModels, setSupportsThinking]);
  
 +  const getThreadSwitchTraceId = useCallback(() => getActiveAppPerfTraceId('thread-switch', currentChatJid), [currentChatJid]);
 +
    const refreshModelState = useCallback(() => {
--    refreshModelStateForChat({
--      currentChatJid,
--      getAgentModels,
--      activeChatJidRef,
--      applyModelState,
-+    return runCoalescedAppRefresh({
-+      kind: 'model-state',
-+      chatJid: currentChatJid,
-+      run: async () => {
+     return runCoalescedAppRefresh({
+       kind: 'model-state',
+       chatJid: currentChatJid,
+       run: async () => {
 +        const traceId = getThreadSwitchTraceId();
 +        if (traceId) {
 +          markAppPerfTrace(traceId, 'runtime-hydration-start', {
 +            phase: 'model-state',
 +          });
 +        }
-+        await refreshModelStateForChat({
-+          currentChatJid,
+         await refreshModelStateForChat({
+           currentChatJid,
+-          getAgentModels,
 +          getAgentModels: async (chatJid: string) => {
 +            const activeTraceId = traceId || getThreadSwitchTraceId();
 +            if (activeTraceId) {
@@ -2151,36 +978,32 @@ index ac9fffd4..4f9eab74 100644
 +            }
 +            return payload;
 +          },
-+          activeChatJidRef,
-+          applyModelState,
-+        });
-+        return null;
-+      },
+           activeChatJidRef,
+           applyModelState,
+         });
+         return null;
+       },
      });
 -  }, [activeChatJidRef, applyModelState, currentChatJid, getAgentModels]);
--
--  const refreshActiveChatAgents = useCallback(() => {
--    refreshActiveChatAgentsState({
--      currentChatJid,
--      getActiveChatAgents,
--      getChatBranches,
--      activeChatJidRef,
--      setActiveChatAgents,
 +  }, [activeChatJidRef, applyModelState, currentChatJid, getAgentModels, getThreadSwitchTraceId]);
-+
+ 
+-  const refreshActiveChatAgents = useCallback(() => {
 +  const refreshActiveChatAgents = useCallback((options?: {
 +    prewarmRecent?: boolean;
 +    prewarmLimit?: number;
 +  }) => {
 +    const prewarmRecent = Boolean(options?.prewarmRecent);
 +    const prewarmLimit = Number.isFinite(options?.prewarmLimit) ? Number(options?.prewarmLimit) : 3;
-+    return runCoalescedAppRefresh({
-+      kind: 'active-chat-agents',
-+      chatJid: currentChatJid,
-+      run: async () => {
+     return runCoalescedAppRefresh({
+       kind: 'active-chat-agents',
+       chatJid: currentChatJid,
+       run: async () => {
+-        await refreshActiveChatAgentsState({
 +        const traceId = getThreadSwitchTraceId();
 +        const mergedChats = await refreshActiveChatAgentsState({
-+          currentChatJid,
+           currentChatJid,
+-          getActiveChatAgents,
+-          getChatBranches,
 +          getActiveChatAgents: async () => {
 +            if (traceId) {
 +              markAppPerfTrace(traceId, 'active-chat-list-request-start', {
@@ -2211,13 +1034,13 @@ index ac9fffd4..4f9eab74 100644
 +            }
 +            return payload;
 +          },
-+          activeChatJidRef,
-+          setActiveChatAgents,
+           activeChatJidRef,
+           setActiveChatAgents,
 +          ...(prewarmRecent ? {
 +            prewarmRecent: true,
 +            prewarmLimit,
 +          } : {}),
-+        });
+         });
 +        if (prewarmRecent) {
 +          prewarmRecentTimelineChats({
 +            chats: mergedChats,
@@ -2225,24 +1048,21 @@ index ac9fffd4..4f9eab74 100644
 +            prewarmLimit,
 +          });
 +        }
-+        return null;
-+      },
+         return null;
+       },
      });
 -  }, [activeChatJidRef, currentChatJid, getActiveChatAgents, getChatBranches, setActiveChatAgents]);
 +  }, [activeChatJidRef, currentChatJid, getActiveChatAgents, getChatBranches, getThreadSwitchTraceId, setActiveChatAgents]);
  
    const refreshCurrentChatBranches = useCallback(() => {
--    refreshCurrentChatBranchesState({
--      currentRootChatJid,
--      getChatBranches,
--      setCurrentChatBranches,
-+    return runCoalescedAppRefresh({
-+      kind: 'current-chat-branches',
-+      chatJid: currentChatJid,
-+      run: async () => {
+     return runCoalescedAppRefresh({
+       kind: 'current-chat-branches',
+       chatJid: currentChatJid,
+       run: async () => {
 +        const traceId = getThreadSwitchTraceId();
-+        await refreshCurrentChatBranchesState({
-+          currentRootChatJid,
+         await refreshCurrentChatBranchesState({
+           currentRootChatJid,
+-          getChatBranches,
 +          getChatBranches: async (rootChatJid: string | null, branchOptions?: Record<string, unknown>) => {
 +            if (traceId) {
 +              markAppPerfTrace(traceId, 'root-branch-request-start', {
@@ -2258,11 +1078,12 @@ index ac9fffd4..4f9eab74 100644
 +            }
 +            return payload;
 +          },
-+          setCurrentChatBranches,
-+        });
-+        return null;
-+      },
-+    });
+           setCurrentChatBranches,
+         });
+         return null;
+       },
+     });
+-  }, [currentChatJid, currentRootChatJid, getChatBranches, setCurrentChatBranches]);
 +  }, [currentChatJid, currentRootChatJid, getChatBranches, getThreadSwitchTraceId, setCurrentChatBranches]);
 +
 +  useEffect(() => {
@@ -2271,13 +1092,12 @@ index ac9fffd4..4f9eab74 100644
 +      readStoredNumber,
 +      sidebarWidthRef,
 +      shellElement: appShellRef.current,
-     });
--  }, [currentRootChatJid, getChatBranches, setCurrentChatBranches]);
++    });
 +  }, [appShellRef, loadAgents, readStoredNumber, sidebarWidthRef]);
  
    const refreshModelAndQueueState = useCallback(() => {
      refreshModelAndQueueStateBundle({
-@@ -201,12 +366,25 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -230,12 +366,25 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
      });
    }, [refreshActiveChatAgents, refreshAutoresearchStatus, refreshContextUsage, refreshCurrentChatBranches, refreshModelState, refreshQueueState]);
  
@@ -2303,7 +1123,7 @@ index ac9fffd4..4f9eab74 100644
    }), [refreshActiveChatAgents, refreshCurrentChatBranches, refreshModelAndQueueState, refreshModelState, refreshQueueState]);
  
    return {
-@@ -217,5 +395,6 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -246,5 +395,6 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
      refreshActiveChatAgents,
      refreshCurrentChatBranches,
      refreshModelAndQueueState,
@@ -2374,46 +1194,6 @@ index f4f84775..00ecd5b1 100644
    }));
  
    useRealtimeLifecycleOrchestration(composeRealtimeLifecycleOptions({
-diff --git a/runtime/web/src/ui/app-main-surface-state.ts b/runtime/web/src/ui/app-main-surface-state.ts
-index 8134a092..84f9831b 100644
---- a/runtime/web/src/ui/app-main-surface-state.ts
-+++ b/runtime/web/src/ui/app-main-surface-state.ts
-@@ -33,6 +33,23 @@ export function createBranchLoaderState(branchLoaderMode: boolean) {
-   };
- }
- 
-+export function resolveStableRootChatJid(currentChatJid: string, currentBranchRecord?: { root_chat_jid?: string | null } | null): string {
-+  const recordRoot = typeof currentBranchRecord?.root_chat_jid === 'string'
-+    ? currentBranchRecord.root_chat_jid.trim()
-+    : '';
-+  if (recordRoot) return recordRoot;
-+
-+  const normalizedChatJid = typeof currentChatJid === 'string' ? currentChatJid.trim() : '';
-+  if (!normalizedChatJid) return 'web:default';
-+
-+  const branchMarkerIndex = normalizedChatJid.indexOf(':branch:');
-+  if (branchMarkerIndex <= 0) {
-+    return normalizedChatJid;
-+  }
-+
-+  return normalizedChatJid.slice(0, branchMarkerIndex) || normalizedChatJid;
-+}
-+
- export function useMainAppSurfaceState(options: {
-   currentChatJid: string;
-   branchLoaderMode: boolean;
-@@ -74,7 +91,10 @@ export function useMainAppSurfaceState(options: {
-     currentChatBranches,
-     currentChatJid,
-   }), [activeChatAgents, currentChatBranches, currentChatJid]);
--  const currentRootChatJid = currentBranchRecord?.root_chat_jid || currentChatJid;
-+  const currentRootChatJid = useMemo(
-+    () => resolveStableRootChatJid(currentChatJid, currentBranchRecord),
-+    [currentBranchRecord, currentChatJid],
-+  );
-   const activeSearchScopeLabel = describeSearchScope(searchScope);
-   const [branchLoaderState, setBranchLoaderState] = useState(() => createBranchLoaderState(branchLoaderMode));
-   const followupQueueCount = followupQueueItems.length;
 diff --git a/runtime/web/src/ui/app-main-timeline-composition.ts b/runtime/web/src/ui/app-main-timeline-composition.ts
 index e16dc681..0c19c471 100644
 --- a/runtime/web/src/ui/app-main-timeline-composition.ts
@@ -2452,402 +1232,20 @@ index e16dc681..0c19c471 100644
    const posts = useMemo(() => deriveVisibleTimelinePosts({
      rawPosts,
 diff --git a/runtime/web/src/ui/app-perf-tracing.ts b/runtime/web/src/ui/app-perf-tracing.ts
-new file mode 100644
-index 00000000..efba3e71
---- /dev/null
+index da7cd67c..efba3e71 100644
+--- a/runtime/web/src/ui/app-perf-tracing.ts
 +++ b/runtime/web/src/ui/app-perf-tracing.ts
-@@ -0,0 +1,267 @@
-+type TraceStatus = 'active' | 'completed' | 'cancelled' | 'failed';
-+
-+type TracePhase = {
-+  phase: string;
-+  at: number;
-+  detail?: Record<string, unknown> | null;
-+};
-+
-+type TraceEntry = {
-+  id: string;
-+  type: string;
-+  chatJid: string;
-+  startedAt: number;
-+  detail?: Record<string, unknown> | null;
-+  phases: TracePhase[];
-+  status: TraceStatus;
-+  completedAt?: number;
-+  durationMs?: number;
-+  error?: string;
-+};
-+
-+type RequestEntry = {
-+  id: string;
-+  method: string;
-+  url: string;
-+  startedAt: number;
-+  durationMs: number;
-+  status?: number;
-+  ok?: boolean;
-+  requestId?: string | null;
-+  serverTiming?: string | null;
-+  detail?: Record<string, unknown> | null;
-+};
-+
-+type PerfApi = {
-+  startTrace: (type: string, chatJid: string, detail?: Record<string, unknown> | null) => string;
-+  ensureTrace: (type: string, chatJid: string, detail?: Record<string, unknown> | null) => string;
-+  getActiveTraceId: (type: string, chatJid: string) => string | null;
-+  markTrace: (traceId: string | null | undefined, phase: string, detail?: Record<string, unknown> | null) => void;
-+  completeTrace: (traceId: string | null | undefined, phase?: string, detail?: Record<string, unknown> | null) => void;
-+  failTrace: (traceId: string | null | undefined, error: unknown, phase?: string, detail?: Record<string, unknown> | null) => void;
-+  cancelTrace: (traceId: string | null | undefined, phase?: string, detail?: Record<string, unknown> | null) => void;
-+  recordRequest: (entry: Omit<RequestEntry, 'id'>) => string;
-+  getTraces: () => TraceEntry[];
-+  getRequests: () => RequestEntry[];
-+  clear: () => void;
-+  printSummary: () => { traces: TraceEntry[]; requests: RequestEntry[] };
-+};
-+
-+type PerfWindow = Window & typeof globalThis & Record<string, unknown>;
-+
-+const PERF_GLOBAL_KEY = '__PICLAW_PERF__';
-+const TRACE_LIMIT = 100;
-+const REQUEST_LIMIT = 300;
-+
-+const traces: TraceEntry[] = [];
-+const requests: RequestEntry[] = [];
-+const activeTraceIds = new Map<string, string>();
-+
-+function getRuntimeWindow(runtimeWindow: PerfWindow | null = typeof window !== 'undefined' ? window as PerfWindow : null): PerfWindow | null {
-+  return runtimeWindow || null;
-+}
-+
-+function now(): number {
-+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
-+    return performance.now();
-+  }
-+  return Date.now();
-+}
-+
-+function buildTraceKey(type: string, chatJid: string): string {
-+  return `${type}:${chatJid}`;
-+}
-+
-+function nextId(prefix: string): string {
-+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
-+}
-+
-+function trimBuffer<T>(buffer: T[], limit: number): void {
-+  if (buffer.length <= limit) return;
-+  buffer.splice(0, buffer.length - limit);
-+}
-+
-+function cloneDetail(detail: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
-+  if (!detail || typeof detail !== 'object') return null;
-+  return { ...detail };
-+}
-+
-+function findTrace(traceId: string | null | undefined): TraceEntry | null {
-+  if (!traceId) return null;
-+  return traces.find((entry) => entry.id === traceId) || null;
-+}
-+
-+function markPerformance(traceId: string, phase: string): void {
-+  if (typeof performance === 'undefined' || typeof performance.mark !== 'function') return;
-+  try {
-+    performance.mark(`piclaw:${traceId}:${phase}`);
+@@ -95,8 +95,8 @@ function markPerformance(traceId: string, phase: string): void {
+   if (typeof performance === 'undefined' || typeof performance.mark !== 'function') return;
+   try {
+     performance.mark(`piclaw:${traceId}:${phase}`);
+-  } catch (error) {
+-    console.debug('[app-perf] Ignoring performance.mark failure.', error, { traceId, phase });
 +  } catch {
 +    // Ignore duplicate/invalid marks in older browsers.
-+  }
-+}
-+
-+function createTrace(type: string, chatJid: string, detail?: Record<string, unknown> | null): string {
-+  const traceId = nextId(type);
-+  const entry: TraceEntry = {
-+    id: traceId,
-+    type,
-+    chatJid,
-+    startedAt: now(),
-+    detail: cloneDetail(detail),
-+    phases: [],
-+    status: 'active',
-+  };
-+  traces.push(entry);
-+  trimBuffer(traces, TRACE_LIMIT);
-+  activeTraceIds.set(buildTraceKey(type, chatJid), traceId);
-+  markPerformance(traceId, 'start');
-+  return traceId;
-+}
-+
-+function endTrace(traceId: string | null | undefined, status: TraceStatus, phase: string, detail?: Record<string, unknown> | null, error?: unknown): void {
-+  const trace = findTrace(traceId);
-+  if (!trace || trace.status !== 'active') return;
-+  if (phase) {
-+    trace.phases.push({ phase, at: now(), detail: cloneDetail(detail) });
-+    markPerformance(trace.id, phase);
-+  }
-+  trace.status = status;
-+  trace.completedAt = now();
-+  trace.durationMs = trace.completedAt - trace.startedAt;
-+  if (error !== undefined) {
-+    trace.error = error instanceof Error ? error.message : String(error);
-+  }
-+  const key = buildTraceKey(trace.type, trace.chatJid);
-+  if (activeTraceIds.get(key) === trace.id) {
-+    activeTraceIds.delete(key);
-+  }
-+}
-+
-+const perfApi: PerfApi = {
-+  'startTrace'(type, chatJid, detail) {
-+    return createTrace(type, chatJid, detail);
-+  },
-+  'ensureTrace'(type, chatJid, detail) {
-+    const existing = activeTraceIds.get(buildTraceKey(type, chatJid));
-+    if (existing && findTrace(existing)?.status === 'active') {
-+      return existing;
-+    }
-+    return createTrace(type, chatJid, detail);
-+  },
-+  'getActiveTraceId'(type, chatJid) {
-+    const existing = activeTraceIds.get(buildTraceKey(type, chatJid));
-+    return existing && findTrace(existing)?.status === 'active' ? existing : null;
-+  },
-+  'markTrace'(traceId, phase, detail) {
-+    const trace = findTrace(traceId);
-+    if (!trace || trace.status !== 'active') return;
-+    trace.phases.push({ phase, at: now(), detail: cloneDetail(detail) });
-+    markPerformance(trace.id, phase);
-+  },
-+  'completeTrace'(traceId, phase = 'settled', detail) {
-+    endTrace(traceId, 'completed', phase, detail);
-+  },
-+  'failTrace'(traceId, error, phase = 'failed', detail) {
-+    endTrace(traceId, 'failed', phase, detail, error);
-+  },
-+  'cancelTrace'(traceId, phase = 'cancelled', detail) {
-+    endTrace(traceId, 'cancelled', phase, detail);
-+  },
-+  'recordRequest'(entry) {
-+    const requestId = nextId('req');
-+    requests.push({ ...entry, id: requestId, detail: cloneDetail(entry.detail) });
-+    trimBuffer(requests, REQUEST_LIMIT);
-+    return requestId;
-+  },
-+  'getTraces'() {
-+    return traces.map((entry) => ({
-+      ...entry,
-+      detail: cloneDetail(entry.detail),
-+      phases: entry.phases.map((phase) => ({ ...phase, detail: cloneDetail(phase.detail) })),
-+    }));
-+  },
-+  'getRequests'() {
-+    return requests.map((entry) => ({ ...entry, detail: cloneDetail(entry.detail) }));
-+  },
-+  'clear'() {
-+    traces.splice(0, traces.length);
-+    requests.splice(0, requests.length);
-+    activeTraceIds.clear();
-+  },
-+  'printSummary'() {
-+    const payload = {
-+      traces: perfApi['getTraces'](),
-+      requests: perfApi['getRequests'](),
-+    };
-+    console.table(payload.traces.map((entry) => ({
-+      id: entry.id,
-+      type: entry.type,
-+      chatJid: entry.chatJid,
-+      status: entry.status,
-+      durationMs: Number(entry.durationMs || 0).toFixed(1),
-+      lastPhase: entry.phases[entry.phases.length - 1]?.phase || 'start',
-+    })));
-+    return payload;
-+  },
-+};
-+
-+export function installAppPerfTracing(runtimeWindow: PerfWindow | null = getRuntimeWindow()): PerfApi {
-+  const existing = runtimeWindow?.[PERF_GLOBAL_KEY] as PerfApi | undefined;
-+  if (existing) return existing;
-+  if (runtimeWindow) {
-+    runtimeWindow[PERF_GLOBAL_KEY] = perfApi;
-+  }
-+  return perfApi;
-+}
-+
-+export function getAppPerfTracing(runtimeWindow: PerfWindow | null = getRuntimeWindow()): PerfApi {
-+  return installAppPerfTracing(runtimeWindow);
-+}
-+
-+export function startAppPerfTrace(type: string, chatJid: string, detail?: Record<string, unknown> | null): string {
-+  return getAppPerfTracing().startTrace(type, chatJid, detail);
-+}
-+
-+export function ensureAppPerfTrace(type: string, chatJid: string, detail?: Record<string, unknown> | null): string {
-+  return getAppPerfTracing().ensureTrace(type, chatJid, detail);
-+}
-+
-+export function getActiveAppPerfTraceId(type: string, chatJid: string): string | null {
-+  return getAppPerfTracing().getActiveTraceId(type, chatJid);
-+}
-+
-+export function markAppPerfTrace(traceId: string | null | undefined, phase: string, detail?: Record<string, unknown> | null): void {
-+  getAppPerfTracing().markTrace(traceId, phase, detail);
-+}
-+
-+export function completeAppPerfTrace(traceId: string | null | undefined, phase = 'settled', detail?: Record<string, unknown> | null): void {
-+  getAppPerfTracing().completeTrace(traceId, phase, detail);
-+}
-+
-+export function completeAppPerfTraceIfReady(
-+  traceId: string | null | undefined,
-+  requiredPhases: string[],
-+  phase = 'settled',
-+  detail?: Record<string, unknown> | null,
-+): boolean {
-+  const trace = findTrace(traceId);
-+  if (!trace || trace.status !== 'active') return false;
-+  const seen = new Set(trace.phases.map((entry) => entry.phase));
-+  if (!requiredPhases.every((required) => seen.has(required))) {
-+    return false;
-+  }
-+  endTrace(traceId, 'completed', phase, detail);
-+  return true;
-+}
-+
-+export function failAppPerfTrace(traceId: string | null | undefined, error: unknown, phase = 'failed', detail?: Record<string, unknown> | null): void {
-+  getAppPerfTracing().failTrace(traceId, error, phase, detail);
-+}
-+
-+export function cancelAppPerfTrace(traceId: string | null | undefined, phase = 'cancelled', detail?: Record<string, unknown> | null): void {
-+  getAppPerfTracing().cancelTrace(traceId, phase, detail);
-+}
-+
-+export function recordAppPerfRequest(entry: Omit<RequestEntry, 'id'>): string {
-+  return getAppPerfTracing().recordRequest(entry);
-+}
-diff --git a/runtime/web/src/ui/app-refresh-coordination.ts b/runtime/web/src/ui/app-refresh-coordination.ts
-new file mode 100644
-index 00000000..5bb3184c
---- /dev/null
-+++ b/runtime/web/src/ui/app-refresh-coordination.ts
-@@ -0,0 +1,118 @@
-+import { getActiveAppPerfTraceId } from './app-perf-tracing.js';
-+
-+type RefreshState<T = unknown> = {
-+  inFlight: Promise<T> | null;
-+  lastCompletedAt: number;
-+  lastValue: T | null;
-+};
-+
-+export interface NoteAppChatActivationOptions {
-+  chatJid: string;
-+  nowMs?: number;
-+}
-+
-+export interface RunCoalescedAppRefreshOptions<T> {
-+  kind: string;
-+  chatJid: string;
-+  run: () => Promise<T>;
-+  cooldownMs?: number;
-+  activationWindowMs?: number;
-+  nowMs?: number;
-+}
-+
-+const refreshStates = new Map<string, RefreshState>();
-+const recentChatActivationAt = new Map<string, number>();
-+const DEFAULT_COOLDOWN_MS = 250;
-+const DEFAULT_ACTIVATION_WINDOW_MS = 1_500;
-+const ACTIVATION_RETENTION_MS = 5 * 60_000;
-+
-+function now(): number {
-+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
-+    return performance.now();
-+  }
-+  return Date.now();
-+}
-+
-+function buildRefreshKey(kind: string, chatJid: string): string {
-+  return `${kind}:${chatJid}`;
-+}
-+
-+function pruneOldChatActivations(nowMs: number): void {
-+  for (const [chatJid, activatedAt] of recentChatActivationAt.entries()) {
-+    if (nowMs - activatedAt > ACTIVATION_RETENTION_MS) {
-+      recentChatActivationAt.delete(chatJid);
-+    }
-+  }
-+}
-+
-+export function noteAppChatActivation(options: NoteAppChatActivationOptions): void {
-+  const { chatJid, nowMs = now() } = options;
-+  if (!chatJid) return;
-+  recentChatActivationAt.set(chatJid, nowMs);
-+  pruneOldChatActivations(nowMs);
-+}
-+
-+export function isAppChatActivationRecent(chatJid: string, withinMs = DEFAULT_ACTIVATION_WINDOW_MS, nowMs = now()): boolean {
-+  if (!chatJid) return false;
-+  const activatedAt = recentChatActivationAt.get(chatJid);
-+  if (!Number.isFinite(activatedAt)) return false;
-+  return nowMs - Number(activatedAt) <= withinMs;
-+}
-+
-+export async function runCoalescedAppRefresh<T>(options: RunCoalescedAppRefreshOptions<T>): Promise<T | null> {
-+  const {
-+    kind,
-+    chatJid,
-+    run,
-+    cooldownMs = DEFAULT_COOLDOWN_MS,
-+    activationWindowMs = DEFAULT_ACTIVATION_WINDOW_MS,
-+    nowMs = now(),
-+  } = options;
-+
-+  const key = buildRefreshKey(kind, chatJid);
-+  const state = refreshStates.get(key) || {
-+    inFlight: null,
-+    lastCompletedAt: Number.NaN,
-+    lastValue: null,
-+  };
-+  refreshStates.set(key, state);
-+
-+  if (state.inFlight) {
-+    return await state.inFlight;
-+  }
-+
-+  const foregroundRefresh = Boolean(
-+    getActiveAppPerfTraceId('thread-switch', chatJid)
-+    || isAppChatActivationRecent(chatJid, activationWindowMs, nowMs),
-+  );
-+
-+  if (
-+    foregroundRefresh
-+    && Number.isFinite(state.lastCompletedAt)
-+    && nowMs - state.lastCompletedAt <= cooldownMs
-+  ) {
-+    return state.lastValue;
-+  }
-+
-+  const inFlight = Promise.resolve()
-+    .then(run)
-+    .then((value) => {
-+      state.lastCompletedAt = now();
-+      state.lastValue = value ?? null;
-+      state.inFlight = null;
-+      return value;
-+    })
-+    .catch((error) => {
-+      state.lastCompletedAt = now();
-+      state.inFlight = null;
-+      throw error;
-+    });
-+
-+  state.inFlight = inFlight;
-+  return await inFlight;
-+}
-+
-+export function resetAppRefreshCoordination(): void {
-+  refreshStates.clear();
-+  recentChatActivationAt.clear();
-+}
+   }
+ }
+ 
 diff --git a/runtime/web/src/ui/app-shell-bootstrap.ts b/runtime/web/src/ui/app-shell-bootstrap.ts
 index df44296a..5de29e71 100644
 --- a/runtime/web/src/ui/app-shell-bootstrap.ts

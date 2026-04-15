@@ -1,5 +1,63 @@
+diff --git a/runtime/src/agent-pool.ts b/runtime/src/agent-pool.ts
+index 5378a2ab..00d08331 100644
+--- a/runtime/src/agent-pool.ts
++++ b/runtime/src/agent-pool.ts
+@@ -56,6 +56,7 @@ import {
+   type SshConfigSetResult,
+   deleteSshConfig,
+   getSshConfig,
++  listRecentChatJids,
+   upsertSshConfig,
+ } from "./db.js";
+ import { setSshToolHandlers } from "./extensions/ssh.js";
+@@ -90,7 +91,7 @@ export type {
+ } from "./agent-pool/contracts.js";
+ 
+ /** How long (ms) an idle session stays cached before being disposed. */
+-const DEFAULT_IDLE_TTL = 2 * 60 * 1000; // 2 minutes
++const DEFAULT_IDLE_TTL = 15 * 60 * 1000; // 15 minutes
+ const DEFAULT_CLEANUP_INTERVAL = 30 * 1000; // check every 30 seconds
+ 
+ function parsePositiveMs(value: string | undefined, fallback: number): number {
+@@ -345,6 +346,36 @@ export class AgentPool {
+     return this.branchManager.listKnownChats(rootChatJid, options);
+   }
+ 
++  scheduleChatWarmup(chatJid: string, options: { priority?: boolean } = {}): boolean {
++    return this.sessionManager.prewarm(chatJid, options);
++  }
++
++  scheduleRecentChatWarmup(options: { limit?: number; excludeChatJids?: string[] } = {}): string[] {
++    const targetCount = Math.max(1, Math.min(8, Math.trunc(options.limit ?? 3) || 3));
++    const excluded = new Set(
++      Array.isArray(options.excludeChatJids)
++        ? options.excludeChatJids.map((jid) => String(jid || "").trim()).filter(Boolean)
++        : [],
++    );
++
++    const scheduled: string[] = [];
++    const candidates = listRecentChatJids(targetCount * 4, {
++      excludeChatJids: [...excluded],
++    });
++    for (const chatJid of candidates) {
++      if (excluded.has(chatJid)) continue;
++      if (this.pool.has(chatJid)) continue;
++      scheduled.push(chatJid);
++      if (scheduled.length >= targetCount) break;
++    }
++
++    for (const chatJid of scheduled) {
++      this.sessionManager.prewarm(chatJid);
++    }
++
++    return scheduled;
++  }
++
+   findActiveChatByAgentName(agentName: string): ActiveChatAgent | null {
+     return this.branchManager.findActiveChatByAgentName(agentName);
+   }
 diff --git a/runtime/src/agent-pool/branch-manager.ts b/runtime/src/agent-pool/branch-manager.ts
-index 1b04858..1f6ff13 100644
+index 1b048589..1f6ff139 100644
 --- a/runtime/src/agent-pool/branch-manager.ts
 +++ b/runtime/src/agent-pool/branch-manager.ts
 @@ -22,7 +22,7 @@ import {
@@ -101,9 +159,9 @@ index 1b04858..1f6ff13 100644
  
      return ensureChatBranch({
        chat_jid: nextChatJid,
-diff --git a/target29/runtime/src/agent-pool/branch-seeding.ts b/runtime/src/agent-pool/branch-seeding.ts
+diff --git a/runtime/src/agent-pool/branch-seeding.ts b/runtime/src/agent-pool/branch-seeding.ts
 new file mode 100644
-index 0000000..aa93cb5
+index 00000000..aa93cb54
 --- /dev/null
 +++ b/runtime/src/agent-pool/branch-seeding.ts
 @@ -0,0 +1,238 @@
@@ -346,7 +404,7 @@ index 0000000..aa93cb5
 +  rmSync(getDeferredBranchSeedPath(chatJid), { force: true });
 +}
 diff --git a/runtime/src/agent-pool/runtime-facade.ts b/runtime/src/agent-pool/runtime-facade.ts
-index 4354d4f..48ca2b1 100644
+index 4354d4f8..48ca2b1d 100644
 --- a/runtime/src/agent-pool/runtime-facade.ts
 +++ b/runtime/src/agent-pool/runtime-facade.ts
 @@ -409,8 +409,13 @@ export class AgentRuntimeFacade {
@@ -388,7 +446,7 @@ index 4354d4f..48ca2b1 100644
        : thinkingLevel;
      return {
 diff --git a/runtime/src/agent-pool/service-factory.ts b/runtime/src/agent-pool/service-factory.ts
-index 7240429..977d609 100644
+index 7240429d..977d609f 100644
 --- a/runtime/src/agent-pool/service-factory.ts
 +++ b/runtime/src/agent-pool/service-factory.ts
 @@ -106,6 +106,7 @@ export function createAgentPoolServices(options: AgentPoolServiceFactoryOptions)
@@ -400,7 +458,7 @@ index 7240429..977d609 100644
      onWarn: options.onWarn,
    });
 diff --git a/runtime/src/agent-pool/session-manager.ts b/runtime/src/agent-pool/session-manager.ts
-index b42280c..a390e8a 100644
+index b42280c4..a390e8a7 100644
 --- a/runtime/src/agent-pool/session-manager.ts
 +++ b/runtime/src/agent-pool/session-manager.ts
 @@ -8,8 +8,13 @@
@@ -606,66 +664,8 @@ index b42280c..a390e8a 100644
          err,
        });
      }
-diff --git a/runtime/src/agent-pool.ts b/runtime/src/agent-pool.ts
-index 5378a2a..00d0833 100644
---- a/runtime/src/agent-pool.ts
-+++ b/runtime/src/agent-pool.ts
-@@ -56,6 +56,7 @@ import {
-   type SshConfigSetResult,
-   deleteSshConfig,
-   getSshConfig,
-+  listRecentChatJids,
-   upsertSshConfig,
- } from "./db.js";
- import { setSshToolHandlers } from "./extensions/ssh.js";
-@@ -90,7 +91,7 @@ export type {
- } from "./agent-pool/contracts.js";
- 
- /** How long (ms) an idle session stays cached before being disposed. */
--const DEFAULT_IDLE_TTL = 2 * 60 * 1000; // 2 minutes
-+const DEFAULT_IDLE_TTL = 15 * 60 * 1000; // 15 minutes
- const DEFAULT_CLEANUP_INTERVAL = 30 * 1000; // check every 30 seconds
- 
- function parsePositiveMs(value: string | undefined, fallback: number): number {
-@@ -345,6 +346,36 @@ export class AgentPool {
-     return this.branchManager.listKnownChats(rootChatJid, options);
-   }
- 
-+  scheduleChatWarmup(chatJid: string, options: { priority?: boolean } = {}): boolean {
-+    return this.sessionManager.prewarm(chatJid, options);
-+  }
-+
-+  scheduleRecentChatWarmup(options: { limit?: number; excludeChatJids?: string[] } = {}): string[] {
-+    const targetCount = Math.max(1, Math.min(8, Math.trunc(options.limit ?? 3) || 3));
-+    const excluded = new Set(
-+      Array.isArray(options.excludeChatJids)
-+        ? options.excludeChatJids.map((jid) => String(jid || "").trim()).filter(Boolean)
-+        : [],
-+    );
-+
-+    const scheduled: string[] = [];
-+    const candidates = listRecentChatJids(targetCount * 4, {
-+      excludeChatJids: [...excluded],
-+    });
-+    for (const chatJid of candidates) {
-+      if (excluded.has(chatJid)) continue;
-+      if (this.pool.has(chatJid)) continue;
-+      scheduled.push(chatJid);
-+      if (scheduled.length >= targetCount) break;
-+    }
-+
-+    for (const chatJid of scheduled) {
-+      this.sessionManager.prewarm(chatJid);
-+    }
-+
-+    return scheduled;
-+  }
-+
-   findActiveChatByAgentName(agentName: string): ActiveChatAgent | null {
-     return this.branchManager.findActiveChatByAgentName(agentName);
-   }
 diff --git a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
-index a2e4e6a..d990bd8 100644
+index a2e4e6aa..d990bd83 100644
 --- a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
 +++ b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
 @@ -188,6 +188,33 @@ export class WebChannelEndpointFacadeService {
@@ -702,8 +702,20 @@ index a2e4e6a..d990bd8 100644
      const chats = typeof this.options.listKnownChats === "function"
        ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
        : this.options.listActiveChats();
+diff --git a/runtime/src/db.ts b/runtime/src/db.ts
+index 1c1612b3..cf205c41 100644
+--- a/runtime/src/db.ts
++++ b/runtime/src/db.ts
+@@ -21,6 +21,7 @@ export {
+ } from "./db/chat-branches.js";
+ export {
+   storeChatMetadata,
++  listRecentChatJids,
+   storeMessage,
+   getMessageByRowId,
+   getMessageByAnyRowId,
 diff --git a/runtime/src/db/messages.ts b/runtime/src/db/messages.ts
-index 9145015..2667c22 100644
+index 9145015f..2667c229 100644
 --- a/runtime/src/db/messages.ts
 +++ b/runtime/src/db/messages.ts
 @@ -130,6 +130,29 @@ export function storeChatMetadata(chatJid: string, timestamp: string, name?: str
@@ -736,20 +748,8 @@ index 9145015..2667c22 100644
  /**
   * Persist a message into the `messages` table (INSERT OR REPLACE).
   * Returns the SQLite rowid of the inserted row (used as the interaction id
-diff --git a/runtime/src/db.ts b/runtime/src/db.ts
-index 1c1612b..cf205c4 100644
---- a/runtime/src/db.ts
-+++ b/runtime/src/db.ts
-@@ -21,6 +21,7 @@ export {
- } from "./db/chat-branches.js";
- export {
-   storeChatMetadata,
-+  listRecentChatJids,
-   storeMessage,
-   getMessageByRowId,
-   getMessageByAnyRowId,
 diff --git a/runtime/src/runtime/startup.ts b/runtime/src/runtime/startup.ts
-index 0b5d0aa..fb20ed4 100644
+index 0b5d0aa5..fb20ed41 100644
 --- a/runtime/src/runtime/startup.ts
 +++ b/runtime/src/runtime/startup.ts
 @@ -80,10 +80,32 @@ export function initializeRuntimeEnvironment(state: RuntimeState): void {
@@ -786,7 +786,7 @@ index 0b5d0aa..fb20ed4 100644
    // Run an immediate pending-resume scan at startup so deferred queued
    // follow-ups are picked up even before IPC workers process resume tasks.
 diff --git a/runtime/test/agent-pool/agent-pool.test.ts b/runtime/test/agent-pool/agent-pool.test.ts
-index 847a616..ecdb7c7 100644
+index 847a6165..ecdb7c75 100644
 --- a/runtime/test/agent-pool/agent-pool.test.ts
 +++ b/runtime/test/agent-pool/agent-pool.test.ts
 @@ -278,7 +278,7 @@ test("agent pool evicts idle sessions and recreates them", async () => {
@@ -894,7 +894,7 @@ index 847a616..ecdb7c7 100644
    const forkedMessages = forkedSession.sessionManager.buildSessionContext().messages;
    const serialized = JSON.stringify(forkedMessages);
 diff --git a/runtime/test/agent-pool/branch-lifecycle-audit.test.ts b/runtime/test/agent-pool/branch-lifecycle-audit.test.ts
-index 303d7d2..9408c57 100644
+index 303d7d22..9408c579 100644
 --- a/runtime/test/agent-pool/branch-lifecycle-audit.test.ts
 +++ b/runtime/test/agent-pool/branch-lifecycle-audit.test.ts
 @@ -123,6 +123,7 @@ test("agent pool audit: forks active chats from the previous stable turn boundar
@@ -906,7 +906,7 @@ index 303d7d2..9408c57 100644
    const forkedMessages = forkedSession.sessionManager.buildSessionContext().messages;
    const serialized = JSON.stringify(forkedMessages);
 diff --git a/runtime/test/agent-pool/branch-manager.test.ts b/runtime/test/agent-pool/branch-manager.test.ts
-index 5ecd13a..9623096 100644
+index 5ecd13ae..96230968 100644
 --- a/runtime/test/agent-pool/branch-manager.test.ts
 +++ b/runtime/test/agent-pool/branch-manager.test.ts
 @@ -1,6 +1,9 @@
@@ -1003,7 +1003,7 @@ index 5ecd13a..9623096 100644
    const ws = createTempWorkspace("piclaw-branch-prune-");
    restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
 diff --git a/runtime/test/agent-pool/runtime-facade.test.ts b/runtime/test/agent-pool/runtime-facade.test.ts
-index 526195c..3459bc6 100644
+index 526195c6..3459bc63 100644
 --- a/runtime/test/agent-pool/runtime-facade.test.ts
 +++ b/runtime/test/agent-pool/runtime-facade.test.ts
 @@ -96,6 +96,48 @@ test("AgentRuntimeFacade reports available models and context usage", async () =
@@ -1056,7 +1056,7 @@ index 526195c..3459bc6 100644
    const prompts: Array<{ text: string; behavior: string }> = [];
    const session = {
 diff --git a/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts b/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts
-index b5e1733..847aaf6 100644
+index b5e17332..847aaf68 100644
 --- a/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts
 +++ b/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts
 @@ -71,11 +71,23 @@ function createFacade(getIdentitySnapshot: () => WebChannelIdentitySnapshot) {
@@ -1110,7 +1110,7 @@ index b5e1733..847aaf6 100644
 +  });
  });
 diff --git a/runtime/test/runtime/startup.test.ts b/runtime/test/runtime/startup.test.ts
-index 94f1890..164d483 100644
+index 94f18904..164d4836 100644
 --- a/runtime/test/runtime/startup.test.ts
 +++ b/runtime/test/runtime/startup.test.ts
 @@ -1,6 +1,7 @@
@@ -1173,7 +1173,7 @@ index 94f1890..164d483 100644
 +  });
  });
 diff --git a/runtime/test/web/app-auth-bootstrap.test.ts b/runtime/test/web/app-auth-bootstrap.test.ts
-index 9a0630f..d0e5f72 100644
+index 9a0630ff..d0e5f724 100644
 --- a/runtime/test/web/app-auth-bootstrap.test.ts
 +++ b/runtime/test/web/app-auth-bootstrap.test.ts
 @@ -197,6 +197,7 @@ test('handleMessageResponseRefresh triggers queue refresh only for queued respon
@@ -1217,7 +1217,7 @@ index 9a0630f..d0e5f72 100644
 +  expect(branchOptions).toEqual([{ includeArchived: true, prewarmRecent: true, prewarmLimit: 4, excludeChatJid: 'chat-a', prewarmChatJid: 'chat-a' }]);
  });
 diff --git a/runtime/test/web/app-window-actions.test.ts b/runtime/test/web/app-window-actions.test.ts
-index 87f95a6..60644f8 100644
+index 87f95a64..60644f8c 100644
 --- a/runtime/test/web/app-window-actions.test.ts
 +++ b/runtime/test/web/app-window-actions.test.ts
 @@ -16,15 +16,19 @@ afterEach(() => {
@@ -1258,19 +1258,22 @@ index 87f95a6..60644f8 100644
  
  test('popOutPane transfers pane state and closes the source tab after navigation', async () => {
 diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
-index a4c4971..6588804 100644
+index a4c49719..eacdc2c6 100644
 --- a/runtime/web/src/api.ts
 +++ b/runtime/web/src/api.ts
-@@ -172,6 +172,7 @@ export async function getChatBranches(rootChatJid = null, options = {}) {
+@@ -172,6 +172,10 @@ export async function getChatBranches(rootChatJid = null, options = {}) {
      const params = new URLSearchParams();
      if (rootChatJid) params.set('root_chat_jid', String(rootChatJid));
      if (options?.includeArchived) params.set('include_archived', '1');
++    if (options?.prewarmRecent) params.set('prewarm_recent', '1');
++    if (Number.isFinite(options?.prewarmLimit)) params.set('prewarm_limit', String(options.prewarmLimit));
++    if (options?.excludeChatJid) params.set('exclude_chat_jid', String(options.excludeChatJid));
 +    if (options?.prewarmChatJid) params.set('prewarm_chat_jid', String(options.prewarmChatJid));
      const query = params.toString() ? `?${params.toString()}` : '';
      return request(`/agent/branches${query}`);
  }
 diff --git a/runtime/web/src/ui/app-auth-bootstrap.ts b/runtime/web/src/ui/app-auth-bootstrap.ts
-index 4fe41c4..7c8260b 100644
+index 4fe41c40..7c8260b6 100644
 --- a/runtime/web/src/ui/app-auth-bootstrap.ts
 +++ b/runtime/web/src/ui/app-auth-bootstrap.ts
 @@ -156,6 +156,8 @@ export interface RefreshActiveChatAgentsOptions {
@@ -1308,7 +1311,7 @@ index 4fe41c4..7c8260b 100644
      .then(([activePayload, branchPayload]) => {
        if (activeChatJidRef.current !== targetChatJid) return;
 diff --git a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
-index 9335899..ac9fffd 100644
+index 93358993..ac9fffd4 100644
 --- a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
 +++ b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
 @@ -124,7 +124,16 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
@@ -1330,7 +1333,7 @@ index 9335899..ac9fffd 100644
    const updateAgentProfile = useCallback((payload: any) => {
      updateAgentProfileFromEvent({
 diff --git a/runtime/web/src/ui/app-window-actions.ts b/runtime/web/src/ui/app-window-actions.ts
-index 5242d6d..d7954be 100644
+index 5242d6df..d7954bef 100644
 --- a/runtime/web/src/ui/app-window-actions.ts
 +++ b/runtime/web/src/ui/app-window-actions.ts
 @@ -53,6 +53,21 @@ export async function createSessionFromCompose(options: CreateSessionFromCompose

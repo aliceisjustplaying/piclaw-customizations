@@ -1,0 +1,355 @@
+diff --git a/runtime/test/web/app-refresh-coordination.test.ts b/runtime/test/web/app-refresh-coordination.test.ts
+new file mode 100644
+index 00000000..2d42deca
+--- /dev/null
++++ b/runtime/test/web/app-refresh-coordination.test.ts
+@@ -0,0 +1,130 @@
++import { afterEach, expect, test } from 'bun:test';
++
++import { getAppPerfTracing, startAppPerfTrace } from '../../web/src/ui/app-perf-tracing.js';
++import {
++  isAppChatActivationRecent,
++  noteAppChatActivation,
++  resetAppRefreshCoordination,
++  runCoalescedAppRefresh,
++} from '../../web/src/ui/app-refresh-coordination.js';
++
++afterEach(() => {
++  resetAppRefreshCoordination();
++  getAppPerfTracing().clear();
++});
++
++test('noteAppChatActivation marks a chat as recently activated', () => {
++  noteAppChatActivation({ chatJid: 'web:branch', nowMs: 100 });
++
++  expect(isAppChatActivationRecent('web:branch', 500, 400)).toBe(true);
++  expect(isAppChatActivationRecent('web:branch', 200, 400)).toBe(false);
++});
++
++test('runCoalescedAppRefresh reuses the in-flight refresh for the same kind/chat', async () => {
++  let release!: () => void;
++  let callCount = 0;
++  const gate = new Promise<void>((resolve) => {
++    release = resolve;
++  });
++
++  const first = runCoalescedAppRefresh({
++    kind: 'queue-state',
++    chatJid: 'web:branch',
++    run: async () => {
++      callCount += 1;
++      await gate;
++      return { ok: true };
++    },
++  });
++
++  const second = runCoalescedAppRefresh({
++    kind: 'queue-state',
++    chatJid: 'web:branch',
++    run: async () => {
++      callCount += 1;
++      return { ok: false };
++    },
++  });
++
++  release();
++
++  expect(await first).toEqual({ ok: true });
++  expect(await second).toEqual({ ok: true });
++  expect(callCount).toBe(1);
++});
++
++test('runCoalescedAppRefresh suppresses immediate duplicate refreshes during a thread switch trace', async () => {
++  const traceId = startAppPerfTrace('thread-switch', 'web:branch');
++  expect(traceId).toBeTruthy();
++
++  let callCount = 0;
++  const first = await runCoalescedAppRefresh({
++    kind: 'model-state',
++    chatJid: 'web:branch',
++    cooldownMs: 20,
++    run: async () => {
++      callCount += 1;
++      return { run: callCount };
++    },
++  });
++
++  const second = await runCoalescedAppRefresh({
++    kind: 'model-state',
++    chatJid: 'web:branch',
++    cooldownMs: 20,
++    run: async () => {
++      callCount += 1;
++      return { run: callCount };
++    },
++  });
++
++  await new Promise((resolve) => setTimeout(resolve, 25));
++
++  const third = await runCoalescedAppRefresh({
++    kind: 'model-state',
++    chatJid: 'web:branch',
++    cooldownMs: 20,
++    run: async () => {
++      callCount += 1;
++      return { run: callCount };
++    },
++  });
++
++  expect(first).toEqual({ run: 1 });
++  expect(second).toEqual({ run: 1 });
++  expect(third).toEqual({ run: 2 });
++  expect(callCount).toBe(2);
++});
++
++test('runCoalescedAppRefresh suppresses immediate duplicate refreshes after chat activation even before trace phases settle', async () => {
++  noteAppChatActivation({ chatJid: 'web:branch', nowMs: 100 });
++
++  let callCount = 0;
++  const first = await runCoalescedAppRefresh({
++    kind: 'active-chat-agents',
++    chatJid: 'web:branch',
++    cooldownMs: 250,
++    activationWindowMs: 1_500,
++    run: async () => {
++      callCount += 1;
++      return { run: callCount };
++    },
++    nowMs: 110,
++  });
++
++  const second = await runCoalescedAppRefresh({
++    kind: 'active-chat-agents',
++    chatJid: 'web:branch',
++    cooldownMs: 250,
++    activationWindowMs: 1_500,
++    run: async () => {
++      callCount += 1;
++      return { run: callCount };
++    },
++    nowMs: 150,
++  });
++
++  expect(first).toEqual({ run: 1 });
++  expect(second).toEqual({ run: 1 });
++  expect(callCount).toBe(1);
++});
+diff --git a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
+index ac9fffd4..20ed666c 100644
+--- a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
++++ b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
+@@ -10,6 +10,10 @@ import {
+ } from './app-auth-bootstrap.js';
+ import { refreshModelAndQueueState as refreshModelAndQueueStateBundle } from './app-status-refresh-orchestration.js';
+ import { applyStoredSidebarWidth } from './app-boot-load-orchestration.js';
++import {
++  noteAppChatActivation,
++  runCoalescedAppRefresh,
++} from './app-refresh-coordination.js';
+ 
+ type StateSetter<T> = (next: T | ((prev: T) => T)) => void;
+ 
+@@ -135,6 +139,10 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+     });
+   }, [activeChatJidRef, appShellRef, currentChatJid, getActiveChatAgents, getChatBranches, loadAgents, readStoredNumber, setActiveChatAgents, sidebarWidthRef]);
+ 
++  useEffect(() => {
++    noteAppChatActivation({ chatJid: currentChatJid });
++  }, [currentChatJid]);
++
+   const updateAgentProfile = useCallback((payload: any) => {
+     updateAgentProfileFromEvent({
+       payload,
+@@ -164,31 +172,52 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+   }, [setActiveModel, setActiveModelUsage, setActiveThinkingLevel, setAgentModelsPayload, setHasLoadedAgentModels, setSupportsThinking]);
+ 
+   const refreshModelState = useCallback(() => {
+-    refreshModelStateForChat({
+-      currentChatJid,
+-      getAgentModels,
+-      activeChatJidRef,
+-      applyModelState,
++    return runCoalescedAppRefresh({
++      kind: 'model-state',
++      chatJid: currentChatJid,
++      run: async () => {
++        await refreshModelStateForChat({
++          currentChatJid,
++          getAgentModels,
++          activeChatJidRef,
++          applyModelState,
++        });
++        return null;
++      },
+     });
+   }, [activeChatJidRef, applyModelState, currentChatJid, getAgentModels]);
+ 
+   const refreshActiveChatAgents = useCallback(() => {
+-    refreshActiveChatAgentsState({
+-      currentChatJid,
+-      getActiveChatAgents,
+-      getChatBranches,
+-      activeChatJidRef,
+-      setActiveChatAgents,
++    return runCoalescedAppRefresh({
++      kind: 'active-chat-agents',
++      chatJid: currentChatJid,
++      run: async () => {
++        await refreshActiveChatAgentsState({
++          currentChatJid,
++          getActiveChatAgents,
++          getChatBranches,
++          activeChatJidRef,
++          setActiveChatAgents,
++        });
++        return null;
++      },
+     });
+   }, [activeChatJidRef, currentChatJid, getActiveChatAgents, getChatBranches, setActiveChatAgents]);
+ 
+   const refreshCurrentChatBranches = useCallback(() => {
+-    refreshCurrentChatBranchesState({
+-      currentRootChatJid,
+-      getChatBranches,
+-      setCurrentChatBranches,
++    return runCoalescedAppRefresh({
++      kind: 'current-chat-branches',
++      chatJid: currentChatJid,
++      run: async () => {
++        await refreshCurrentChatBranchesState({
++          currentRootChatJid,
++          getChatBranches,
++          setCurrentChatBranches,
++        });
++        return null;
++      },
+     });
+-  }, [currentRootChatJid, getChatBranches, setCurrentChatBranches]);
++  }, [currentChatJid, currentRootChatJid, getChatBranches, setCurrentChatBranches]);
+ 
+   const refreshModelAndQueueState = useCallback(() => {
+     refreshModelAndQueueStateBundle({
+diff --git a/runtime/web/src/ui/app-refresh-coordination.ts b/runtime/web/src/ui/app-refresh-coordination.ts
+new file mode 100644
+index 00000000..5bb3184c
+--- /dev/null
++++ b/runtime/web/src/ui/app-refresh-coordination.ts
+@@ -0,0 +1,118 @@
++import { getActiveAppPerfTraceId } from './app-perf-tracing.js';
++
++type RefreshState<T = unknown> = {
++  inFlight: Promise<T> | null;
++  lastCompletedAt: number;
++  lastValue: T | null;
++};
++
++export interface NoteAppChatActivationOptions {
++  chatJid: string;
++  nowMs?: number;
++}
++
++export interface RunCoalescedAppRefreshOptions<T> {
++  kind: string;
++  chatJid: string;
++  run: () => Promise<T>;
++  cooldownMs?: number;
++  activationWindowMs?: number;
++  nowMs?: number;
++}
++
++const refreshStates = new Map<string, RefreshState>();
++const recentChatActivationAt = new Map<string, number>();
++const DEFAULT_COOLDOWN_MS = 250;
++const DEFAULT_ACTIVATION_WINDOW_MS = 1_500;
++const ACTIVATION_RETENTION_MS = 5 * 60_000;
++
++function now(): number {
++  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
++    return performance.now();
++  }
++  return Date.now();
++}
++
++function buildRefreshKey(kind: string, chatJid: string): string {
++  return `${kind}:${chatJid}`;
++}
++
++function pruneOldChatActivations(nowMs: number): void {
++  for (const [chatJid, activatedAt] of recentChatActivationAt.entries()) {
++    if (nowMs - activatedAt > ACTIVATION_RETENTION_MS) {
++      recentChatActivationAt.delete(chatJid);
++    }
++  }
++}
++
++export function noteAppChatActivation(options: NoteAppChatActivationOptions): void {
++  const { chatJid, nowMs = now() } = options;
++  if (!chatJid) return;
++  recentChatActivationAt.set(chatJid, nowMs);
++  pruneOldChatActivations(nowMs);
++}
++
++export function isAppChatActivationRecent(chatJid: string, withinMs = DEFAULT_ACTIVATION_WINDOW_MS, nowMs = now()): boolean {
++  if (!chatJid) return false;
++  const activatedAt = recentChatActivationAt.get(chatJid);
++  if (!Number.isFinite(activatedAt)) return false;
++  return nowMs - Number(activatedAt) <= withinMs;
++}
++
++export async function runCoalescedAppRefresh<T>(options: RunCoalescedAppRefreshOptions<T>): Promise<T | null> {
++  const {
++    kind,
++    chatJid,
++    run,
++    cooldownMs = DEFAULT_COOLDOWN_MS,
++    activationWindowMs = DEFAULT_ACTIVATION_WINDOW_MS,
++    nowMs = now(),
++  } = options;
++
++  const key = buildRefreshKey(kind, chatJid);
++  const state = refreshStates.get(key) || {
++    inFlight: null,
++    lastCompletedAt: Number.NaN,
++    lastValue: null,
++  };
++  refreshStates.set(key, state);
++
++  if (state.inFlight) {
++    return await state.inFlight;
++  }
++
++  const foregroundRefresh = Boolean(
++    getActiveAppPerfTraceId('thread-switch', chatJid)
++    || isAppChatActivationRecent(chatJid, activationWindowMs, nowMs),
++  );
++
++  if (
++    foregroundRefresh
++    && Number.isFinite(state.lastCompletedAt)
++    && nowMs - state.lastCompletedAt <= cooldownMs
++  ) {
++    return state.lastValue;
++  }
++
++  const inFlight = Promise.resolve()
++    .then(run)
++    .then((value) => {
++      state.lastCompletedAt = now();
++      state.lastValue = value ?? null;
++      state.inFlight = null;
++      return value;
++    })
++    .catch((error) => {
++      state.lastCompletedAt = now();
++      state.inFlight = null;
++      throw error;
++    });
++
++  state.inFlight = inFlight;
++  return await inFlight;
++}
++
++export function resetAppRefreshCoordination(): void {
++  refreshStates.clear();
++  recentChatActivationAt.clear();
++}

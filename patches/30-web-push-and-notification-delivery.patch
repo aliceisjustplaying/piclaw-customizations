@@ -1,5 +1,5 @@
 diff --git a/bun.lock b/bun.lock
-index 9f9afd5..911c28d 100644
+index 1a3d1ae2..40a5b6b7 100644
 --- a/bun.lock
 +++ b/bun.lock
 @@ -26,6 +26,7 @@
@@ -50,7 +50,7 @@ index 9f9afd5..911c28d 100644
      "minipass": ["minipass@7.1.3", "", {}, "sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A=="],
  
      "mkdirp": ["mkdirp@1.0.4", "", { "bin": { "mkdirp": "bin/cmd.js" } }, "sha512-vVqVZQyf3WLx2Shd0qJ9xuvqgAyKPLAiqITEtqW0oIUjzo3PePDd6fW9iFz30ef7Ysp/oiWqbhszeGWW2T6Gzw=="],
-@@ -1315,6 +1326,8 @@
+@@ -1317,6 +1328,8 @@
  
      "w3c-keyname": ["w3c-keyname@2.2.8", "", {}, "sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ=="],
  
@@ -59,9 +59,9 @@ index 9f9afd5..911c28d 100644
      "web-streams-polyfill": ["web-streams-polyfill@3.3.3", "", {}, "sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw=="],
  
      "which": ["which@2.0.2", "", { "dependencies": { "isexe": "^2.0.0" }, "bin": { "node-which": "./bin/node-which" } }, "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA=="],
-diff --git a/target30/docs/web-notification-delivery-policy.md b/docs/web-notification-delivery-policy.md
+diff --git a/docs/web-notification-delivery-policy.md b/docs/web-notification-delivery-policy.md
 new file mode 100644
-index 0000000..721fab1
+index 00000000..721fab10
 --- /dev/null
 +++ b/docs/web-notification-delivery-policy.md
 @@ -0,0 +1,70 @@
@@ -136,7 +136,7 @@ index 0000000..721fab1
 +- both are live, neither is visible
 +- result: exactly **one** hidden tab shows the local notification
 diff --git a/package.json b/package.json
-index 55ca110..0980cb1 100644
+index 02625f0f..3f1150e0 100644
 --- a/package.json
 +++ b/package.json
 @@ -100,6 +100,7 @@
@@ -148,7 +148,7 @@ index 55ca110..0980cb1 100644
    },
    "devDependencies": {
 diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
-index a77a57f..66dd04e 100644
+index a77a57f7..66dd04ee 100644
 --- a/runtime/src/channels/web/http/dispatch-agent.ts
 +++ b/runtime/src/channels/web/http/dispatch-agent.ts
 @@ -3,6 +3,13 @@
@@ -198,7 +198,7 @@ index a77a57f..66dd04e 100644
      method: "POST",
      path: "/agent/side-prompt",
 diff --git a/runtime/src/channels/web/http/dispatch-shell.ts b/runtime/src/channels/web/http/dispatch-shell.ts
-index 7c66bca..9afbef5 100644
+index 7c66bca6..9afbef5f 100644
 --- a/runtime/src/channels/web/http/dispatch-shell.ts
 +++ b/runtime/src/channels/web/http/dispatch-shell.ts
 @@ -49,6 +49,10 @@ export async function handleShellRoutes(
@@ -213,7 +213,7 @@ index 7c66bca..9afbef5 100644
      return channel.serveStatic("js/vendor/ghostty-vt.wasm");
    }
 diff --git a/runtime/src/channels/web/http/route-flags.ts b/runtime/src/channels/web/http/route-flags.ts
-index 7244599..72bc5ab 100644
+index 7244599e..72bc5ab0 100644
 --- a/runtime/src/channels/web/http/route-flags.ts
 +++ b/runtime/src/channels/web/http/route-flags.ts
 @@ -42,6 +42,8 @@ export type RouteFlags = {
@@ -242,7 +242,7 @@ index 7244599..72bc5ab 100644
      flags.isAvatar
    );
 diff --git a/runtime/src/channels/web/http/static.ts b/runtime/src/channels/web/http/static.ts
-index 4aa8e58..8fbf1c2 100644
+index 4aa8e589..8fbf1c25 100644
 --- a/runtime/src/channels/web/http/static.ts
 +++ b/runtime/src/channels/web/http/static.ts
 @@ -99,9 +99,11 @@ export async function serveStatic(relPath: string, notFound: () => Response): Pr
@@ -282,7 +282,7 @@ index 4aa8e58..8fbf1c2 100644
  }
  
 diff --git a/runtime/src/channels/web/messaging/agent-message-store.ts b/runtime/src/channels/web/messaging/agent-message-store.ts
-index 5df9d44..88cc1ef 100644
+index 5df9d44a..88cc1ef2 100644
 --- a/runtime/src/channels/web/messaging/agent-message-store.ts
 +++ b/runtime/src/channels/web/messaging/agent-message-store.ts
 @@ -12,6 +12,10 @@ import type { WebChannelLike } from "../core/web-channel-contracts.js";
@@ -344,9 +344,9 @@ index 5df9d44..88cc1ef 100644
      return true;
    }
    return false;
-diff --git a/target30/runtime/src/channels/web/push/web-notification-presence-service.ts b/runtime/src/channels/web/push/web-notification-presence-service.ts
+diff --git a/runtime/src/channels/web/push/web-notification-presence-service.ts b/runtime/src/channels/web/push/web-notification-presence-service.ts
 new file mode 100644
-index 0000000..bde649d
+index 00000000..bde649db
 --- /dev/null
 +++ b/runtime/src/channels/web/push/web-notification-presence-service.ts
 @@ -0,0 +1,137 @@
@@ -487,9 +487,9 @@ index 0000000..bde649d
 +}
 +
 +export const webNotificationPresenceService = new WebNotificationPresenceService();
-diff --git a/target30/runtime/src/channels/web/push/web-push-routes.ts b/runtime/src/channels/web/push/web-push-routes.ts
+diff --git a/runtime/src/channels/web/push/web-push-routes.ts b/runtime/src/channels/web/push/web-push-routes.ts
 new file mode 100644
-index 0000000..16885b5
+index 00000000..16885b5d
 --- /dev/null
 +++ b/runtime/src/channels/web/push/web-push-routes.ts
 @@ -0,0 +1,117 @@
@@ -610,9 +610,9 @@ index 0000000..16885b5
 +    return Response.json({ error: error instanceof Error ? error.message : "Failed to send test push notification." }, { status: 500 });
 +  }
 +}
-diff --git a/target30/runtime/src/channels/web/push/web-push-service.ts b/runtime/src/channels/web/push/web-push-service.ts
+diff --git a/runtime/src/channels/web/push/web-push-service.ts b/runtime/src/channels/web/push/web-push-service.ts
 new file mode 100644
-index 0000000..ab619ed
+index 00000000..ab619edb
 --- /dev/null
 +++ b/runtime/src/channels/web/push/web-push-service.ts
 @@ -0,0 +1,314 @@
@@ -930,9 +930,9 @@ index 0000000..ab619ed
 +    sourceLabel: options.sourceLabel || "Web Push",
 +  }, options);
 +}
-diff --git a/target30/runtime/src/channels/web/push/web-push-store.ts b/runtime/src/channels/web/push/web-push-store.ts
+diff --git a/runtime/src/channels/web/push/web-push-store.ts b/runtime/src/channels/web/push/web-push-store.ts
 new file mode 100644
-index 0000000..82853db
+index 00000000..82853db1
 --- /dev/null
 +++ b/runtime/src/channels/web/push/web-push-store.ts
 @@ -0,0 +1,208 @@
@@ -1144,9 +1144,9 @@ index 0000000..82853db
 +  writeStoredWebPushSubscriptions(nextEntries, baseDir);
 +  return true;
 +}
-diff --git a/target30/runtime/src/types/web-push.d.ts b/runtime/src/types/web-push.d.ts
+diff --git a/runtime/src/types/web-push.d.ts b/runtime/src/types/web-push.d.ts
 new file mode 100644
-index 0000000..60182f0
+index 00000000..60182f01
 --- /dev/null
 +++ b/runtime/src/types/web-push.d.ts
 @@ -0,0 +1,41 @@
@@ -1191,9 +1191,9 @@ index 0000000..60182f0
 +
 +  export default api;
 +}
-diff --git a/target30/runtime/test/channels/web/agent-message-store.test.ts b/runtime/test/channels/web/agent-message-store.test.ts
+diff --git a/runtime/test/channels/web/agent-message-store.test.ts b/runtime/test/channels/web/agent-message-store.test.ts
 new file mode 100644
-index 0000000..eacbc82
+index 00000000..eacbc82f
 --- /dev/null
 +++ b/runtime/test/channels/web/agent-message-store.test.ts
 @@ -0,0 +1,79 @@
@@ -1277,7 +1277,7 @@ index 0000000..eacbc82
 +  });
 +});
 diff --git a/runtime/test/channels/web/helpers/route-flags.ts b/runtime/test/channels/web/helpers/route-flags.ts
-index 8aaf63e..d6f6066 100644
+index 8aaf63ea..d6f6066f 100644
 --- a/runtime/test/channels/web/helpers/route-flags.ts
 +++ b/runtime/test/channels/web/helpers/route-flags.ts
 @@ -21,6 +21,7 @@ export function buildRouteFlags(overrides: Partial<RouteFlags> = {}): RouteFlags
@@ -1289,7 +1289,7 @@ index 8aaf63e..d6f6066 100644
      isPublicStatic: false,
      isDocsAsset: false,
 diff --git a/runtime/test/channels/web/http-dispatch-agent.test.ts b/runtime/test/channels/web/http-dispatch-agent.test.ts
-index e3d02f9..713888e 100644
+index e3d02f9f..713888e7 100644
 --- a/runtime/test/channels/web/http-dispatch-agent.test.ts
 +++ b/runtime/test/channels/web/http-dispatch-agent.test.ts
 @@ -134,6 +134,19 @@ describe("web http agent dispatch", () => {
@@ -1313,7 +1313,7 @@ index e3d02f9..713888e 100644
      expect((await handleAgentRoutes(channel, whitelistReq, "/agent/whitelist", new URL(whitelistReq.url)))?.status).toBe(404);
    });
 diff --git a/runtime/test/channels/web/http-dispatch-shell.test.ts b/runtime/test/channels/web/http-dispatch-shell.test.ts
-index 892692d..2711491 100644
+index 892692d8..27114913 100644
 --- a/runtime/test/channels/web/http-dispatch-shell.test.ts
 +++ b/runtime/test/channels/web/http-dispatch-shell.test.ts
 @@ -10,7 +10,7 @@ describe("web http shell dispatch", () => {
@@ -1335,9 +1335,9 @@ index 892692d..2711491 100644
      expect(await (await handleShellRoutes(channel, new Request("https://e/ghostty-vt.wasm", { method: "GET" }), "/ghostty-vt.wasm", buildRouteFlags(), async () => new Response()))?.text()).toBe("static:js/vendor/ghostty-vt.wasm");
  
      const staticFlags = buildRouteFlags({ isStaticAsset: true });
-diff --git a/target30/runtime/test/channels/web/route-flags.test.ts b/runtime/test/channels/web/route-flags.test.ts
+diff --git a/runtime/test/channels/web/route-flags.test.ts b/runtime/test/channels/web/route-flags.test.ts
 new file mode 100644
-index 0000000..5714233
+index 00000000..57142338
 --- /dev/null
 +++ b/runtime/test/channels/web/route-flags.test.ts
 @@ -0,0 +1,13 @@
@@ -1354,9 +1354,9 @@ index 0000000..5714233
 +    expect(shouldSkipAuthCheck(flags, false)).toBe(true);
 +  });
 +});
-diff --git a/target30/runtime/test/channels/web/web-notification-presence-service.test.ts b/runtime/test/channels/web/web-notification-presence-service.test.ts
+diff --git a/runtime/test/channels/web/web-notification-presence-service.test.ts b/runtime/test/channels/web/web-notification-presence-service.test.ts
 new file mode 100644
-index 0000000..90842e0
+index 00000000..90842e0e
 --- /dev/null
 +++ b/runtime/test/channels/web/web-notification-presence-service.test.ts
 @@ -0,0 +1,91 @@
@@ -1451,9 +1451,9 @@ index 0000000..90842e0
 +    });
 +  });
 +});
-diff --git a/target30/runtime/test/channels/web/web-push-routes.test.ts b/runtime/test/channels/web/web-push-routes.test.ts
+diff --git a/runtime/test/channels/web/web-push-routes.test.ts b/runtime/test/channels/web/web-push-routes.test.ts
 new file mode 100644
-index 0000000..798f2d9
+index 00000000..798f2d9b
 --- /dev/null
 +++ b/runtime/test/channels/web/web-push-routes.test.ts
 @@ -0,0 +1,127 @@
@@ -1584,9 +1584,9 @@ index 0000000..798f2d9
 +    expect(((deliveries[0]?.options as any)?.urgency)).toBe("high");
 +  });
 +});
-diff --git a/target30/runtime/test/channels/web/web-push-service.test.ts b/runtime/test/channels/web/web-push-service.test.ts
+diff --git a/runtime/test/channels/web/web-push-service.test.ts b/runtime/test/channels/web/web-push-service.test.ts
 new file mode 100644
-index 0000000..98e3e8d
+index 00000000..98e3e8d2
 --- /dev/null
 +++ b/runtime/test/channels/web/web-push-service.test.ts
 @@ -0,0 +1,263 @@
@@ -1853,9 +1853,9 @@ index 0000000..98e3e8d
 +    }]);
 +  });
 +});
-diff --git a/target30/runtime/test/channels/web/web-push-store.test.ts b/runtime/test/channels/web/web-push-store.test.ts
+diff --git a/runtime/test/channels/web/web-push-store.test.ts b/runtime/test/channels/web/web-push-store.test.ts
 new file mode 100644
-index 0000000..b8b2c15
+index 00000000..b8b2c154
 --- /dev/null
 +++ b/runtime/test/channels/web/web-push-store.test.ts
 @@ -0,0 +1,121 @@
@@ -1980,9 +1980,9 @@ index 0000000..b8b2c15
 +    ]);
 +  });
 +});
-diff --git a/target30/runtime/test/web/notification-delivery-coordinator.test.ts b/runtime/test/web/notification-delivery-coordinator.test.ts
+diff --git a/runtime/test/web/notification-delivery-coordinator.test.ts b/runtime/test/web/notification-delivery-coordinator.test.ts
 new file mode 100644
-index 0000000..a4993ad
+index 00000000..a4993ad6
 --- /dev/null
 +++ b/runtime/test/web/notification-delivery-coordinator.test.ts
 @@ -0,0 +1,144 @@
@@ -2130,9 +2130,9 @@ index 0000000..a4993ad
 +    })).toHaveLength(0);
 +  });
 +});
-diff --git a/target30/runtime/test/web/use-notifications.test.ts b/runtime/test/web/use-notifications.test.ts
+diff --git a/runtime/test/web/use-notifications.test.ts b/runtime/test/web/use-notifications.test.ts
 new file mode 100644
-index 0000000..19aa88e
+index 00000000..19aa88ee
 --- /dev/null
 +++ b/runtime/test/web/use-notifications.test.ts
 @@ -0,0 +1,17 @@
@@ -2154,20 +2154,10 @@ index 0000000..19aa88e
 +  expect(formatNotificationTitle('', '')).toBe('PiClaw');
 +});
 diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
-index 6588804..c8b8389 100644
+index eacdc2c6..c8b83899 100644
 --- a/runtime/web/src/api.ts
 +++ b/runtime/web/src/api.ts
-@@ -172,6 +172,9 @@ export async function getChatBranches(rootChatJid = null, options = {}) {
-     const params = new URLSearchParams();
-     if (rootChatJid) params.set('root_chat_jid', String(rootChatJid));
-     if (options?.includeArchived) params.set('include_archived', '1');
-+    if (options?.prewarmRecent) params.set('prewarm_recent', '1');
-+    if (Number.isFinite(options?.prewarmLimit)) params.set('prewarm_limit', String(options.prewarmLimit));
-+    if (options?.excludeChatJid) params.set('exclude_chat_jid', String(options.excludeChatJid));
-     if (options?.prewarmChatJid) params.set('prewarm_chat_jid', String(options.prewarmChatJid));
-     const query = params.toString() ? `?${params.toString()}` : '';
-     return request(`/agent/branches${query}`);
-@@ -245,6 +248,39 @@ export async function sendPeerAgentMessage(sourceChatJid, targetChatOrName, cont
+@@ -248,6 +248,39 @@ export async function sendPeerAgentMessage(sourceChatJid, targetChatOrName, cont
      });
  }
  
@@ -2208,7 +2198,7 @@ index 6588804..c8b8389 100644
   * Get available agents / current agent roster.
   */
 diff --git a/runtime/web/src/app.ts b/runtime/web/src/app.ts
-index 0348aa4..9aab2b1 100644
+index 0348aa41..9aab2b15 100644
 --- a/runtime/web/src/app.ts
 +++ b/runtime/web/src/app.ts
 @@ -260,6 +260,7 @@ function MainApp({ locationParams, navigate }) {
@@ -2220,7 +2210,7 @@ index 0348aa4..9aab2b1 100644
          recovery: {
              isAgentRunningRef,
 diff --git a/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts b/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts
-index f8ac6cf..47105a1 100644
+index f8ac6cfc..47105a16 100644
 --- a/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts
 +++ b/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts
 @@ -72,6 +72,7 @@ interface UseChatPaneRuntimeOrchestrationOptions {
@@ -2268,7 +2258,7 @@ index f8ac6cf..47105a1 100644
    return {
      clearQueuedSteerStateIfStale,
 diff --git a/runtime/web/src/ui/app-main-surface-state.ts b/runtime/web/src/ui/app-main-surface-state.ts
-index 997f57d..8134a09 100644
+index 997f57d8..8134a092 100644
 --- a/runtime/web/src/ui/app-main-surface-state.ts
 +++ b/runtime/web/src/ui/app-main-surface-state.ts
 @@ -91,7 +91,8 @@ export function useMainAppSurfaceState(options: {
@@ -2290,7 +2280,7 @@ index 997f57d..8134a09 100644
      setRemovingPostIds,
      workspaceOpen,
 diff --git a/runtime/web/src/ui/app-shell-bootstrap.ts b/runtime/web/src/ui/app-shell-bootstrap.ts
-index 6dc4e0f..df44296 100644
+index 6dc4e0f6..df44296a 100644
 --- a/runtime/web/src/ui/app-shell-bootstrap.ts
 +++ b/runtime/web/src/ui/app-shell-bootstrap.ts
 @@ -26,6 +26,7 @@ interface AppApiSurface {
@@ -2326,9 +2316,9 @@ index 6dc4e0f..df44296 100644
    initialized = true;
  }
  
-diff --git a/target30/runtime/web/src/ui/notification-delivery-coordinator.ts b/runtime/web/src/ui/notification-delivery-coordinator.ts
+diff --git a/runtime/web/src/ui/notification-delivery-coordinator.ts b/runtime/web/src/ui/notification-delivery-coordinator.ts
 new file mode 100644
-index 0000000..3d82c64
+index 00000000..3d82c645
 --- /dev/null
 +++ b/runtime/web/src/ui/notification-delivery-coordinator.ts
 @@ -0,0 +1,187 @@
@@ -2520,7 +2510,7 @@ index 0000000..3d82c64
 +  return Boolean(leader && leader.clientId === snapshot.clientId);
 +}
 diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
-index 5ccaf9b..84fa3c6 100644
+index 5ccaf9b6..84fa3c64 100644
 --- a/runtime/web/src/ui/use-notifications.ts
 +++ b/runtime/web/src/ui/use-notifications.ts
 @@ -1,18 +1,139 @@
@@ -2801,7 +2791,7 @@ index 5ccaf9b..84fa3c6 100644
    };
  }
 diff --git a/runtime/web/static/manifest.json b/runtime/web/static/manifest.json
-index 6c25751..d5e8a1c 100644
+index 6c25751a..d5e8a1c6 100644
 --- a/runtime/web/static/manifest.json
 +++ b/runtime/web/static/manifest.json
 @@ -1,4 +1,5 @@
@@ -2810,9 +2800,9 @@ index 6c25751..d5e8a1c 100644
    "name": "PiClaw",
    "short_name": "PiClaw",
    "description": "Slack-like interface for coding agents",
-diff --git a/target30/runtime/web/static/sw.js b/runtime/web/static/sw.js
+diff --git a/runtime/web/static/sw.js b/runtime/web/static/sw.js
 new file mode 100644
-index 0000000..5b96ffe
+index 00000000..5b96ffee
 --- /dev/null
 +++ b/runtime/web/static/sw.js
 @@ -0,0 +1,77 @@
