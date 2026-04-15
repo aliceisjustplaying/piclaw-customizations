@@ -866,21 +866,22 @@ index 674ee8fd..e8c31d45 100644
  
  test('invokePaneBeforeDetachFromHost calls the pane detach lifecycle hook when present', async () => {
 diff --git a/runtime/test/web/app-chat-refresh-lifecycle.test.ts b/runtime/test/web/app-chat-refresh-lifecycle.test.ts
-index dc80866e..ef585efc 100644
+index dc80866e..3d09707b 100644
 --- a/runtime/test/web/app-chat-refresh-lifecycle.test.ts
 +++ b/runtime/test/web/app-chat-refresh-lifecycle.test.ts
-@@ -1,6 +1,9 @@
+@@ -1,6 +1,10 @@
  import { expect, test } from 'bun:test';
  
 -import { startModelAndQueueRefreshEffect } from '../../web/src/ui/app-chat-refresh-lifecycle.js';
 +import {
++  prewarmRecentTimelineChats,
 +  refreshPostPaintThreadHydration,
 +  startModelAndQueueRefreshEffect,
 +} from '../../web/src/ui/app-chat-refresh-lifecycle.js';
  
  test('startModelAndQueueRefreshEffect runs hydrate immediately and schedules periodic refresh bundle', () => {
    const calls: string[] = [];
-@@ -30,3 +33,51 @@ test('startModelAndQueueRefreshEffect runs hydrate immediately and schedules per
+@@ -30,3 +34,74 @@ test('startModelAndQueueRefreshEffect runs hydrate immediately and schedules per
    cleanup();
    expect(clearedHandle).toEqual({ token: 'poll' });
  });
@@ -931,6 +932,29 @@ index dc80866e..ef585efc 100644
 +    'context',
 +    'autoresearch',
 +  ]);
++});
++
++test('prewarmRecentTimelineChats prewarms distinct nearby chats and skips the current chat', async () => {
++  const calls: string[] = [];
++
++  prewarmRecentTimelineChats({
++    chats: [
++      { chat_jid: 'web:current' },
++      { chat_jid: 'web:branch:1' },
++      { chat_jid: 'web:branch:1' },
++      { chat_jid: 'web:branch:2' },
++    ],
++    currentChatJid: 'web:current',
++    prewarmLimit: 2,
++    fetchTimeline: async (chatJid) => {
++      calls.push(chatJid);
++      return { posts: [], has_more: false };
++    },
++  });
++
++  await Promise.resolve();
++  await Promise.resolve();
++  expect(calls).toEqual(['web:branch:1', 'web:branch:2']);
 +});
 diff --git a/runtime/test/web/app-connection-lifecycle.test.ts b/runtime/test/web/app-connection-lifecycle.test.ts
 index 883b6313..84206cf9 100644
@@ -1339,6 +1363,90 @@ index 7b03c604..90670b97 100644
  test('handleAppSseEvent refreshes compaction status metadata even when title stays the same', () => {
    const state = createDeps();
  
+diff --git a/runtime/test/web/app-timeline-cache.test.ts b/runtime/test/web/app-timeline-cache.test.ts
+new file mode 100644
+index 00000000..ff097310
+--- /dev/null
++++ b/runtime/test/web/app-timeline-cache.test.ts
+@@ -0,0 +1,78 @@
++import { expect, mock, test } from 'bun:test';
++
++import {
++  cacheTimelineSnapshot,
++  clearTimelineSnapshotCache,
++  getCachedTimelineSnapshot,
++  prewarmTimelineSnapshots,
++  resolveRecentTimelinePrewarmChatJids,
++} from '../../web/src/ui/app-timeline-cache.js';
++
++function createStorage() {
++  const backing = new Map<string, string>();
++  return {
++    getItem: (key: string) => backing.get(key) ?? null,
++    setItem: (key: string, value: string) => {
++      backing.set(key, value);
++    },
++    removeItem: (key: string) => {
++      backing.delete(key);
++    },
++  };
++}
++
++test('timeline cache stores and reloads snapshots from memory/persistent storage', () => {
++  const storage = createStorage();
++  clearTimelineSnapshotCache(storage);
++
++  cacheTimelineSnapshot('web:branch:a', {
++    posts: [{ id: 1 }],
++    has_more: true,
++  }, storage);
++
++  const snapshot = getCachedTimelineSnapshot('web:branch:a', { storage });
++  expect(snapshot?.posts).toEqual([{ id: 1 }]);
++  expect(snapshot?.has_more).toBe(true);
++
++  clearTimelineSnapshotCache();
++  const reloaded = getCachedTimelineSnapshot('web:branch:a', { storage });
++  expect(reloaded?.posts).toEqual([{ id: 1 }]);
++  expect(reloaded?.has_more).toBe(true);
++
++  clearTimelineSnapshotCache(storage);
++});
++
++test('resolveRecentTimelinePrewarmChatJids excludes the active chat and dedupes rows', () => {
++  const chatJids = resolveRecentTimelinePrewarmChatJids([
++    { chat_jid: 'web:current' },
++    { chat_jid: 'web:branch:1' },
++    { chat_jid: 'web:branch:1' },
++    { chat_jid: 'web:branch:2' },
++    { chat_jid: '   ' },
++  ], 'web:current', 2);
++
++  expect(chatJids).toEqual(['web:branch:1', 'web:branch:2']);
++});
++
++test('prewarmTimelineSnapshots fills missing chats and skips already fresh entries', async () => {
++  const storage = createStorage();
++  clearTimelineSnapshotCache(storage);
++  cacheTimelineSnapshot('web:cached', { posts: [{ id: 1 }], has_more: false }, storage);
++
++  const fetchTimeline = mock(async (chatJid: string) => ({
++    posts: [{ id: `${chatJid}-post` }],
++    has_more: false,
++  }));
++
++  await prewarmTimelineSnapshots({
++    chatJids: ['web:cached', 'web:warm', 'web:warm'],
++    fetchTimeline,
++    storage,
++  });
++
++  expect(fetchTimeline).toHaveBeenCalledTimes(1);
++  expect(fetchTimeline).toHaveBeenCalledWith('web:warm');
++  expect(getCachedTimelineSnapshot('web:warm', { storage })?.posts).toEqual([{ id: 'web:warm-post' }]);
++
++  clearTimelineSnapshotCache(storage);
++});
 diff --git a/runtime/test/web/app-view-refresh-lifecycle.test.ts b/runtime/test/web/app-view-refresh-lifecycle.test.ts
 index 95b132a9..678a4d7f 100644
 --- a/runtime/test/web/app-view-refresh-lifecycle.test.ts
@@ -1464,6 +1572,19 @@ index c8b83899..2d773e42 100644
      });
      
      if (!response.ok) {
+diff --git a/runtime/web/src/app.ts b/runtime/web/src/app.ts
+index 9aab2b15..ee137a74 100644
+--- a/runtime/web/src/app.ts
++++ b/runtime/web/src/app.ts
+@@ -153,6 +153,8 @@ function MainApp({ locationParams, navigate }) {
+         viewStateRef: surface.viewStateRef,
+         followupQueueRowIdsRef: surface.followupQueueRowIdsRef,
+         currentChatJid,
++        currentHashtag: surface.currentHashtag,
++        searchQuery: surface.searchQuery,
+         followupQueueItems: surface.followupQueueItems,
+     });
+ 
 diff --git a/runtime/web/src/ui/app-agent-status-lifecycle.ts b/runtime/web/src/ui/app-agent-status-lifecycle.ts
 index c23f898a..2178e471 100644
 --- a/runtime/web/src/ui/app-agent-status-lifecycle.ts
@@ -1609,7 +1730,7 @@ index c23f898a..2178e471 100644
        setConnectionStatus,
        setAgentStatus,
 diff --git a/runtime/web/src/ui/app-auth-bootstrap.ts b/runtime/web/src/ui/app-auth-bootstrap.ts
-index 7c8260b6..e549aad1 100644
+index 7c8260b6..815d145d 100644
 --- a/runtime/web/src/ui/app-auth-bootstrap.ts
 +++ b/runtime/web/src/ui/app-auth-bootstrap.ts
 @@ -130,7 +130,7 @@ export interface RefreshModelStateOptions {
@@ -1650,11 +1771,11 @@ index 7c8260b6..e549aad1 100644
  }
  
 -export function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions): void {
-+export async function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions): Promise<void> {
++export async function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions): Promise<any[]> {
    const {
      currentChatJid,
      getActiveChatAgents,
-@@ -173,29 +172,29 @@ export function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions)
+@@ -173,29 +172,32 @@ export function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions)
  
    const targetChatJid = currentChatJid;
  
@@ -1695,19 +1816,22 @@ index 7c8260b6..e549aad1 100644
 +      }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
 +    ]);
 +
-+    if (activeChatJidRef.current !== targetChatJid) return;
++    if (activeChatJidRef.current !== targetChatJid) return [];
 +
 +    const activeChats = normalizeActiveChatRows(activePayload?.chats);
 +    const branchChats = normalizeActiveChatRows(branchPayload?.chats);
-+    setActiveChatAgents(mergeActiveAndBranchChats(activeChats, branchChats, targetChatJid));
++    const mergedChats = mergeActiveAndBranchChats(activeChats, branchChats, targetChatJid);
++    setActiveChatAgents(mergedChats);
++    return mergedChats;
 +  } catch {
-+    if (activeChatJidRef.current !== targetChatJid) return;
++    if (activeChatJidRef.current !== targetChatJid) return [];
 +    setActiveChatAgents([]);
++    return [];
 +  }
  }
  
  export interface RefreshCurrentChatBranchesOptions {
-@@ -204,20 +203,19 @@ export interface RefreshCurrentChatBranchesOptions {
+@@ -204,20 +206,19 @@ export interface RefreshCurrentChatBranchesOptions {
    setCurrentChatBranches: StateSetter<any[]>;
  }
  
@@ -1859,13 +1983,15 @@ index df0051fd..56e7bfb7 100644
  }
  
 diff --git a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
-index ac9fffd4..45f6e7b5 100644
+index ac9fffd4..4f9eab74 100644
 --- a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
 +++ b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
-@@ -10,6 +10,15 @@ import {
+@@ -10,6 +10,17 @@ import {
  } from './app-auth-bootstrap.js';
  import { refreshModelAndQueueState as refreshModelAndQueueStateBundle } from './app-status-refresh-orchestration.js';
  import { applyStoredSidebarWidth } from './app-boot-load-orchestration.js';
++import { prewarmTimelineSnapshots, resolveRecentTimelinePrewarmChatJids } from './app-timeline-cache.js';
++import { getTimeline } from '../api.js';
 +import {
 +  completeAppPerfTraceIfReady,
 +  getActiveAppPerfTraceId,
@@ -1878,7 +2004,7 @@ index ac9fffd4..45f6e7b5 100644
  
  type StateSetter<T> = (next: T | ((prev: T) => T)) => void;
  
-@@ -45,12 +54,43 @@ interface UseChatRefreshLifecycleOptions {
+@@ -45,12 +56,57 @@ interface UseChatRefreshLifecycleOptions {
    refreshAutoresearchStatus: () => Promise<void>;
  }
  
@@ -1912,6 +2038,20 @@ index ac9fffd4..45f6e7b5 100644
 +  void refreshAutoresearchStatus();
 +}
 +
++export function prewarmRecentTimelineChats(options: {
++  chats: unknown;
++  currentChatJid: string;
++  prewarmLimit?: number;
++  fetchTimeline?: (chatJid: string) => Promise<{ posts?: any[]; has_more?: boolean }>;
++}): void {
++  const chatJids = resolveRecentTimelinePrewarmChatJids(options.chats, options.currentChatJid, options.prewarmLimit ?? 5);
++  if (chatJids.length === 0) return;
++  void prewarmTimelineSnapshots({
++    chatJids,
++    fetchTimeline: options.fetchTimeline ?? ((chatJid) => getTimeline(10, null, chatJid)),
++  });
++}
++
  export function startModelAndQueueRefreshEffect(options: {
    refreshModelAndQueueState: () => void;
    refreshModelState: () => void;
@@ -1922,7 +2062,7 @@ index ac9fffd4..45f6e7b5 100644
    intervalMs?: number;
    scheduleInterval?: (handler: () => void, intervalMs: number) => unknown;
    clearScheduledInterval?: (handle: unknown) => void;
-@@ -61,12 +101,15 @@ export function startModelAndQueueRefreshEffect(options: {
+@@ -61,12 +117,15 @@ export function startModelAndQueueRefreshEffect(options: {
      refreshActiveChatAgents,
      refreshCurrentChatBranches,
      refreshQueueState,
@@ -1939,7 +2079,7 @@ index ac9fffd4..45f6e7b5 100644
    const intervalHandle = scheduleInterval(() => {
      refreshModelState();
      refreshActiveChatAgents();
-@@ -118,22 +161,8 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -118,22 +177,8 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
    }, [applyBranding, getAgents, setAgents, setUserProfile]);
  
    useEffect(() => {
@@ -1964,7 +2104,7 @@ index ac9fffd4..45f6e7b5 100644
  
    const updateAgentProfile = useCallback((payload: any) => {
      updateAgentProfileFromEvent({
-@@ -163,32 +192,145 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -163,32 +208,152 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
      });
    }, [setActiveModel, setActiveModelUsage, setActiveThinkingLevel, setAgentModelsPayload, setHasLoadedAgentModels, setSupportsThinking]);
  
@@ -2039,7 +2179,7 @@ index ac9fffd4..45f6e7b5 100644
 +      chatJid: currentChatJid,
 +      run: async () => {
 +        const traceId = getThreadSwitchTraceId();
-+        await refreshActiveChatAgentsState({
++        const mergedChats = await refreshActiveChatAgentsState({
 +          currentChatJid,
 +          getActiveChatAgents: async () => {
 +            if (traceId) {
@@ -2078,6 +2218,13 @@ index ac9fffd4..45f6e7b5 100644
 +            prewarmLimit,
 +          } : {}),
 +        });
++        if (prewarmRecent) {
++          prewarmRecentTimelineChats({
++            chats: mergedChats,
++            currentChatJid,
++            prewarmLimit,
++          });
++        }
 +        return null;
 +      },
      });
@@ -2115,8 +2262,7 @@ index ac9fffd4..45f6e7b5 100644
 +        });
 +        return null;
 +      },
-     });
--  }, [currentRootChatJid, getChatBranches, setCurrentChatBranches]);
++    });
 +  }, [currentChatJid, currentRootChatJid, getChatBranches, getThreadSwitchTraceId, setCurrentChatBranches]);
 +
 +  useEffect(() => {
@@ -2125,12 +2271,13 @@ index ac9fffd4..45f6e7b5 100644
 +      readStoredNumber,
 +      sidebarWidthRef,
 +      shellElement: appShellRef.current,
-+    });
+     });
+-  }, [currentRootChatJid, getChatBranches, setCurrentChatBranches]);
 +  }, [appShellRef, loadAgents, readStoredNumber, sidebarWidthRef]);
  
    const refreshModelAndQueueState = useCallback(() => {
      refreshModelAndQueueStateBundle({
-@@ -201,12 +343,25 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -201,12 +366,25 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
      });
    }, [refreshActiveChatAgents, refreshAutoresearchStatus, refreshContextUsage, refreshCurrentChatBranches, refreshModelState, refreshQueueState]);
  
@@ -2156,7 +2303,7 @@ index ac9fffd4..45f6e7b5 100644
    }), [refreshActiveChatAgents, refreshCurrentChatBranches, refreshModelAndQueueState, refreshModelState, refreshQueueState]);
  
    return {
-@@ -217,5 +372,6 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -217,5 +395,6 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
      refreshActiveChatAgents,
      refreshCurrentChatBranches,
      refreshModelAndQueueState,
@@ -2267,6 +2414,43 @@ index 8134a092..84f9831b 100644
    const activeSearchScopeLabel = describeSearchScope(searchScope);
    const [branchLoaderState, setBranchLoaderState] = useState(() => createBranchLoaderState(branchLoaderMode));
    const followupQueueCount = followupQueueItems.length;
+diff --git a/runtime/web/src/ui/app-main-timeline-composition.ts b/runtime/web/src/ui/app-main-timeline-composition.ts
+index e16dc681..0c19c471 100644
+--- a/runtime/web/src/ui/app-main-timeline-composition.ts
++++ b/runtime/web/src/ui/app-main-timeline-composition.ts
+@@ -29,6 +29,8 @@ export function useMainAppTimelineComposition(options: {
+   viewStateRef: RefBox<any>;
+   followupQueueRowIdsRef: RefBox<Set<string | number>>;
+   currentChatJid: string;
++  currentHashtag: string | null;
++  searchQuery: string | null;
+   followupQueueItems: any[];
+ }) {
+   const {
+@@ -36,6 +38,8 @@ export function useMainAppTimelineComposition(options: {
+     viewStateRef,
+     followupQueueRowIdsRef,
+     currentChatJid,
++    currentHashtag,
++    searchQuery,
+     followupQueueItems,
+   } = options;
+ 
+@@ -65,7 +69,13 @@ export function useMainAppTimelineComposition(options: {
+     refreshTimeline,
+     loadMore,
+     loadMoreRef,
+-  } = useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop, chatJid: currentChatJid });
++  } = useTimeline({
++    preserveTimelineScroll,
++    preserveTimelineScrollTop,
++    chatJid: currentChatJid,
++    currentHashtag,
++    searchQuery,
++  });
+ 
+   const posts = useMemo(() => deriveVisibleTimelinePosts({
+     rawPosts,
 diff --git a/runtime/web/src/ui/app-perf-tracing.ts b/runtime/web/src/ui/app-perf-tracing.ts
 new file mode 100644
 index 00000000..efba3e71
@@ -2780,6 +2964,198 @@ index d508aee2..49b4aceb 100644
  }
  
  export interface RefreshContextUsageForChatOptions {
+diff --git a/runtime/web/src/ui/app-timeline-cache.ts b/runtime/web/src/ui/app-timeline-cache.ts
+new file mode 100644
+index 00000000..995960b2
+--- /dev/null
++++ b/runtime/web/src/ui/app-timeline-cache.ts
+@@ -0,0 +1,186 @@
++type TimelinePayload = {
++  posts?: any[];
++  has_more?: boolean;
++};
++
++type TimelineSnapshot = {
++  posts: any[];
++  has_more: boolean;
++  cachedAt: number;
++};
++
++type StorageLike = {
++  getItem: (key: string) => string | null;
++  setItem: (key: string, value: string) => void;
++  removeItem?: (key: string) => void;
++};
++
++const TIMELINE_CACHE_KEY = 'piclaw.timeline-cache.v1';
++const TIMELINE_CACHE_LIMIT = 24;
++const TIMELINE_CACHE_TTL_MS = 10 * 60 * 1000;
++const timelineCache = new Map<string, TimelineSnapshot>();
++const prewarmInFlight = new Map<string, Promise<void>>();
++
++function nowMs(): number {
++  return Date.now();
++}
++
++function getRuntimeStorage(storage: StorageLike | null | undefined = typeof sessionStorage !== 'undefined' ? sessionStorage : null): StorageLike | null {
++  return storage || null;
++}
++
++function normalizeChatJid(chatJid: string | null | undefined): string {
++  return String(chatJid || '').trim();
++}
++
++function isFresh(snapshot: TimelineSnapshot | null | undefined, maxAgeMs = TIMELINE_CACHE_TTL_MS): snapshot is TimelineSnapshot {
++  return Boolean(snapshot && (nowMs() - snapshot.cachedAt) <= maxAgeMs);
++}
++
++function pruneCacheMap(cache: Map<string, TimelineSnapshot>): void {
++  while (cache.size > TIMELINE_CACHE_LIMIT) {
++    const oldestKey = cache.keys().next().value;
++    if (!oldestKey) break;
++    cache.delete(oldestKey);
++  }
++}
++
++function touchCacheEntry(chatJid: string, snapshot: TimelineSnapshot): TimelineSnapshot {
++  timelineCache.delete(chatJid);
++  timelineCache.set(chatJid, snapshot);
++  pruneCacheMap(timelineCache);
++  return snapshot;
++}
++
++function readPersistentCache(storage: StorageLike | null): Map<string, TimelineSnapshot> {
++  const next = new Map<string, TimelineSnapshot>();
++  if (!storage) return next;
++  try {
++    const raw = storage.getItem(TIMELINE_CACHE_KEY);
++    if (!raw) return next;
++    const parsed = JSON.parse(raw);
++    if (!Array.isArray(parsed)) return next;
++    for (const entry of parsed) {
++      const chatJid = normalizeChatJid(entry?.chatJid);
++      if (!chatJid) continue;
++      const posts = Array.isArray(entry?.snapshot?.posts) ? entry.snapshot.posts : [];
++      const hasMore = Boolean(entry?.snapshot?.has_more);
++      const cachedAt = Number(entry?.snapshot?.cachedAt || 0);
++      if (!Number.isFinite(cachedAt) || cachedAt <= 0) continue;
++      next.set(chatJid, { posts, has_more: hasMore, cachedAt });
++    }
++  } catch {
++    return new Map();
++  }
++  return next;
++}
++
++function writePersistentCache(storage: StorageLike | null): void {
++  if (!storage) return;
++  try {
++    const rows = Array.from(timelineCache.entries()).map(([chatJid, snapshot]) => ({ chatJid, snapshot }));
++    storage.setItem(TIMELINE_CACHE_KEY, JSON.stringify(rows));
++  } catch {
++    // Ignore storage quota/privacy failures.
++  }
++}
++
++export function cacheTimelineSnapshot(
++  chatJid: string | null | undefined,
++  payload: TimelinePayload,
++  storage?: StorageLike | null,
++): TimelineSnapshot | null {
++  const normalizedChatJid = normalizeChatJid(chatJid);
++  if (!normalizedChatJid) return null;
++  const snapshot: TimelineSnapshot = {
++    posts: Array.isArray(payload?.posts) ? payload.posts : [],
++    has_more: Boolean(payload?.has_more),
++    cachedAt: nowMs(),
++  };
++  touchCacheEntry(normalizedChatJid, snapshot);
++  writePersistentCache(getRuntimeStorage(storage));
++  return snapshot;
++}
++
++export function getCachedTimelineSnapshot(
++  chatJid: string | null | undefined,
++  options: { maxAgeMs?: number; storage?: StorageLike | null } = {},
++): TimelineSnapshot | null {
++  const normalizedChatJid = normalizeChatJid(chatJid);
++  if (!normalizedChatJid) return null;
++  const maxAgeMs = Number.isFinite(options.maxAgeMs) ? Number(options.maxAgeMs) : TIMELINE_CACHE_TTL_MS;
++
++  const memorySnapshot = timelineCache.get(normalizedChatJid) || null;
++  if (isFresh(memorySnapshot, maxAgeMs)) {
++    return touchCacheEntry(normalizedChatJid, memorySnapshot);
++  }
++
++  const storage = getRuntimeStorage(options.storage);
++  const persisted = readPersistentCache(storage).get(normalizedChatJid) || null;
++  if (!isFresh(persisted, maxAgeMs)) {
++    return null;
++  }
++  return touchCacheEntry(normalizedChatJid, persisted);
++}
++
++export function resolveRecentTimelinePrewarmChatJids(chats: unknown, currentChatJid: string | null | undefined, limit = 5): string[] {
++  if (!Array.isArray(chats)) return [];
++  const normalizedCurrentChatJid = normalizeChatJid(currentChatJid);
++  const maxRows = Number.isFinite(limit) ? Math.max(1, Math.min(8, Number(limit))) : 5;
++  const seen = new Set<string>();
++  const result: string[] = [];
++  for (const chat of chats) {
++    const chatJid = normalizeChatJid(chat?.chat_jid);
++    if (!chatJid || chatJid === normalizedCurrentChatJid || seen.has(chatJid)) continue;
++    seen.add(chatJid);
++    result.push(chatJid);
++    if (result.length >= maxRows) break;
++  }
++  return result;
++}
++
++export async function prewarmTimelineSnapshots(options: {
++  chatJids: string[];
++  fetchTimeline: (chatJid: string) => Promise<TimelinePayload>;
++  storage?: StorageLike | null;
++  maxAgeMs?: number;
++  maxConcurrent?: number;
++}): Promise<void> {
++  const uniqueChatJids = Array.from(new Set((options.chatJids || []).map((chatJid) => normalizeChatJid(chatJid)).filter(Boolean)));
++  if (uniqueChatJids.length === 0) return;
++  const maxAgeMs = Number.isFinite(options.maxAgeMs) ? Number(options.maxAgeMs) : TIMELINE_CACHE_TTL_MS;
++  const maxConcurrent = Number.isFinite(options.maxConcurrent) ? Math.max(1, Math.min(4, Number(options.maxConcurrent))) : 2;
++  const storage = getRuntimeStorage(options.storage);
++  const pending = uniqueChatJids.filter((chatJid) => !isFresh(getCachedTimelineSnapshot(chatJid, { maxAgeMs, storage }), maxAgeMs));
++  let cursor = 0;
++  const workers = Array.from({ length: Math.min(maxConcurrent, pending.length) }, async () => {
++    while (cursor < pending.length) {
++      const chatJid = pending[cursor++];
++      const existing = prewarmInFlight.get(chatJid);
++      if (existing) {
++        await existing;
++        continue;
++      }
++      const task = (async () => {
++        try {
++          const payload = await options.fetchTimeline(chatJid);
++          cacheTimelineSnapshot(chatJid, payload, storage);
++        } catch {
++          // Best-effort prewarm only.
++        } finally {
++          prewarmInFlight.delete(chatJid);
++        }
++      })();
++      prewarmInFlight.set(chatJid, task);
++      await task;
++    }
++  });
++  await Promise.all(workers);
++}
++
++export function clearTimelineSnapshotCache(storage?: StorageLike | null): void {
++  timelineCache.clear();
++  prewarmInFlight.clear();
++  const runtimeStorage = getRuntimeStorage(storage);
++  runtimeStorage?.removeItem?.(TIMELINE_CACHE_KEY);
++}
 diff --git a/runtime/web/src/ui/app-view-refresh-lifecycle.ts b/runtime/web/src/ui/app-view-refresh-lifecycle.ts
 index b58a0f94..ffca351a 100644
 --- a/runtime/web/src/ui/app-view-refresh-lifecycle.ts
@@ -2989,3 +3365,173 @@ index d7954bef..8eac9b84 100644
      showIntentToast?.('Could not create branch', describeBranchOpenError(error), 'warning', 5000);
      return false;
    }
+diff --git a/runtime/web/src/ui/use-timeline.ts b/runtime/web/src/ui/use-timeline.ts
+index 60909478..fa739a6b 100644
+--- a/runtime/web/src/ui/use-timeline.ts
++++ b/runtime/web/src/ui/use-timeline.ts
+@@ -1,11 +1,12 @@
+ // @ts-nocheck
+ import { useCallback, useEffect, useRef, useState } from '../vendor/preact-htm.js';
+ import { getTimeline, getPostsByHashtag } from '../api.js';
++import { cacheTimelineSnapshot, getCachedTimelineSnapshot } from './app-timeline-cache.js';
+ import { dedupePosts } from './timeline-utils.js';
+ 
+-export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop, chatJid = null }) {
+-  const [posts, setPosts] = useState(null);
+-  const [hasMore, setHasMore] = useState(false);
++export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop, chatJid = null, currentHashtag = null, searchQuery = null }) {
++  const [posts, setPostsState] = useState(null);
++  const [hasMore, setHasMoreState] = useState(false);
+   const hasMoreRef = useRef(false);
+   const loadMoreRef = useRef(null);
+   const loadingMoreRef = useRef(false);
+@@ -21,6 +22,8 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
+     postsRef.current = posts;
+   }, [posts]);
+ 
++  const shouldCacheCurrentView = !currentHashtag && !searchQuery;
++
+   useEffect(() => {
+     chatTokenRef.current += 1;
+     // Preserve currently visible posts while the next chat loads so session
+@@ -29,23 +32,79 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
+     lastBeforeIdRef.current = null;
+     loadingMoreRef.current = false;
+     hasMoreRef.current = false;
+-    setHasMore(false);
++    setHasMoreState(false);
+   }, [chatJid]);
+ 
++  const cacheCurrentSnapshot = useCallback((nextPosts, nextHasMore) => {
++    if (!shouldCacheCurrentView) return;
++    cacheTimelineSnapshot(chatJid, {
++      posts: Array.isArray(nextPosts) ? nextPosts : [],
++      has_more: Boolean(nextHasMore),
++    });
++  }, [chatJid, shouldCacheCurrentView]);
++
++  const setPosts = useCallback((next) => {
++    let resolvedPosts = null;
++    setPostsState((prev) => {
++      resolvedPosts = typeof next === 'function' ? next(prev) : next;
++      return resolvedPosts;
++    });
++    if (Array.isArray(resolvedPosts)) {
++      cacheCurrentSnapshot(resolvedPosts, hasMoreRef.current);
++    }
++  }, [cacheCurrentSnapshot]);
++
++  const setHasMore = useCallback((next) => {
++    let resolvedHasMore = false;
++    setHasMoreState((prev) => {
++      resolvedHasMore = typeof next === 'function' ? next(prev) : next;
++      return resolvedHasMore;
++    });
++    if (Array.isArray(postsRef.current)) {
++      cacheCurrentSnapshot(postsRef.current, resolvedHasMore);
++    }
++  }, [cacheCurrentSnapshot]);
++
+   const loadPosts = useCallback(async (hashtag = null) => {
+     const token = chatTokenRef.current;
+     try {
+       if (hashtag) {
+         const result = await getPostsByHashtag(hashtag, 50, 0, chatJid);
+         if (token !== chatTokenRef.current) return;
+-        setPosts(result.posts);
+-        setHasMore(false);
+-      } else {
+-        const result = await getTimeline(10, null, chatJid);
++        setPostsState(result.posts);
++        setHasMoreState(false);
++        return;
++      }
++
++      const applyFreshPayload = (result) => {
+         if (token !== chatTokenRef.current) return;
+-        setPosts(result.posts);
+-        setHasMore(result.has_more);
++        const nextPosts = Array.isArray(result?.posts) ? result.posts : [];
++        const nextHasMore = Boolean(result?.has_more);
++        setPostsState(nextPosts);
++        setHasMoreState(nextHasMore);
++        cacheTimelineSnapshot(chatJid, {
++          posts: nextPosts,
++          has_more: nextHasMore,
++        });
++      };
++
++      const cached = getCachedTimelineSnapshot(chatJid);
++      if (cached) {
++        setPostsState(cached.posts);
++        setHasMoreState(cached.has_more);
++        void getTimeline(10, null, chatJid)
++          .then((result) => {
++            applyFreshPayload(result);
++          })
++          .catch((error) => {
++            if (token !== chatTokenRef.current) return;
++            console.error('Failed to refresh cached timeline:', error);
++          });
++        return;
+       }
++
++      const result = await getTimeline(10, null, chatJid);
++      applyFreshPayload(result);
+     } catch (error) {
+       if (token !== chatTokenRef.current) return;
+       console.error('Failed to load posts:', error);
+@@ -57,11 +116,20 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
+     try {
+       const result = await getTimeline(10, null, chatJid);
+       if (token !== chatTokenRef.current) return;
+-      setPosts((prev) => {
+-        if (!prev || prev.length === 0) return result.posts;
+-        return dedupePosts([...result.posts, ...prev]);
++      let nextPosts = [];
++      let nextHasMore = false;
++      setPostsState((prev) => {
++        nextPosts = !prev || prev.length === 0 ? result.posts : dedupePosts([...result.posts, ...prev]);
++        return nextPosts;
++      });
++      setHasMoreState((prev) => {
++        nextHasMore = Boolean(prev || result.has_more);
++        return nextHasMore;
++      });
++      cacheTimelineSnapshot(chatJid, {
++        posts: nextPosts,
++        has_more: nextHasMore,
+       });
+-      setHasMore((prev) => prev || result.has_more);
+     } catch (error) {
+       if (token !== chatTokenRef.current) return;
+       console.error('Failed to refresh timeline:', error);
+@@ -95,11 +163,25 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
+       if (token !== chatTokenRef.current) return;
+       if (result.posts.length > 0) {
+         applyUpdate(() => {
+-          setPosts(prev => dedupePosts([...result.posts, ...(prev || [])]));
+-          setHasMore(result.has_more);
++          let nextPosts = [];
++          setPostsState((prev) => {
++            nextPosts = dedupePosts([...result.posts, ...(prev || [])]);
++            return nextPosts;
++          });
++          setHasMoreState(result.has_more);
++          cacheTimelineSnapshot(chatJid, {
++            posts: nextPosts,
++            has_more: Boolean(result.has_more),
++          });
+         });
+       } else {
+-        setHasMore(false);
++        setHasMoreState(false);
++        if (Array.isArray(postsRef.current)) {
++          cacheTimelineSnapshot(chatJid, {
++            posts: postsRef.current,
++            has_more: false,
++          });
++        }
+       }
+     } catch (error) {
+       if (token !== chatTokenRef.current) return;
