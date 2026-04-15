@@ -1,20 +1,20 @@
-From 173e0d31f14e45154377bdb35506f1061686efdc Mon Sep 17 00:00:00 2001
+From 10e9329e2895c596643faef68e47a7067c47abe4 Mon Sep 17 00:00:00 2001
 From: alice <aliceisjustplaying@gmail.com>
 Date: Wed, 15 Apr 2026 12:28:39 +0000
 Subject: [PATCH] perf: prioritize startup session warmup
 
 ---
  runtime/src/agent-pool.ts                     |  4 +
- runtime/src/agent-pool/session-manager.ts     | 78 +++++++++++++------
+ runtime/src/agent-pool/session-manager.ts     | 80 +++++++++++++------
  .../channel-endpoint-facade-service.ts        | 21 +++--
- runtime/src/runtime/startup.ts                | 22 ++++++
+ runtime/src/runtime/startup.ts                | 22 +++++
  runtime/test/agent-pool/agent-pool.test.ts    |  9 ++-
  .../channel-endpoint-facade-service.test.ts   | 15 +++-
  runtime/test/runtime/startup.test.ts          | 47 ++++++++---
  runtime/test/web/app-auth-bootstrap.test.ts   |  2 +-
  runtime/web/src/api.ts                        |  1 +
  runtime/web/src/ui/app-auth-bootstrap.ts      |  7 +-
- 10 files changed, 159 insertions(+), 47 deletions(-)
+ 10 files changed, 160 insertions(+), 48 deletions(-)
 
 diff --git a/runtime/src/agent-pool.ts b/runtime/src/agent-pool.ts
 index d5d4e582..b37f29ae 100644
@@ -32,12 +32,12 @@ index d5d4e582..b37f29ae 100644
      return this.runtimeFacade.getSessionTreeForChat(chatJid);
    }
 diff --git a/runtime/src/agent-pool/session-manager.ts b/runtime/src/agent-pool/session-manager.ts
-index 8b942231..b351361e 100644
+index c08fcc3a..81bbbb01 100644
 --- a/runtime/src/agent-pool/session-manager.ts
 +++ b/runtime/src/agent-pool/session-manager.ts
-@@ -47,6 +47,9 @@ export interface AgentSessionManagerOptions {
- export class AgentSessionManager {
+@@ -48,6 +48,9 @@ export class AgentSessionManager {
    private readonly branchSeedRealizationInFlight = new Map<string, Promise<boolean>>();
+   private readonly invalidDeferredBranchSeedErrors = new Map<string, Error>();
    private readonly prewarmInFlight = new Set<string>();
 +  private readonly queuedPrewarms = new Set<string>();
 +  private readonly prewarmQueue: string[] = [];
@@ -45,12 +45,13 @@ index 8b942231..b351361e 100644
  
    constructor(private readonly options: AgentSessionManagerOptions) {}
  
-@@ -198,28 +201,20 @@ export class AgentSessionManager {
+@@ -204,29 +207,21 @@ export class AgentSessionManager {
      await this.disposeEntry(this.options.sidePool, chatJid, "recreate.dispose_side_session", true);
    }
  
 -  prewarm(chatJid: string): void {
 -    if (!chatJid || this.prewarmInFlight.has(chatJid)) return;
+-    if (this.invalidDeferredBranchSeedErrors.has(chatJid)) return;
 -    if (this.options.pool.has(chatJid) && !hasDeferredBranchSeed(chatJid)) return;
 -
 -    this.prewarmInFlight.add(chatJid);
@@ -74,6 +75,7 @@ index 8b942231..b351361e 100644
 +  prewarm(chatJid: string, options: { priority?: boolean } = {}): boolean {
 +    const normalizedChatJid = String(chatJid || "").trim();
 +    if (!normalizedChatJid) return false;
++    if (this.invalidDeferredBranchSeedErrors.has(normalizedChatJid)) return false;
 +    if (this.options.pool.has(normalizedChatJid) && !hasDeferredBranchSeed(normalizedChatJid)) return false;
 +    if (this.prewarmInFlight.has(normalizedChatJid) || this.queuedPrewarms.has(normalizedChatJid)) return false;
 +
@@ -88,7 +90,7 @@ index 8b942231..b351361e 100644
    }
  
    async shutdown(): Promise<void> {
-@@ -393,4 +388,43 @@ export class AgentSessionManager {
+@@ -409,4 +404,43 @@ export class AgentSessionManager {
        });
      }
    }

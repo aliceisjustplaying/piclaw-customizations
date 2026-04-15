@@ -1,18 +1,20 @@
-From 5b589f62bc350b288e3b59981cfa5744ba109a34 Mon Sep 17 00:00:00 2001
+From 250c544b54c056db34f46a1a4399e8cfec7943b1 Mon Sep 17 00:00:00 2001
 From: alice <aliceisjustplaying@gmail.com>
 Date: Wed, 15 Apr 2026 12:14:18 +0000
 Subject: [PATCH] perf: cache recent timelines in memory
 
 ---
  .../web/app-chat-refresh-lifecycle.test.ts    |  29 +++-
- runtime/test/web/app-timeline-cache.test.ts   |  57 ++++++++
+ runtime/test/web/app-timeline-cache.test.ts   |  57 +++++++
+ runtime/test/web/use-timeline.test.ts         |  14 ++
  runtime/web/src/app.ts                        |   2 +
  .../web/src/ui/app-chat-refresh-lifecycle.ts  |  42 +++++-
  .../src/ui/app-main-timeline-composition.ts   |  12 +-
- runtime/web/src/ui/app-timeline-cache.ts      | 128 ++++++++++++++++++
- runtime/web/src/ui/use-timeline.ts            | 116 +++++++++++++---
- 7 files changed, 362 insertions(+), 24 deletions(-)
+ runtime/web/src/ui/app-timeline-cache.ts      | 128 ++++++++++++++++
+ runtime/web/src/ui/use-timeline.ts            | 140 +++++++++++++++---
+ 8 files changed, 400 insertions(+), 24 deletions(-)
  create mode 100644 runtime/test/web/app-timeline-cache.test.ts
+ create mode 100644 runtime/test/web/use-timeline.test.ts
  create mode 100644 runtime/web/src/ui/app-timeline-cache.ts
 
 diff --git a/runtime/test/web/app-chat-refresh-lifecycle.test.ts b/runtime/test/web/app-chat-refresh-lifecycle.test.ts
@@ -136,6 +138,26 @@ index 00000000..7a97f6cd
 +  expect(getCachedTimelineSnapshot('web:warm')?.posts).toEqual([{ id: 'web:warm-post' }]);
 +
 +  clearTimelineSnapshotCache();
++});
+diff --git a/runtime/test/web/use-timeline.test.ts b/runtime/test/web/use-timeline.test.ts
+new file mode 100644
+index 00000000..2088bae4
+--- /dev/null
++++ b/runtime/test/web/use-timeline.test.ts
+@@ -0,0 +1,14 @@
++import { expect, test } from 'bun:test';
++
++import { mergeFreshTimelinePosts } from '../../web/src/ui/use-timeline.js';
++
++test('mergeFreshTimelinePosts preserves older rows already loaded for the active chat', () => {
++  expect(mergeFreshTimelinePosts(
++    [{ id: 9 }, { id: 8 }, { id: 7 }, { id: 6 }],
++    [{ id: 10 }, { id: 9 }, { id: 8 }],
++  )).toEqual([{ id: 10 }, { id: 9 }, { id: 8 }, { id: 7 }, { id: 6 }]);
++});
++
++test('mergeFreshTimelinePosts falls back to the fresh payload when no current rows exist', () => {
++  expect(mergeFreshTimelinePosts(null, [{ id: 2 }, { id: 1 }])).toEqual([{ id: 2 }, { id: 1 }]);
 +});
 diff --git a/runtime/web/src/app.ts b/runtime/web/src/app.ts
 index 0348aa41..d371d69d 100644
@@ -428,10 +450,10 @@ index 00000000..ce9df33d
 +  prewarmInFlight.clear();
 +}
 diff --git a/runtime/web/src/ui/use-timeline.ts b/runtime/web/src/ui/use-timeline.ts
-index 60909478..fa739a6b 100644
+index 60909478..f451a4e0 100644
 --- a/runtime/web/src/ui/use-timeline.ts
 +++ b/runtime/web/src/ui/use-timeline.ts
-@@ -1,11 +1,12 @@
+@@ -1,11 +1,20 @@
  // @ts-nocheck
  import { useCallback, useEffect, useRef, useState } from '../vendor/preact-htm.js';
  import { getTimeline, getPostsByHashtag } from '../api.js';
@@ -441,13 +463,21 @@ index 60909478..fa739a6b 100644
 -export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop, chatJid = null }) {
 -  const [posts, setPosts] = useState(null);
 -  const [hasMore, setHasMore] = useState(false);
++export function mergeFreshTimelinePosts(currentPosts, freshPosts) {
++  const normalizedFreshPosts = Array.isArray(freshPosts) ? freshPosts : [];
++  if (!Array.isArray(currentPosts) || currentPosts.length === 0) {
++    return normalizedFreshPosts;
++  }
++  return dedupePosts([...normalizedFreshPosts, ...currentPosts]);
++}
++
 +export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop, chatJid = null, currentHashtag = null, searchQuery = null }) {
 +  const [posts, setPostsState] = useState(null);
 +  const [hasMore, setHasMoreState] = useState(false);
    const hasMoreRef = useRef(false);
    const loadMoreRef = useRef(null);
    const loadingMoreRef = useRef(false);
-@@ -21,6 +22,8 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
+@@ -21,6 +30,8 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
      postsRef.current = posts;
    }, [posts]);
  
@@ -456,7 +486,7 @@ index 60909478..fa739a6b 100644
    useEffect(() => {
      chatTokenRef.current += 1;
      // Preserve currently visible posts while the next chat loads so session
-@@ -29,23 +32,79 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
+@@ -29,23 +40,95 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
      lastBeforeIdRef.current = null;
      loadingMoreRef.current = false;
      hasMoreRef.current = false;
@@ -529,7 +559,23 @@ index 60909478..fa739a6b 100644
 +        setHasMoreState(cached.has_more);
 +        void getTimeline(10, null, chatJid)
 +          .then((result) => {
-+            applyFreshPayload(result);
++            if (token !== chatTokenRef.current) return;
++            const freshPosts = Array.isArray(result?.posts) ? result.posts : [];
++            const freshHasMore = Boolean(result?.has_more);
++            let nextPosts = [];
++            let nextHasMore = false;
++            setPostsState((prev) => {
++              nextPosts = mergeFreshTimelinePosts(prev, freshPosts);
++              return nextPosts;
++            });
++            setHasMoreState((prev) => {
++              nextHasMore = Boolean(prev || freshHasMore);
++              return nextHasMore;
++            });
++            cacheTimelineSnapshot(chatJid, {
++              posts: nextPosts,
++              has_more: nextHasMore,
++            });
 +          })
 +          .catch((error) => {
 +            if (token !== chatTokenRef.current) return;
@@ -543,7 +589,7 @@ index 60909478..fa739a6b 100644
      } catch (error) {
        if (token !== chatTokenRef.current) return;
        console.error('Failed to load posts:', error);
-@@ -57,11 +116,20 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
+@@ -57,11 +140,20 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
      try {
        const result = await getTimeline(10, null, chatJid);
        if (token !== chatTokenRef.current) return;
@@ -568,7 +614,7 @@ index 60909478..fa739a6b 100644
      } catch (error) {
        if (token !== chatTokenRef.current) return;
        console.error('Failed to refresh timeline:', error);
-@@ -95,11 +163,25 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
+@@ -95,11 +187,25 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
        if (token !== chatTokenRef.current) return;
        if (result.posts.length > 0) {
          applyUpdate(() => {
