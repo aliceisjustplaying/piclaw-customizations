@@ -49,6 +49,71 @@ index 674ee8fd..e8c31d45 100644
  });
  
  test('invokePaneBeforeDetachFromHost calls the pane detach lifecycle hook when present', async () => {
+diff --git a/runtime/test/web/app-connection-lifecycle.test.ts b/runtime/test/web/app-connection-lifecycle.test.ts
+index 883b6313..84206cf9 100644
+--- a/runtime/test/web/app-connection-lifecycle.test.ts
++++ b/runtime/test/web/app-connection-lifecycle.test.ts
+@@ -1,10 +1,18 @@
+-import { expect, test } from 'bun:test';
++import { afterEach, expect, test } from 'bun:test';
+ 
+ import {
+   handleConnectionStatusChangeEvent,
+   handleUiVersionDriftEvent,
+   runBackstopRefreshTick,
+ } from '../../web/src/ui/app-connection-lifecycle.js';
++import {
++  noteAppChatActivation,
++  resetAppRefreshCoordination,
++} from '../../web/src/ui/app-refresh-coordination.js';
++
++afterEach(() => {
++  resetAppRefreshCoordination();
++});
+ 
+ test('handleUiVersionDriftEvent ignores missing/unchanged versions', () => {
+   const staleUiVersionRef = { current: null as string | null };
+@@ -52,6 +60,7 @@ test('handleConnectionStatusChangeEvent clears active agent state on disconnect'
+   const pendingRequestRef = { current: { id: 1 } as unknown };
+ 
+   handleConnectionStatusChangeEvent({
++    currentChatJid: 'chat:alpha',
+     status: 'disconnected',
+     setConnectionStatus: (status) => { calls.push(`conn:${status}`); },
+     setAgentStatus: (status) => { calls.push(`status:${status === null ? 'null' : 'set'}`); },
+@@ -81,6 +90,32 @@ test('handleConnectionStatusChangeEvent clears active agent state on disconnect'
+   expect(pendingRequestRef.current).toBeNull();
+ });
+ 
++test('handleConnectionStatusChangeEvent skips the initial reconnect bundle during a fresh cold-open activation', () => {
++  noteAppChatActivation({ chatJid: 'chat:alpha' });
++  const calls: string[] = [];
++
++  handleConnectionStatusChangeEvent({
++    currentChatJid: 'chat:alpha',
++    status: 'connected',
++    setConnectionStatus: (status) => { calls.push(`conn:${status}`); },
++    setAgentStatus: () => { calls.push('status'); },
++    setAgentDraft: () => { calls.push('draft'); },
++    setAgentPlan: () => { calls.push('plan'); },
++    setAgentThought: () => { calls.push('thought'); },
++    setPendingRequest: () => { calls.push('pending'); },
++    pendingRequestRef: { current: null },
++    clearAgentRunState: () => { calls.push('clear'); },
++    hasConnectedOnceRef: { current: false },
++    viewStateRef: { current: { currentHashtag: null, searchQuery: null, searchOpen: false } },
++    refreshTimeline: () => { calls.push('timeline'); },
++    refreshAgentStatus: () => { calls.push('refresh-status'); },
++    refreshQueueState: () => { calls.push('refresh-queue'); },
++    refreshContextUsage: () => { calls.push('refresh-context'); },
++  });
++
++  expect(calls).toEqual(['conn:connected']);
++});
++
+ test('runBackstopRefreshTick refreshes queue only when agent is active', () => {
+   const calls: string[] = [];
+   const run = (isAgentActive: boolean) => {
 diff --git a/runtime/test/web/app-main-surface-state.test.ts b/runtime/test/web/app-main-surface-state.test.ts
 index 76d92a7e..1e8274dc 100644
 --- a/runtime/test/web/app-main-surface-state.test.ts
@@ -336,6 +401,58 @@ index 00000000..2d42deca
 +  expect(second).toEqual({ run: 1 });
 +  expect(callCount).toBe(1);
 +});
+diff --git a/runtime/test/web/app-sse-events.test.ts b/runtime/test/web/app-sse-events.test.ts
+index 7b03c604..90670b97 100644
+--- a/runtime/test/web/app-sse-events.test.ts
++++ b/runtime/test/web/app-sse-events.test.ts
+@@ -1,6 +1,14 @@
+-import { expect, test } from 'bun:test';
++import { afterEach, expect, test } from 'bun:test';
+ 
+ import { handleAppSseEvent, type HandleAppSseEventDependencies } from '../../web/src/ui/app-sse-events.js';
++import {
++  noteAppChatActivation,
++  resetAppRefreshCoordination,
++} from '../../web/src/ui/app-refresh-coordination.js';
++
++afterEach(() => {
++  resetAppRefreshCoordination();
++});
+ 
+ function applyUpdate<T>(current: T, next: T | ((prev: T) => T)): T {
+   return typeof next === 'function' ? (next as (prev: T) => T)(current) : next;
+@@ -162,6 +170,31 @@ test('handleAppSseEvent restores active agent status on reconnect', async () =>
+   });
+ });
+ 
++test('handleAppSseEvent skips duplicate reconnect recovery during a fresh cold-open activation', async () => {
++  noteAppChatActivation({ chatJid: 'chat:alpha' });
++  const state = createDeps();
++  let agentStatusCalls = 0;
++  let timelineCalls = 0;
++  let bundleCalls = 0;
++  state.deps.getAgentStatus = async () => {
++    agentStatusCalls += 1;
++    return null;
++  };
++  state.deps.refreshTimeline = () => {
++    timelineCalls += 1;
++  };
++  state.deps.refreshModelAndQueueState = () => {
++    bundleCalls += 1;
++  };
++
++  handleAppSseEvent('connected', { app_asset_version: 'test' }, state.deps);
++  await Promise.resolve();
++
++  expect(agentStatusCalls).toBe(0);
++  expect(timelineCalls).toBe(0);
++  expect(bundleCalls).toBe(0);
++});
++
+ test('handleAppSseEvent refreshes compaction status metadata even when title stays the same', () => {
+   const state = createDeps();
+ 
 diff --git a/runtime/test/web/app-window-actions.test.ts b/runtime/test/web/app-window-actions.test.ts
 index 60644f8c..d83a8b99 100644
 --- a/runtime/test/web/app-window-actions.test.ts
@@ -425,7 +542,7 @@ index c8b83899..1182bf09 100644
      
      if (!response.ok) {
 diff --git a/runtime/web/src/ui/app-agent-status-lifecycle.ts b/runtime/web/src/ui/app-agent-status-lifecycle.ts
-index c23f898a..27c44c66 100644
+index c23f898a..2178e471 100644
 --- a/runtime/web/src/ui/app-agent-status-lifecycle.ts
 +++ b/runtime/web/src/ui/app-agent-status-lifecycle.ts
 @@ -13,6 +13,7 @@ import {
@@ -560,6 +677,14 @@ index c23f898a..27c44c66 100644
      });
    }, [activeChatJidRef, agentStatusRef, clearAgentRunState, clearLastActivityFlag, currentChatJid, draftBufferRef, getAgentStatus, noteAgentActivity, pendingRequestRef, refreshTimeline, setActiveTurn, setAgentDraft, setAgentPlan, setAgentStatus, setAgentThought, setPendingRequest, thoughtBufferRef, viewStateRef, wasAgentActiveRef]);
  
+@@ -227,6 +255,7 @@ export function useAgentStatusLifecycle(options: UseAgentStatusLifecycleOptions)
+ 
+   const handleConnectionStatusChange = useCallback((status: string) => {
+     handleConnectionStatusChangeEvent({
++      currentChatJid,
+       status,
+       setConnectionStatus,
+       setAgentStatus,
 diff --git a/runtime/web/src/ui/app-auth-bootstrap.ts b/runtime/web/src/ui/app-auth-bootstrap.ts
 index 7c8260b6..e549aad1 100644
 --- a/runtime/web/src/ui/app-auth-bootstrap.ts
@@ -1025,6 +1150,42 @@ index ac9fffd4..c92adbe7 100644
  
    const refreshModelAndQueueState = useCallback(() => {
      refreshModelAndQueueStateBundle({
+diff --git a/runtime/web/src/ui/app-connection-lifecycle.ts b/runtime/web/src/ui/app-connection-lifecycle.ts
+index 2c7be49b..29fbbb97 100644
+--- a/runtime/web/src/ui/app-connection-lifecycle.ts
++++ b/runtime/web/src/ui/app-connection-lifecycle.ts
+@@ -1,3 +1,5 @@
++import { isAppChatActivationRecent } from './app-refresh-coordination.js';
++
+ type ViewStateLike = {
+   currentHashtag?: unknown;
+   searchQuery?: unknown;
+@@ -64,6 +66,7 @@ export function handleUiVersionDriftEvent(options: HandleUiVersionDriftOptions):
+ }
+ 
+ export interface HandleConnectionStatusChangeOptions {
++  currentChatJid: string;
+   status: string;
+   setConnectionStatus: (status: string) => void;
+   setAgentStatus: (status: Record<string, unknown> | null) => void;
+@@ -92,6 +95,7 @@ function shouldRefreshMainTimeline(viewState: ViewStateLike | null | undefined):
+ 
+ export function handleConnectionStatusChangeEvent(options: HandleConnectionStatusChangeOptions): void {
+   const {
++    currentChatJid,
+     status,
+     setConnectionStatus,
+     setAgentStatus,
+@@ -123,6 +127,9 @@ export function handleConnectionStatusChangeEvent(options: HandleConnectionStatu
+ 
+   if (!hasConnectedOnceRef.current) {
+     hasConnectedOnceRef.current = true;
++    if (isAppChatActivationRecent(currentChatJid)) {
++      return;
++    }
+     if (shouldRefreshMainTimeline(viewStateRef.current)) {
+       refreshTimeline();
+     }
 diff --git a/runtime/web/src/ui/app-main-surface-state.ts b/runtime/web/src/ui/app-main-surface-state.ts
 index 8134a092..84f9831b 100644
 --- a/runtime/web/src/ui/app-main-surface-state.ts
@@ -1481,6 +1642,28 @@ index df44296a..5de29e71 100644
    initialized = true;
  }
  
+diff --git a/runtime/web/src/ui/app-sse-events.ts b/runtime/web/src/ui/app-sse-events.ts
+index 3d54e0c6..e8e9b686 100644
+--- a/runtime/web/src/ui/app-sse-events.ts
++++ b/runtime/web/src/ui/app-sse-events.ts
+@@ -39,6 +39,7 @@ import {
+   isNoisyAgentSseEvent,
+   resolveSseEventRoutingContext,
+ } from './app-sse-event-routing.js';
++import { isAppChatActivationRecent } from './app-refresh-coordination.js';
+ 
+ type StateSetter<T> = (next: T | ((prev: T) => T)) => void;
+ 
+@@ -215,6 +216,9 @@ export function handleAppSseEvent(
+     if (handleUiVersionDrift(data?.app_asset_version)) {
+       return;
+     }
++    if (isAppChatActivationRecent(currentChatJid)) {
++      return;
++    }
+     setAgentStatus(null);
+     setAgentDraft({ text: '', totalLines: 0 });
+     setAgentPlan('');
 diff --git a/runtime/web/src/ui/app-status-refresh-orchestration.ts b/runtime/web/src/ui/app-status-refresh-orchestration.ts
 index d508aee2..49b4aceb 100644
 --- a/runtime/web/src/ui/app-status-refresh-orchestration.ts
