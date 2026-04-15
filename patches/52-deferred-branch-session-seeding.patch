@@ -1,18 +1,18 @@
-From 2bb63f62220b7e709c575904bcde0acfcadcda42 Mon Sep 17 00:00:00 2001
+From 9b8eb93909d3befb60f6bc0634db9b4ae4a7948b Mon Sep 17 00:00:00 2001
 From: alice <aliceisjustplaying@gmail.com>
-Date: Wed, 15 Apr 2026 12:23:11 +0000
+Date: Wed, 15 Apr 2026 13:32:48 +0000
 Subject: [PATCH] perf: defer branch session seeding
 
 ---
  runtime/src/agent-pool/branch-manager.ts      | 208 +-------------
- runtime/src/agent-pool/branch-seeding.ts      | 259 ++++++++++++++++++
+ runtime/src/agent-pool/branch-seeding.ts      | 264 ++++++++++++++++++
  runtime/src/agent-pool/service-factory.ts     |   1 +
  runtime/src/agent-pool/session-manager.ts     | 157 ++++++++++-
  runtime/test/agent-pool/agent-pool.test.ts    |   1 +
  .../agent-pool/branch-lifecycle-audit.test.ts |   1 +
  .../test/agent-pool/branch-manager.test.ts    |  72 +++++
- .../test/agent-pool/session-manager.test.ts   |  45 ++-
- 8 files changed, 531 insertions(+), 213 deletions(-)
+ .../test/agent-pool/session-manager.test.ts   |  46 ++-
+ 8 files changed, 537 insertions(+), 213 deletions(-)
  create mode 100644 runtime/src/agent-pool/branch-seeding.ts
 
 diff --git a/runtime/src/agent-pool/branch-manager.ts b/runtime/src/agent-pool/branch-manager.ts
@@ -264,10 +264,10 @@ index 1b048589..1b28403a 100644
        chat_jid: nextChatJid,
 diff --git a/runtime/src/agent-pool/branch-seeding.ts b/runtime/src/agent-pool/branch-seeding.ts
 new file mode 100644
-index 00000000..a6d83138
+index 00000000..371f265c
 --- /dev/null
 +++ b/runtime/src/agent-pool/branch-seeding.ts
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,264 @@
 +/**
 + * agent-pool/branch-seeding.ts – Deferred branch seed persistence and replay.
 + *
@@ -515,13 +515,18 @@ index 00000000..a6d83138
 +    throw createInvalidDeferredBranchSeedError(chatJid, "malformed JSON", error);
 +  }
 +
-+  if (parsed?.version !== 1) {
++  if (!parsed || typeof parsed !== "object") {
++    throw createInvalidDeferredBranchSeedError(chatJid, "seed payload must be an object");
++  }
++
++  const seed = parsed as Partial<DeferredBranchSeed>;
++  if (seed.version !== 1) {
 +    throw createInvalidDeferredBranchSeedError(chatJid, "unsupported version");
 +  }
-+  if (parsed?.mode !== "stable_branch" && parsed?.mode !== "rotated_context") {
++  if (seed.mode !== "stable_branch" && seed.mode !== "rotated_context") {
 +    throw createInvalidDeferredBranchSeedError(chatJid, "unsupported seed mode");
 +  }
-+  return parsed as DeferredBranchSeed;
++  return seed as DeferredBranchSeed;
 +}
 +
 +export function clearDeferredBranchSeed(chatJid: string): void {
@@ -879,7 +884,7 @@ index 5ecd13ae..ad094773 100644
    const ws = createTempWorkspace("piclaw-branch-prune-");
    restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
 diff --git a/runtime/test/agent-pool/session-manager.test.ts b/runtime/test/agent-pool/session-manager.test.ts
-index 18ec35a2..bc41c800 100644
+index 18ec35a2..b29322fa 100644
 --- a/runtime/test/agent-pool/session-manager.test.ts
 +++ b/runtime/test/agent-pool/session-manager.test.ts
 @@ -1,7 +1,21 @@
@@ -905,7 +910,7 @@ index 18ec35a2..bc41c800 100644
  
  function createRuntime(session: any): AgentSessionRuntime {
    return {
-@@ -143,3 +157,32 @@ test("AgentSessionManager evicts idle sessions and shuts down remaining sessions
+@@ -143,3 +157,33 @@ test("AgentSessionManager evicts idle sessions and shuts down remaining sessions
    expect(fixture.sidePool.size).toBe(0);
    expect(disposed).toBe(2);
  });
@@ -936,7 +941,8 @@ index 18ec35a2..bc41c800 100644
 +  expect(fixture.pool.has(chatJid)).toBe(false);
 +  expect(createCalls).toBe(1);
 +  expect(disposed).toBe(1);
-+  expect(fixture.manager.prewarm(chatJid)).toBe(false);
++  fixture.manager.prewarm(chatJid);
++  expect(createCalls).toBe(1);
 +});
 -- 
 2.51.2
