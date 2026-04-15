@@ -1,3 +1,319 @@
+diff --git a/runtime/src/agent-pool/provider-usage.ts b/runtime/src/agent-pool/provider-usage.ts
+index a940d757..db7c5bf4 100644
+--- a/runtime/src/agent-pool/provider-usage.ts
++++ b/runtime/src/agent-pool/provider-usage.ts
+@@ -44,8 +44,11 @@ type CachedUsage = {
+   value: ProviderUsageSnapshot | null;
+ };
+ 
++type SupportedProviderId = ProviderUsageSnapshot["provider"];
++
+ const USAGE_CACHE_TTL_MS = Number(process.env.PICLAW_PROVIDER_USAGE_TTL_MS || "60000");
+ const usageCache = new Map<string, CachedUsage>();
++const usageRefreshInFlight = new Map<string, Promise<ProviderUsageSnapshot | null>>();
+ const log = createLogger("agent-pool.provider-usage");
+ 
+ function clampPercent(value: unknown): number | null {
+@@ -442,36 +445,85 @@ async function fetchAnthropicUsage(authStorage: AuthStorage): Promise<ProviderUs
+   };
+ }
+ 
+-export async function getProviderUsage(authStorage: AuthStorage, providerId: string): Promise<ProviderUsageSnapshot | null> {
+-  if (providerId !== "openai-codex" && providerId !== "github-copilot" && providerId !== "anthropic") return null;
++function isSupportedProviderId(providerId: string): providerId is SupportedProviderId {
++  return providerId === "openai-codex" || providerId === "github-copilot" || providerId === "anthropic";
++}
+ 
+-  const cached = usageCache.get(providerId);
+-  if (cached && cached.expiresAt > Date.now()) {
++function getCachedUsageEntry(providerId: string): CachedUsage | null {
++  return usageCache.get(providerId) ?? null;
++}
++
++function hasFreshCachedUsage(providerId: string): boolean {
++  const cached = getCachedUsageEntry(providerId);
++  return Boolean(cached && cached.expiresAt > Date.now());
++}
++
++async function fetchProviderUsage(authStorage: AuthStorage, providerId: SupportedProviderId): Promise<ProviderUsageSnapshot | null> {
++  return providerId === "openai-codex"
++    ? await fetchCodexUsage(authStorage)
++    : providerId === "github-copilot"
++      ? await fetchGitHubCopilotUsage(authStorage)
++      : await fetchAnthropicUsage(authStorage);
++}
++
++export function peekProviderUsage(providerId: string, options: { allowStale?: boolean } = {}): ProviderUsageSnapshot | null {
++  if (!isSupportedProviderId(providerId)) return null;
++  const cached = getCachedUsageEntry(providerId);
++  if (!cached) return null;
++  if (options.allowStale === true) {
+     return cached.value;
+   }
++  return cached.expiresAt > Date.now() ? cached.value : null;
++}
+ 
+-  let value: ProviderUsageSnapshot | null;
+-  try {
+-    value = providerId === "openai-codex"
+-      ? await fetchCodexUsage(authStorage)
+-      : providerId === "github-copilot"
+-        ? await fetchGitHubCopilotUsage(authStorage)
+-        : await fetchAnthropicUsage(authStorage);
+-  } catch (error) {
+-    debugSuppressedError(log, "Provider usage refresh failed; returning the cached usage snapshot when available.", error, {
+-      providerId,
+-      hasCachedValue: cached?.value != null,
++export async function warmProviderUsage(authStorage: AuthStorage, providerId: string): Promise<ProviderUsageSnapshot | null> {
++  if (!isSupportedProviderId(providerId)) return null;
++  if (hasFreshCachedUsage(providerId)) {
++    return peekProviderUsage(providerId);
++  }
++
++  const existing = usageRefreshInFlight.get(providerId);
++  if (existing) {
++    return await existing;
++  }
++
++  const cached = getCachedUsageEntry(providerId);
++  const refreshPromise = (async () => {
++    let value: ProviderUsageSnapshot | null;
++    try {
++      value = await fetchProviderUsage(authStorage, providerId);
++    } catch (error) {
++      debugSuppressedError(log, "Provider usage refresh failed; returning the cached usage snapshot when available.", error, {
++        providerId,
++        hasCachedValue: cached?.value != null,
++      });
++      value = cached?.value ?? null;
++    }
++
++    usageCache.set(providerId, {
++      expiresAt: Date.now() + USAGE_CACHE_TTL_MS,
++      value,
+     });
+-    value = cached?.value ?? null;
++    usageRefreshInFlight.delete(providerId);
++    return value;
++  })();
++
++  usageRefreshInFlight.set(providerId, refreshPromise);
++  return await refreshPromise;
++}
++
++export async function getProviderUsage(authStorage: AuthStorage, providerId: string): Promise<ProviderUsageSnapshot | null> {
++  if (!isSupportedProviderId(providerId)) return null;
++
++  const cached = getCachedUsageEntry(providerId);
++  if (cached && cached.expiresAt > Date.now()) {
++    return cached.value;
+   }
+ 
+-  usageCache.set(providerId, {
+-    expiresAt: Date.now() + USAGE_CACHE_TTL_MS,
+-    value,
+-  });
+-  return value;
++  return await warmProviderUsage(authStorage, providerId);
+ }
+ 
+ export function clearProviderUsageCache(): void {
+   usageCache.clear();
++  usageRefreshInFlight.clear();
+ }
+diff --git a/runtime/src/agent-pool/runtime-facade.ts b/runtime/src/agent-pool/runtime-facade.ts
+index 48ca2b1d..1dd2b5eb 100644
+--- a/runtime/src/agent-pool/runtime-facade.ts
++++ b/runtime/src/agent-pool/runtime-facade.ts
+@@ -11,7 +11,7 @@ import { applyControlCommand, type AgentControlCommand, type AgentControlResult
+ import { formatThinkingLevelForDisplay } from "../agent-control/agent-control-helpers.js";
+ import { detectChannel } from "../router.js";
+ import { executeSlashCommand } from "./slash-command.js";
+-import { getProviderUsage } from "./provider-usage.js";
++import { peekProviderUsage, warmProviderUsage } from "./provider-usage.js";
+ import { resolveModelLabel } from "../utils/model-utils.js";
+ import { createLogger } from "../utils/logger.js";
+ import { withChatContext } from "../core/chat-context.js";
+@@ -435,8 +435,11 @@ export class AgentRuntimeFacade {
+       ? (session as AgentSession & { supportsThinking: () => boolean }).supportsThinking()
+       : Boolean(session?.model?.reasoning);
+     const providerUsage = session?.model?.provider
+-      ? await getProviderUsage(this.options.authStorage, session.model.provider)
++      ? (peekProviderUsage(session.model.provider, { allowStale: true }) ?? null)
+       : null;
++    if (session?.model?.provider) {
++      void warmProviderUsage(this.options.authStorage, session.model.provider);
++    }
+     const thinkingLevelLabel = thinkingLevel && session?.model?.provider
+       ? formatThinkingLevelForDisplay(thinkingLevel, session.model.provider)
+       : thinkingLevel;
+diff --git a/runtime/test/agent-pool/provider-usage.test.ts b/runtime/test/agent-pool/provider-usage.test.ts
+index b1461c8d..77a9917c 100644
+--- a/runtime/test/agent-pool/provider-usage.test.ts
++++ b/runtime/test/agent-pool/provider-usage.test.ts
+@@ -1,5 +1,5 @@
+ import { beforeEach, describe, expect, mock, test } from "bun:test";
+-import { clearProviderUsageCache, getProviderUsage } from "../../src/agent-pool/provider-usage.js";
++import { clearProviderUsageCache, getProviderUsage, peekProviderUsage, warmProviderUsage } from "../../src/agent-pool/provider-usage.js";
+ 
+ function createAuthStorage(credentials: Record<string, unknown>) {
+   return {
+@@ -234,6 +234,68 @@ describe("provider usage", () => {
+     }
+   });
+ 
++  test("warms provider usage in the background and reuses the same in-flight refresh", async () => {
++    let release!: () => void;
++    const gate = new Promise<void>((resolve) => {
++      release = resolve;
++    });
++    const fetchMock = mock(async () => {
++      await gate;
++      return new Response(JSON.stringify({
++        plan_type: "pro",
++        rate_limit: {
++          primary_window: {
++            used_percent: 10,
++            reset_at: Math.floor(Date.now() / 1000) + 3600,
++            limit_window_seconds: 18000,
++          },
++        },
++        credits: {
++          balance: 50,
++          unlimited: false,
++        },
++      }));
++    });
++    const previousFetch = globalThis.fetch;
++    globalThis.fetch = fetchMock as any;
++
++    try {
++      const first = warmProviderUsage(
++        createAuthStorage({
++          "openai-codex": {
++            type: "oauth",
++            access: "token",
++            accountId: "acct_123",
++            expires: Date.now() + 60_000,
++          },
++        }),
++        "openai-codex"
++      );
++      const second = warmProviderUsage(
++        createAuthStorage({
++          "openai-codex": {
++            type: "oauth",
++            access: "token",
++            accountId: "acct_123",
++            expires: Date.now() + 60_000,
++          },
++        }),
++        "openai-codex"
++      );
++
++      expect(peekProviderUsage("openai-codex", { allowStale: true })).toBeNull();
++      await Promise.resolve();
++      expect(fetchMock).toHaveBeenCalledTimes(1);
++
++      release();
++      const usage = await first;
++      expect(await second).toEqual(usage);
++      expect(peekProviderUsage("openai-codex", { allowStale: true })?.provider).toBe("openai-codex");
++    } finally {
++      globalThis.fetch = previousFetch;
++    }
++  });
++
+   test("returns null for unsupported providers", async () => {
+     const usage = await getProviderUsage(createAuthStorage({}), "openai");
+     expect(usage).toBeNull();
+diff --git a/runtime/test/agent-pool/runtime-facade.test.ts b/runtime/test/agent-pool/runtime-facade.test.ts
+index 3459bc63..43fcc9cd 100644
+--- a/runtime/test/agent-pool/runtime-facade.test.ts
++++ b/runtime/test/agent-pool/runtime-facade.test.ts
+@@ -1,4 +1,6 @@
+-import { expect, test } from "bun:test";
++import { afterEach, expect, test } from "bun:test";
++
++import { clearProviderUsageCache } from "../../src/agent-pool/provider-usage.js";
+ 
+ import type { AgentSessionRuntime } from "@mariozechner/pi-coding-agent";
+ import { AgentRuntimeFacade } from "../../src/agent-pool/runtime-facade.js";
+@@ -18,6 +20,10 @@ function createRuntime(session: any): AgentSessionRuntime {
+   } as any;
+ }
+ 
++afterEach(() => {
++  clearProviderUsageCache();
++});
++
+ function createFacade(overrides: Partial<ConstructorParameters<typeof AgentRuntimeFacade>[0]> = {}) {
+   const pool = new Map<string, { runtime: any; lastUsed: number }>();
+   const warnings: string[] = [];
+@@ -138,6 +144,63 @@ test("AgentRuntimeFacade returns registry-backed model options without hydrating
+   });
+ });
+ 
++test("AgentRuntimeFacade does not block getAvailableModels on a cold provider-usage refresh", async () => {
++  const previousFetch = globalThis.fetch;
++  let release!: () => void;
++  const gate = new Promise<void>((resolve) => {
++    release = resolve;
++  });
++  globalThis.fetch = (async () => {
++    await gate;
++    return new Response(JSON.stringify({
++      plan_type: "pro",
++      rate_limit: {
++        primary_window: {
++          used_percent: 10,
++          reset_at: Math.floor(Date.now() / 1000) + 3600,
++          limit_window_seconds: 18000,
++        },
++      },
++      credits: {
++        balance: 50,
++        unlimited: false,
++      },
++    }));
++  }) as any;
++
++  try {
++    const session = {
++      model: { provider: "openai-codex", id: "gpt-test", reasoning: true },
++      thinkingLevel: "high",
++      getContextUsage: () => null,
++      modelRegistry: {
++        refresh: () => {},
++        getAvailable: () => [
++          { provider: "openai-codex", id: "gpt-test", name: "GPT Test", contextWindow: 128000, reasoning: true },
++        ],
++      },
++    };
++
++    const fixture = createFacade({
++      authStorage: {
++        get: () => ({ type: "oauth", access: "token", accountId: "acct_123", expires: Date.now() + 60_000 }),
++      } as any,
++    });
++    fixture.pool.set("web:default", { runtime: createRuntime(session), lastUsed: Date.now() });
++
++    const available = await Promise.race([
++      fixture.facade.getAvailableModels("web:default"),
++      new Promise((_, reject) => setTimeout(() => reject(new Error("timed out waiting for getAvailableModels")), 50)),
++    ]);
++
++    expect((available as any).current).toBe("openai-codex/gpt-test");
++    expect((available as any).provider_usage).toBeNull();
++  } finally {
++    release();
++    globalThis.fetch = previousFetch;
++  }
++});
++
+ test("AgentRuntimeFacade removes one queued follow-up and replays the remaining queue", async () => {
+   const prompts: Array<{ text: string; behavior: string }> = [];
+   const session = {
 diff --git a/runtime/test/web/app-boot-load-orchestration.test.ts b/runtime/test/web/app-boot-load-orchestration.test.ts
 index ec5271e4..56807e3b 100644
 --- a/runtime/test/web/app-boot-load-orchestration.test.ts
