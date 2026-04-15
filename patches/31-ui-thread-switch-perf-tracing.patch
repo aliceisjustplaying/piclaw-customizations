@@ -156,6 +156,409 @@ index 48ca2b1d..5897995f 100644
      const thinkingLevelLabel = thinkingLevel && session?.model?.provider
        ? formatThinkingLevelForDisplay(thinkingLevel, session.model.provider)
        : thinkingLevel;
+diff --git a/runtime/src/channels/web/agent/agent-status.ts b/runtime/src/channels/web/agent/agent-status.ts
+index b134071c..df2861ea 100644
+--- a/runtime/src/channels/web/agent/agent-status.ts
++++ b/runtime/src/channels/web/agent/agent-status.ts
+@@ -3,6 +3,7 @@
+  */
+ 
+ import type { WebAgentBufferEntry } from "./agent-buffers.js";
++import { appendServerTiming, measureAsync, measureSync } from "../http/server-timing.js";
+ 
+ /** Context contract used by web agent status/context/model endpoint handlers. */
+ export interface AgentStatusContext {
+@@ -23,43 +24,61 @@ function resolveChatJid(req: Request, defaultChatJid: string): string {
+ 
+ /** Return active/idle agent status plus streamed thought/draft buffers when available. */
+ export function handleAgentStatusRequest(req: Request, ctx: AgentStatusContext): Response {
+-  const chatJid = resolveChatJid(req, ctx.defaultChatJid);
+-  const status = ctx.getAgentStatus(chatJid);
+-  if (!status) {
+-    return ctx.json({ status: "idle", data: null });
+-  }
++  const { result, durationMs } = measureSync(() => {
++    const chatJid = resolveChatJid(req, ctx.defaultChatJid);
++    const status = ctx.getAgentStatus(chatJid);
++    if (!status) {
++      return ctx.json({ status: "idle", data: null });
++    }
+ 
+-  const turnId = (status.turn_id || status.turnId) as string | undefined;
+-  let thought: { text: string; totalLines: number } | undefined;
+-  let draft: { text: string; totalLines: number } | undefined;
+-  if (turnId) {
+-    const tb = ctx.getBuffer(turnId, "thought");
+-    if (tb) thought = { text: tb.text, totalLines: tb.totalLines };
+-    const db = ctx.getBuffer(turnId, "draft");
+-    if (db) draft = { text: db.text, totalLines: db.totalLines };
+-  }
++    const turnId = (status.turn_id || status.turnId) as string | undefined;
++    let thought: { text: string; totalLines: number } | undefined;
++    let draft: { text: string; totalLines: number } | undefined;
++    if (turnId) {
++      const tb = ctx.getBuffer(turnId, "thought");
++      if (tb) thought = { text: tb.text, totalLines: tb.totalLines };
++      const db = ctx.getBuffer(turnId, "draft");
++      if (db) draft = { text: db.text, totalLines: db.totalLines };
++    }
+ 
+-  return ctx.json({ status: "active", data: status, thought, draft });
++    return ctx.json({ status: "active", data: status, thought, draft });
++  });
++  return appendServerTiming(result, {
++    name: "agent_status",
++    durationMs,
++  });
+ }
+ 
+ /** Return context window usage metrics for the requested/default chat. */
+ export async function handleAgentContextRequest(req: Request, ctx: AgentStatusContext): Promise<Response> {
+-  const chatJid = resolveChatJid(req, ctx.defaultChatJid);
+-  const usage = await ctx.getContextUsageForChat(chatJid);
+-  if (!usage) {
+-    return ctx.json({ tokens: null, contextWindow: null, percent: null });
+-  }
++  const { result, durationMs } = await measureAsync(async () => {
++    const chatJid = resolveChatJid(req, ctx.defaultChatJid);
++    const usage = await ctx.getContextUsageForChat(chatJid);
++    if (!usage) {
++      return ctx.json({ tokens: null, contextWindow: null, percent: null });
++    }
+ 
+-  return ctx.json({
+-    tokens: usage.tokens,
+-    contextWindow: usage.contextWindow,
+-    percent: usage.percent,
++    return ctx.json({
++      tokens: usage.tokens,
++      contextWindow: usage.contextWindow,
++      percent: usage.percent,
++    });
++  });
++  return appendServerTiming(result, {
++    name: "agent_context",
++    durationMs,
+   });
+ }
+ 
+ /** Return available model options for the requested/default chat. */
+ export async function handleAgentModelsRequest(req: Request, ctx: AgentStatusContext): Promise<Response> {
+-  const chatJid = resolveChatJid(req, ctx.defaultChatJid);
+-  const payload = await ctx.getAvailableModels(chatJid);
+-  return ctx.json(payload, 200);
++  const { result, durationMs } = await measureAsync(async () => {
++    const chatJid = resolveChatJid(req, ctx.defaultChatJid);
++    const payload = await ctx.getAvailableModels(chatJid);
++    return ctx.json(payload, 200);
++  });
++  return appendServerTiming(result, {
++    name: "agent_models",
++    durationMs,
++  });
+ }
+diff --git a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
+index d990bd83..f0e9bba0 100644
+--- a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
++++ b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
+@@ -28,6 +28,7 @@ import {
+   handleThoughtVisibilityRequest,
+   handleWorkspaceVisibilityRequest,
+ } from "./ui-endpoints.js";
++import { appendServerTiming, measureSync } from "../http/server-timing.js";
+ import type {
+   WebChannelEndpointContexts,
+   WebChannelIdentitySnapshot,
+@@ -177,48 +178,58 @@ export class WebChannelEndpointFacadeService {
+   }
+ 
+   handleAgentActiveChats(): Response {
+-    return this.options.json({ chats: this.options.listActiveChats() }, 200);
++    const { result, durationMs } = measureSync(() => this.options.json({ chats: this.options.listActiveChats() }, 200));
++    return appendServerTiming(result, {
++      name: "agent_active_chats",
++      durationMs,
++    });
+   }
+ 
+   handleAgentBranches(req: Request): Response {
+-    const url = new URL(req.url);
+-    const rootChatJid = typeof url.searchParams.get("root_chat_jid") === "string"
+-      ? url.searchParams.get("root_chat_jid")!.trim()
+-      : "";
+-    const includeArchived = ["1", "true", "yes", "on"].includes(
+-      String(url.searchParams.get("include_archived") || "").trim().toLowerCase(),
+-    );
+-    const prewarmRecent = ["1", "true", "yes", "on"].includes(
+-      String(url.searchParams.get("prewarm_recent") || "").trim().toLowerCase(),
+-    );
+-    const prewarmLimitRaw = Number.parseInt(String(url.searchParams.get("prewarm_limit") || "").trim(), 10);
+-    const prewarmLimit = Number.isFinite(prewarmLimitRaw)
+-      ? Math.max(1, Math.min(8, prewarmLimitRaw))
+-      : 5;
+-    const excludeChatJid = typeof url.searchParams.get("exclude_chat_jid") === "string"
+-      ? url.searchParams.get("exclude_chat_jid")!.trim()
+-      : "";
+-    const prewarmChatJid = typeof url.searchParams.get("prewarm_chat_jid") === "string"
+-      ? url.searchParams.get("prewarm_chat_jid")!.trim()
+-      : "";
+-
+-    if (!rootChatJid) {
+-      if (prewarmChatJid && typeof this.options.agentPool.scheduleChatWarmup === "function") {
+-        this.options.agentPool.scheduleChatWarmup(prewarmChatJid, { priority: true });
++    const { result, durationMs } = measureSync(() => {
++      const url = new URL(req.url);
++      const rootChatJid = typeof url.searchParams.get("root_chat_jid") === "string"
++        ? url.searchParams.get("root_chat_jid")!.trim()
++        : "";
++      const includeArchived = ["1", "true", "yes", "on"].includes(
++        String(url.searchParams.get("include_archived") || "").trim().toLowerCase(),
++      );
++      const prewarmRecent = ["1", "true", "yes", "on"].includes(
++        String(url.searchParams.get("prewarm_recent") || "").trim().toLowerCase(),
++      );
++      const prewarmLimitRaw = Number.parseInt(String(url.searchParams.get("prewarm_limit") || "").trim(), 10);
++      const prewarmLimit = Number.isFinite(prewarmLimitRaw)
++        ? Math.max(1, Math.min(8, prewarmLimitRaw))
++        : 5;
++      const excludeChatJid = typeof url.searchParams.get("exclude_chat_jid") === "string"
++        ? url.searchParams.get("exclude_chat_jid")!.trim()
++        : "";
++      const prewarmChatJid = typeof url.searchParams.get("prewarm_chat_jid") === "string"
++        ? url.searchParams.get("prewarm_chat_jid")!.trim()
++        : "";
++
++      if (!rootChatJid) {
++        if (prewarmChatJid && typeof this.options.agentPool.scheduleChatWarmup === "function") {
++          this.options.agentPool.scheduleChatWarmup(prewarmChatJid, { priority: true });
++        }
++        if (prewarmRecent && typeof this.options.agentPool.scheduleRecentChatWarmup === "function") {
++          const excludeChatJids = [excludeChatJid, prewarmChatJid].filter(Boolean);
++          this.options.agentPool.scheduleRecentChatWarmup({
++            limit: prewarmLimit,
++            excludeChatJids,
++          });
++        }
+       }
+-      if (prewarmRecent && typeof this.options.agentPool.scheduleRecentChatWarmup === "function") {
+-        const excludeChatJids = [excludeChatJid, prewarmChatJid].filter(Boolean);
+-        this.options.agentPool.scheduleRecentChatWarmup({
+-          limit: prewarmLimit,
+-          excludeChatJids,
+-        });
+-      }
+-    }
+ 
+-    const chats = typeof this.options.listKnownChats === "function"
+-      ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
+-      : this.options.listActiveChats();
+-    return this.options.json({ chats }, 200);
++      const chats = typeof this.options.listKnownChats === "function"
++        ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
++        : this.options.listActiveChats();
++      return this.options.json({ chats }, 200);
++    });
++    return appendServerTiming(result, {
++      name: "agent_branches",
++      durationMs,
++    });
+   }
+ 
+   async handleAgentRespond(req: Request): Promise<Response> {
+diff --git a/runtime/src/channels/web/endpoints/content-endpoints.ts b/runtime/src/channels/web/endpoints/content-endpoints.ts
+index 854e4a03..022a6f36 100644
+--- a/runtime/src/channels/web/endpoints/content-endpoints.ts
++++ b/runtime/src/channels/web/endpoints/content-endpoints.ts
+@@ -9,6 +9,7 @@ import {
+   getTimelineResponse,
+ } from "../timeline-service.js";
+ import type { WebAgentBufferEntry } from "../agent/agent-buffers.js";
++import { appendServerTiming, measureSync } from "../http/server-timing.js";
+ 
+ /** Shared dependencies for timeline/search/thread/thought endpoint handlers. */
+ export interface ContentEndpointsContext {
+@@ -24,8 +25,11 @@ export function handleTimelineRequest(
+   chatJid: string | undefined,
+   ctx: ContentEndpointsContext
+ ): Response {
+-  const result = getTimelineResponse(chatJid || ctx.defaultChatJid, limit, before);
+-  return ctx.json(result.body, result.status);
++  const { result, durationMs } = measureSync(() => getTimelineResponse(chatJid || ctx.defaultChatJid, limit, before));
++  return appendServerTiming(ctx.json(result.body, result.status), {
++    name: "timeline",
++    durationMs,
++  });
+ }
+ 
+ /** Return posts for a hashtag in the requested web chat (defaults to the main web chat). */
+@@ -36,8 +40,11 @@ export function handleHashtagRequest(
+   chatJid: string | undefined,
+   ctx: ContentEndpointsContext
+ ): Response {
+-  const result = getHashtagResponse(chatJid || ctx.defaultChatJid, tag, limit, offset);
+-  return ctx.json(result.body, result.status);
++  const { result, durationMs } = measureSync(() => getHashtagResponse(chatJid || ctx.defaultChatJid, tag, limit, offset));
++  return appendServerTiming(ctx.json(result.body, result.status), {
++    name: "hashtag",
++    durationMs,
++  });
+ }
+ 
+ /** Return search results for a query in the requested web chat (defaults to the main web chat). */
+@@ -51,14 +58,20 @@ export function handleSearchRequest(
+   ctx: ContentEndpointsContext
+ ): Response {
+   const normalizedScope = searchScope === "root" || searchScope === "all" ? searchScope : "current";
+-  const result = getSearchResponse(chatJid || ctx.defaultChatJid, query, limit, offset, normalizedScope, rootChatJid || null);
+-  return ctx.json(result.body, result.status);
++  const { result, durationMs } = measureSync(() => getSearchResponse(chatJid || ctx.defaultChatJid, query, limit, offset, normalizedScope, rootChatJid || null));
++  return appendServerTiming(ctx.json(result.body, result.status), {
++    name: "search",
++    durationMs,
++  });
+ }
+ 
+ /** Return a thread payload rooted at the provided interaction id. */
+ export function handleThreadRequest(id: number | null, chatJid: string | undefined, ctx: ContentEndpointsContext): Response {
+-  const result = getThreadResponse(chatJid || ctx.defaultChatJid, id);
+-  return ctx.json(result.body, result.status);
++  const { result, durationMs } = measureSync(() => getThreadResponse(chatJid || ctx.defaultChatJid, id));
++  return appendServerTiming(ctx.json(result.body, result.status), {
++    name: "thread",
++    durationMs,
++  });
+ }
+ 
+ /** Return persisted thought/draft buffer text for a streamed model turn. */
+@@ -67,9 +80,15 @@ export function handleThoughtRequest(
+   turnId: string | null,
+   ctx: ContentEndpointsContext
+ ): Response {
+-  if (!turnId) return ctx.json({ error: "Missing turn_id" }, 400);
+-  const normalized = panel === "draft" ? "draft" : "thought";
+-  const buffer = ctx.getBuffer(turnId, normalized);
+-  if (!buffer) return ctx.json({ error: "Thought not found" }, 404);
+-  return ctx.json({ text: buffer.text, total_lines: buffer.totalLines }, 200);
++  const { result, durationMs } = measureSync(() => {
++    if (!turnId) return ctx.json({ error: "Missing turn_id" }, 400);
++    const normalized = panel === "draft" ? "draft" : "thought";
++    const buffer = ctx.getBuffer(turnId, normalized);
++    if (!buffer) return ctx.json({ error: "Thought not found" }, 404);
++    return ctx.json({ text: buffer.text, total_lines: buffer.totalLines }, 200);
++  });
++  return appendServerTiming(result, {
++    name: "thought",
++    durationMs,
++  });
+ }
+diff --git a/runtime/src/channels/web/http/server-timing.ts b/runtime/src/channels/web/http/server-timing.ts
+new file mode 100644
+index 00000000..e5d23b01
+--- /dev/null
++++ b/runtime/src/channels/web/http/server-timing.ts
+@@ -0,0 +1,73 @@
++/**
++ * web/http/server-timing.ts – minimal helpers for correlated backend timing.
++ */
++
++export interface ServerTimingMetric {
++  name: string;
++  durationMs: number;
++  description?: string | null;
++}
++
++function nowMs(): number {
++  if (typeof performance !== "undefined" && typeof performance.now === "function") {
++    return performance.now();
++  }
++  return Date.now();
++}
++
++function sanitizeToken(value: string): string {
++  return String(value || "")
++    .trim()
++    .replace(/[^a-zA-Z0-9_\-.]/g, "_")
++    .slice(0, 64);
++}
++
++function sanitizeDescription(value: string): string {
++  return String(value || "")
++    .replace(/["\\]/g, "")
++    .trim()
++    .slice(0, 120);
++}
++
++function formatDuration(durationMs: number): string {
++  if (!Number.isFinite(durationMs)) return "0";
++  return (Math.max(0, durationMs) + Number.EPSILON).toFixed(1);
++}
++
++function formatMetric(metric: ServerTimingMetric): string | null {
++  const name = sanitizeToken(metric.name);
++  if (!name) return null;
++  const parts = [`${name};dur=${formatDuration(metric.durationMs)}`];
++  const description = metric.description ? sanitizeDescription(metric.description) : "";
++  if (description) {
++    parts.push(`desc="${description}"`);
++  }
++  return parts.join(";");
++}
++
++export function appendServerTiming(response: Response, ...metrics: ServerTimingMetric[]): Response {
++  for (const metric of metrics) {
++    const formatted = formatMetric(metric);
++    if (!formatted) continue;
++    response.headers.append("Server-Timing", formatted);
++  }
++  return response;
++}
++
++export function measureSync<T>(run: () => T): { result: T; durationMs: number } {
++  const startedAt = nowMs();
++  const result = run();
++  return {
++    result,
++    durationMs: nowMs() - startedAt,
++  };
++}
++
++export async function measureAsync<T>(run: () => Promise<T> | T): Promise<{ result: T; durationMs: number }> {
++  const startedAt = nowMs();
++  const result = await run();
++  return {
++    result,
++    durationMs: nowMs() - startedAt,
++  };
++}
+diff --git a/runtime/src/channels/web/request-router-service.ts b/runtime/src/channels/web/request-router-service.ts
+index 2668385f..786c58a5 100644
+--- a/runtime/src/channels/web/request-router-service.ts
++++ b/runtime/src/channels/web/request-router-service.ts
+@@ -44,6 +44,7 @@ import { handleExtensionRoutes } from "./http/extension-routes.js";
+ import { enforceRequestGuards } from "./http/request-guards.js";
+ import { getRouteFlags } from "./http/route-flags.js";
+ import { withSecurityHeaders } from "./http/security.js";
++import { appendServerTiming, measureAsync } from "./http/server-timing.js";
+ 
+ const STATIC_DIR = resolve(import.meta.dir, "..", "..", "..", "..", "web", "static");
+ const STATIC_MIME_TYPES: Record<string, string> = {
+@@ -90,11 +91,15 @@ export class RequestRouterService {
+    */
+   async handle(req: Request): Promise<Response> {
+     const requestId = createUuid("req");
+-    const response = await this.route(req);
++    const { result: response, durationMs } = await measureAsync(() => this.route(req));
+     // Determine TLS from the request URL scheme to conditionally add HSTS
+     const isTls = req.url.startsWith("https://");
+     const secured = withSecurityHeaders(response, isTls);
+     secured.headers.set("x-request-id", requestId);
++    appendServerTiming(secured, {
++      name: "app",
++      durationMs,
++    });
+     return secured;
+   }
+ 
 diff --git a/runtime/test/agent-pool/provider-usage.test.ts b/runtime/test/agent-pool/provider-usage.test.ts
 index b1461c8d..77a9917c 100644
 --- a/runtime/test/agent-pool/provider-usage.test.ts
@@ -323,6 +726,94 @@ index 3459bc63..43fcc9cd 100644
  test("AgentRuntimeFacade removes one queued follow-up and replays the remaining queue", async () => {
    const prompts: Array<{ text: string; behavior: string }> = [];
    const session = {
+diff --git a/runtime/test/channels/web/agent/agent-status.test.ts b/runtime/test/channels/web/agent/agent-status.test.ts
+index c49757cc..3a9d0ebb 100644
+--- a/runtime/test/channels/web/agent/agent-status.test.ts
++++ b/runtime/test/channels/web/agent/agent-status.test.ts
+@@ -25,6 +25,7 @@ describe("web agent status helpers", () => {
+     const res = handleAgentStatusRequest(req, createContext());
+ 
+     expect(res.status).toBe(200);
++    expect(res.headers.get("Server-Timing")).toContain("agent_status;dur=");
+     expect(await res.json()).toEqual({ status: "idle", data: null });
+   });
+ 
+@@ -41,6 +42,7 @@ describe("web agent status helpers", () => {
+       })
+     );
+ 
++    expect(res.headers.get("Server-Timing")).toContain("agent_status;dur=");
+     const body = await res.json();
+     expect(body.status).toBe("active");
+     expect(body.data.chatJid).toBe("web:custom");
+@@ -53,6 +55,7 @@ describe("web agent status helpers", () => {
+     const res = await handleAgentContextRequest(req, createContext());
+ 
+     expect(res.status).toBe(200);
++    expect(res.headers.get("Server-Timing")).toContain("agent_context;dur=");
+     expect(await res.json()).toEqual({ tokens: null, contextWindow: null, percent: null });
+   });
+ 
+@@ -67,6 +70,7 @@ describe("web agent status helpers", () => {
+     );
+ 
+     expect(res.status).toBe(200);
++    expect(res.headers.get("Server-Timing")).toContain("agent_models;dur=");
+     expect(await res.json()).toEqual(payload);
+   });
+ });
+diff --git a/runtime/test/channels/web/endpoints/content-endpoints.test.ts b/runtime/test/channels/web/endpoints/content-endpoints.test.ts
+index c6e07848..e995e2ec 100644
+--- a/runtime/test/channels/web/endpoints/content-endpoints.test.ts
++++ b/runtime/test/channels/web/endpoints/content-endpoints.test.ts
+@@ -27,15 +27,19 @@ describe("web content endpoint helpers", () => {
+ 
+     const timeline = handleTimelineRequest(20, undefined, undefined, ctx);
+     expect(timeline.status).toBe(200);
++    expect(timeline.headers.get("Server-Timing")).toContain("timeline;dur=");
+ 
+     const hashtag = handleHashtagRequest("dev", 20, 0, undefined, ctx);
+     expect(hashtag.status).toBe(200);
++    expect(hashtag.headers.get("Server-Timing")).toContain("hashtag;dur=");
+ 
+     const searchBad = handleSearchRequest("", 20, 0, undefined, undefined, undefined, ctx);
+     expect(searchBad.status).toBe(400);
++    expect(searchBad.headers.get("Server-Timing")).toContain("search;dur=");
+ 
+     const threadMissing = handleThreadRequest(null, undefined, ctx);
+     expect(threadMissing.status).toBe(404);
++    expect(threadMissing.headers.get("Server-Timing")).toContain("thread;dur=");
+   });
+ 
+   test("thought helper validates turn id and returns known buffer", async () => {
+@@ -48,12 +52,15 @@ describe("web content endpoint helpers", () => {
+ 
+     const missing = handleThoughtRequest("draft", null, ctx);
+     expect(missing.status).toBe(400);
++    expect(missing.headers.get("Server-Timing")).toContain("thought;dur=");
+ 
+     const notFound = handleThoughtRequest("thought", "missing", ctx);
+     expect(notFound.status).toBe(404);
++    expect(notFound.headers.get("Server-Timing")).toContain("thought;dur=");
+ 
+     const ok = handleThoughtRequest("draft", "t1", ctx);
+     expect(ok.status).toBe(200);
++    expect(ok.headers.get("Server-Timing")).toContain("thought;dur=");
+     expect(await ok.json()).toEqual({ text: "draft body", total_lines: 3 });
+   });
+ });
+diff --git a/runtime/test/channels/web/security-hardening.test.ts b/runtime/test/channels/web/security-hardening.test.ts
+index 412888cf..cfb50a4a 100644
+--- a/runtime/test/channels/web/security-hardening.test.ts
++++ b/runtime/test/channels/web/security-hardening.test.ts
+@@ -746,6 +746,7 @@ describe("security headers", () => {
+     expect(res.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
+     expect(res.headers.get("Permissions-Policy")).toContain("camera=");
+     expect(res.headers.get("x-request-id")).toMatch(/^req-/);
++    expect(res.headers.get("Server-Timing")).toContain("app;dur=");
+     expect(res.headers.get("Strict-Transport-Security")).toBe(null);
+   });
+ 
 diff --git a/runtime/test/web/app-boot-load-orchestration.test.ts b/runtime/test/web/app-boot-load-orchestration.test.ts
 index ec5271e4..56807e3b 100644
 --- a/runtime/test/web/app-boot-load-orchestration.test.ts
@@ -573,10 +1064,10 @@ index 76d92a7e..1e8274dc 100644
  });
 diff --git a/runtime/test/web/app-perf-tracing.test.ts b/runtime/test/web/app-perf-tracing.test.ts
 new file mode 100644
-index 00000000..7114c7f1
+index 00000000..aaf80a72
 --- /dev/null
 +++ b/runtime/test/web/app-perf-tracing.test.ts
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,83 @@
 +import { afterEach, expect, test } from 'bun:test';
 +
 +import {
@@ -648,13 +1139,16 @@ index 00000000..7114c7f1
 +    durationMs: 42,
 +    status: 200,
 +    ok: true,
-+    serverTiming: 'app;dur=21.5',
++    requestId: 'req_backend_123',
++    serverTiming: 'app;dur=21.5, agent_models;dur=9.7',
 +    detail: { chatJid: 'web:branch' },
 +  });
 +
 +  const requests = getAppPerfTracing().getRequests();
 +  expect(requests).toHaveLength(1);
 +  expect(requests[0]?.id).toBe(requestId);
++  expect(requests[0]?.requestId).toBe('req_backend_123');
++  expect(requests[0]?.serverTiming).toBe('app;dur=21.5, agent_models;dur=9.7');
 +  expect(requests[0]?.detail).toEqual({ chatJid: 'web:branch' });
 +});
 diff --git a/runtime/test/web/app-refresh-coordination.test.ts b/runtime/test/web/app-refresh-coordination.test.ts
@@ -912,10 +1406,10 @@ index 60644f8c..d83a8b99 100644
  
  test('popOutPane transfers pane state and closes the source tab after navigation', async () => {
 diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
-index c8b83899..1182bf09 100644
+index c8b83899..2d773e42 100644
 --- a/runtime/web/src/api.ts
 +++ b/runtime/web/src/api.ts
-@@ -3,18 +3,47 @@
+@@ -3,18 +3,48 @@
   * API client for Vibes backend
   */
  
@@ -965,6 +1459,7 @@ index c8b83899..1182bf09 100644
 +        durationMs,
 +        status: response.status,
 +        ok: response.ok,
++        requestId: response.headers?.get?.('x-request-id') || null,
 +        serverTiming: response.headers?.get?.('Server-Timing') || null,
      });
      
@@ -1774,10 +2269,10 @@ index 8134a092..84f9831b 100644
    const followupQueueCount = followupQueueItems.length;
 diff --git a/runtime/web/src/ui/app-perf-tracing.ts b/runtime/web/src/ui/app-perf-tracing.ts
 new file mode 100644
-index 00000000..c9b6b56c
+index 00000000..efba3e71
 --- /dev/null
 +++ b/runtime/web/src/ui/app-perf-tracing.ts
-@@ -0,0 +1,266 @@
+@@ -0,0 +1,267 @@
 +type TraceStatus = 'active' | 'completed' | 'cancelled' | 'failed';
 +
 +type TracePhase = {
@@ -1807,6 +2302,7 @@ index 00000000..c9b6b56c
 +  durationMs: number;
 +  status?: number;
 +  ok?: boolean;
++  requestId?: string | null;
 +  serverTiming?: string | null;
 +  detail?: Record<string, unknown> | null;
 +};
