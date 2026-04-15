@@ -1,10 +1,20 @@
 diff --git a/runtime/src/agent-pool/provider-usage.ts b/runtime/src/agent-pool/provider-usage.ts
+index 649469b..db7c5bf 100644
 --- a/runtime/src/agent-pool/provider-usage.ts
 +++ b/runtime/src/agent-pool/provider-usage.ts
-@@ -4,0 +5,2 @@
+@@ -2,6 +2,8 @@ import type { AuthStorage } from "@mariozechner/pi-coding-agent";
+ 
+ import { createLogger, debugSuppressedError } from "../utils/logger.js";
+ 
 +const ANTHROPIC_OAUTH_USAGE_BETA = "oauth-2025-04-20";
 +
-@@ -13,0 +16,13 @@
+ export interface ProviderUsageWindow {
+   label: string;
+   used_percent: number | null;
+@@ -11,8 +13,21 @@ export interface ProviderUsageWindow {
+   reset_description: string | null;
+ }
+ 
 +export interface ProviderExtraUsage {
 +  enabled: boolean;
 +  unlimited: boolean;
@@ -18,12 +28,24 @@ diff --git a/runtime/src/agent-pool/provider-usage.ts b/runtime/src/agent-pool/p
 +  hint_short: string | null;
 +}
 +
-@@ -15 +30 @@
+ export interface ProviderUsageSnapshot {
 -  provider: "openai-codex" | "github-copilot";
 +  provider: "openai-codex" | "github-copilot" | "anthropic";
-@@ -22,0 +38 @@
+   source: string;
+   plan: string | null;
+   fetched_at: string;
+@@ -20,6 +35,7 @@ export interface ProviderUsageSnapshot {
+   secondary: ProviderUsageWindow | null;
+   credits_remaining: number | null;
+   credits_unlimited: boolean;
 +  extra_usage: ProviderExtraUsage | null;
-@@ -90,0 +107,22 @@
+   hint_short: string;
+ }
+ 
+@@ -91,6 +107,28 @@ function compactPercent(value: number | null): string | null {
+   return `${Math.round(value)}%`;
+ }
+ 
 +function formatUsd(value: number | null): string | null {
 +  if (value == null || !Number.isFinite(value)) return null;
 +  const rendered = Number.isInteger(value)
@@ -46,7 +68,13 @@ diff --git a/runtime/src/agent-pool/provider-usage.ts b/runtime/src/agent-pool/p
 +  }
 +}
 +
-@@ -117,0 +156,87 @@
+ function buildCodexHint(
+   primary: ProviderUsageWindow | null,
+   secondary: ProviderUsageWindow | null,
+@@ -118,6 +156,93 @@ function buildCopilotHint(primary: ProviderUsageWindow | null, secondary: Provid
+   return parts.join(" • ");
+ }
+ 
 +function buildExtraUsageHint(
 +  enabled: boolean,
 +  unlimited: boolean,
@@ -134,11 +162,26 @@ diff --git a/runtime/src/agent-pool/provider-usage.ts b/runtime/src/agent-pool/p
 +  return null;
 +}
 +
-@@ -176,0 +302 @@
+ async function getOAuthCredential(authStorage: AuthStorage, providerId: string): Promise<any | null> {
+   const current = (authStorage.get(providerId) as any) ?? null;
+   if (!current || current.type !== "oauth") return null;
+@@ -177,6 +302,7 @@ async function fetchCodexUsage(authStorage: AuthStorage): Promise<ProviderUsageS
+     secondary,
+     credits_remaining: Number.isFinite(creditsRemaining) ? creditsRemaining : null,
+     credits_unlimited: creditsUnlimited,
 +    extra_usage: null,
-@@ -230,0 +357 @@
+     hint_short: buildCodexHint(primary, secondary, Number.isFinite(creditsRemaining) ? creditsRemaining : null, creditsUnlimited),
+   };
+ }
+@@ -231,12 +357,96 @@ async function fetchGitHubCopilotUsage(authStorage: AuthStorage): Promise<Provid
+     secondary,
+     credits_remaining: null,
+     credits_unlimited: false,
 +    extra_usage: null,
-@@ -234,0 +362,83 @@
+     hint_short: buildCopilotHint(primary, secondary),
+   };
+ }
+ 
 +async function fetchAnthropicOAuthProfile(accessToken: string): Promise<any | null> {
 +  const res = await fetch("https://api.anthropic.com/api/oauth/profile", {
 +    headers: {
@@ -222,18 +265,31 @@ diff --git a/runtime/src/agent-pool/provider-usage.ts b/runtime/src/agent-pool/p
 +  };
 +}
 +
-@@ -236 +446 @@
--  if (providerId !== "openai-codex" && providerId !== "github-copilot") return null;
-+  if (providerId !== "openai-codex" && providerId !== "github-copilot" && providerId !== "anthropic") return null;
-@@ -247 +457,3 @@
--      : await fetchGitHubCopilotUsage(authStorage);
-+      : providerId === "github-copilot"
-+        ? await fetchGitHubCopilotUsage(authStorage)
-+        : await fetchAnthropicUsage(authStorage);
+ function isSupportedProviderId(providerId: string): providerId is SupportedProviderId {
+-  return providerId === "openai-codex" || providerId === "github-copilot";
++  return providerId === "openai-codex" || providerId === "github-copilot" || providerId === "anthropic";
+ }
+ 
+ function getCachedUsageEntry(providerId: string): CachedUsage | null {
+@@ -251,7 +461,9 @@ function hasFreshCachedUsage(providerId: string): boolean {
+ async function fetchProviderUsage(authStorage: AuthStorage, providerId: SupportedProviderId): Promise<ProviderUsageSnapshot | null> {
+   return providerId === "openai-codex"
+     ? await fetchCodexUsage(authStorage)
+-    : await fetchGitHubCopilotUsage(authStorage);
++    : providerId === "github-copilot"
++      ? await fetchGitHubCopilotUsage(authStorage)
++      : await fetchAnthropicUsage(authStorage);
+ }
+ 
+ export function peekProviderUsage(providerId: string, options: { allowStale?: boolean } = {}): ProviderUsageSnapshot | null {
 diff --git a/runtime/test/agent-pool/provider-usage.test.ts b/runtime/test/agent-pool/provider-usage.test.ts
+index 15e35a9..fc071ab 100644
 --- a/runtime/test/agent-pool/provider-usage.test.ts
 +++ b/runtime/test/agent-pool/provider-usage.test.ts
-@@ -115,0 +116,121 @@
+@@ -175,6 +175,127 @@ describe("provider usage", () => {
+     }
+   });
+ 
 +  test("fetches Anthropic usage from the OAuth usage API", async () => {
 +    const fetchMock = mock(async (input: RequestInfo | URL) => {
 +      const url = String(input);
@@ -355,12 +411,28 @@ diff --git a/runtime/test/agent-pool/provider-usage.test.ts b/runtime/test/agent
 +    }
 +  });
 +
+   test("returns null for unsupported providers", async () => {
+     const usage = await getProviderUsage(createAuthStorage({}), "openai");
+     expect(usage).toBeNull();
 diff --git a/runtime/web/src/components/compose-box.ts b/runtime/web/src/components/compose-box.ts
+index 67b2fea..f3b39ae 100644
 --- a/runtime/web/src/components/compose-box.ts
 +++ b/runtime/web/src/components/compose-box.ts
-@@ -713,0 +714,3 @@
+@@ -729,6 +729,9 @@ export function ComposeBox({
+     const modelHintSuffix = supportsThinking && thinkingLevel ? ` (${thinkingLevel})` : '';
+     const modelThinkingLabel = modelHintSuffix.trim() ? `${thinkingLevel}` : '';
+     const modelUsageLabel = typeof modelUsage?.hint_short === 'string' ? modelUsage.hint_short.trim() : '';
 +    const modelExtraUsageResetLabel = typeof modelUsage?.extra_usage?.reset_description === 'string'
 +        ? modelUsage.extra_usage.reset_description.trim()
 +        : '';
-@@ -723,0 +727 @@
+     const modelUsageSectionLabel = [
+         modelThinkingLabel || null,
+         modelUsageLabel || null,
+@@ -739,6 +742,7 @@ export function ComposeBox({
+         modelUsageLabel || null,
+         modelUsage?.primary?.reset_description || null,
+         modelUsage?.secondary?.reset_description || null,
 +        modelExtraUsageResetLabel || null,
+     ].filter(Boolean);
+     const modelHintTitle = switchingModel
+         ? 'Switching model…'
