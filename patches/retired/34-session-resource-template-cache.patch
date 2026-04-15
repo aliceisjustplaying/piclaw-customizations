@@ -1,0 +1,41 @@
+--- runtime/test/agent-pool/agent-pool.test.ts
++++ runtime/test/agent-pool/agent-pool.test.ts
+@@ -338,6 +338,38 @@
+   await pool.shutdown();
+ });
+ 
++test("consecutive default sessions still bind extension action methods", async () => {
++  const ws = getTestWorkspace();
++  restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
++
++  const sessionModule = await importFresh<typeof import("../src/agent-pool/session.js")>("../src/agent-pool/session.js");
++  const { AuthStorage, ModelRegistry, SettingsManager, getAgentDir } = await import("@mariozechner/pi-coding-agent");
++  const { WORKSPACE_DIR } = await import("../../src/core/config.js");
++  const authStorage = AuthStorage.create();
++  const modelRegistry = ModelRegistry.create(authStorage);
++  const settingsManager = SettingsManager.create(WORKSPACE_DIR, getAgentDir());
++
++  const runtimeA = await sessionModule.createDefaultSession("web:bind-a", {
++    authStorage,
++    modelRegistry,
++    settingsManager,
++    tools: [],
++  });
++  await expect(runtimeA.session.bindExtensions({})).resolves.toBeUndefined();
++
++  const runtimeB = await sessionModule.createDefaultSession("web:bind-b", {
++    authStorage,
++    modelRegistry,
++    settingsManager,
++    tools: [],
++  });
++  await expect(runtimeB.session.bindExtensions({})).resolves.toBeUndefined();
++  expect(runtimeB.session.getActiveToolNames()).toContain("activate_tools");
++
++  await runtimeA.dispose();
++  await runtimeB.dispose();
++});
++
+ test("agent pool can run a side prompt with the current model and thinking level", async () => {
+   const ws = getTestWorkspace();
+   restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });

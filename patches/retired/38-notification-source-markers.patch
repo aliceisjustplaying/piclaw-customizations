@@ -1,0 +1,224 @@
+diff --git a/runtime/src/channels/web/push/web-push-routes.ts b/runtime/src/channels/web/push/web-push-routes.ts
+index 87b473b..aba7aa1 100644
+--- a/runtime/src/channels/web/push/web-push-routes.ts
++++ b/runtime/src/channels/web/push/web-push-routes.ts
+@@ -64,6 +64,7 @@ export async function handleWebPushTest(
+       body: typeof payload.body === "string" ? payload.body : undefined,
+       url: typeof payload.url === "string" ? payload.url : undefined,
+       tag: typeof payload.tag === "string" ? payload.tag : undefined,
++      sourceLabel: typeof payload.sourceLabel === "string" ? payload.sourceLabel : undefined,
+       urgency: options.urgency || "high",
+       ttl: options.ttl ?? 120,
+     });
+diff --git a/runtime/src/channels/web/push/web-push-service.ts b/runtime/src/channels/web/push/web-push-service.ts
+index ca8a781..3ed6678 100644
+--- a/runtime/src/channels/web/push/web-push-service.ts
++++ b/runtime/src/channels/web/push/web-push-service.ts
+@@ -20,6 +20,7 @@ export interface WebPushNotificationPayload {
+   body: string;
+   url?: string;
+   tag?: string;
++  sourceLabel?: string;
+ }
+ 
+ export interface StoredWebPushSendResult {
+@@ -66,11 +67,15 @@ function normalizePayload(payload: WebPushNotificationPayload): WebPushNotificat
+   const tag = typeof payload?.tag === "string" && payload.tag.trim()
+     ? payload.tag.trim()
+     : "piclaw";
++  const sourceLabel = typeof payload?.sourceLabel === "string" && payload.sourceLabel.trim()
++    ? payload.sourceLabel.trim()
++    : undefined;
+   return {
+     title,
+     body,
+     tag,
+     url: resolvePushPath(payload?.url),
++    ...(sourceLabel ? { sourceLabel } : {}),
+   };
+ }
+ 
+@@ -164,12 +169,13 @@ export async function sendStoredWebPushNotification(
+ }
+ 
+ export async function sendStoredWebPushTestNotification(
+-  options: SendStoredWebPushNotificationOptions & { title?: string; body?: string; url?: string; tag?: string } = {},
++  options: SendStoredWebPushNotificationOptions & { title?: string; body?: string; url?: string; tag?: string; sourceLabel?: string } = {},
+ ): Promise<StoredWebPushSendResult> {
+   return await sendStoredWebPushNotification({
+     title: options.title || "PiClaw notifications enabled",
+     body: options.body || "Web Push is configured for this device.",
+     url: options.url || "/",
+     tag: options.tag || "piclaw:test",
++    sourceLabel: options.sourceLabel || "Web Push",
+   }, options);
+ }
+diff --git a/runtime/test/channels/web/web-push-routes.test.ts b/runtime/test/channels/web/web-push-routes.test.ts
+index 3d3e92d..be663d2 100644
+--- a/runtime/test/channels/web/web-push-routes.test.ts
++++ b/runtime/test/channels/web/web-push-routes.test.ts
+@@ -43,6 +43,7 @@ describe("web push routes", () => {
+         body: "Custom body",
+         url: "/?chat_jid=web%3Atest",
+         tag: "piclaw:custom",
++        sourceLabel: "Web Push",
+       }),
+     });
+ 
+@@ -65,6 +66,7 @@ describe("web push routes", () => {
+       body: "Custom body",
+       url: "/?chat_jid=web%3Atest",
+       tag: "piclaw:custom",
++      sourceLabel: "Web Push",
+     });
+     expect(((deliveries[0]?.options as any)?.TTL)).toBe(120);
+     expect(((deliveries[0]?.options as any)?.urgency)).toBe("high");
+diff --git a/runtime/test/channels/web/web-push-service.test.ts b/runtime/test/channels/web/web-push-service.test.ts
+index 33f532d..b3ed211 100644
+--- a/runtime/test/channels/web/web-push-service.test.ts
++++ b/runtime/test/channels/web/web-push-service.test.ts
+@@ -4,7 +4,7 @@ import { join } from "node:path";
+ import { tmpdir } from "node:os";
+ 
+ import { upsertStoredWebPushSubscription, listStoredWebPushSubscriptions } from "../../../src/channels/web/push/web-push-store.js";
+-import { sendStoredWebPushNotification } from "../../../src/channels/web/push/web-push-service.js";
++import { sendStoredWebPushNotification, sendStoredWebPushTestNotification } from "../../../src/channels/web/push/web-push-service.js";
+ 
+ const tempDirs: string[] = [];
+ 
+@@ -102,4 +102,25 @@ describe("web push service", () => {
+       "https://push.example.test/device/3",
+     ]);
+   });
++
++  test("adds a default source marker to test notifications", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(9), { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    await sendStoredWebPushTestNotification({
++      baseDir,
++      sendNotification: async (_subscription, payload) => {
++        deliveries.push(JSON.parse(payload));
++      },
++    });
++
++    expect(deliveries).toEqual([{
++      title: "PiClaw notifications enabled",
++      body: "Web Push is configured for this device.",
++      url: "/",
++      tag: "piclaw:test",
++      sourceLabel: "Web Push",
++    }]);
++  });
+ });
+diff --git a/runtime/test/web/use-notifications.test.ts b/runtime/test/web/use-notifications.test.ts
+new file mode 100644
+index 0000000..19aa88e
+--- /dev/null
++++ b/runtime/test/web/use-notifications.test.ts
+@@ -0,0 +1,17 @@
++import { expect, test } from 'bun:test';
++
++import {
++  formatNotificationTitle,
++  LOCAL_NOTIFICATION_SOURCE_LABEL,
++  WEB_PUSH_NOTIFICATION_SOURCE_LABEL,
++} from '../../web/src/ui/use-notifications.js';
++
++test('formatNotificationTitle appends a visible source marker', () => {
++  expect(formatNotificationTitle('Pi', LOCAL_NOTIFICATION_SOURCE_LABEL)).toBe('Pi [Local]');
++  expect(formatNotificationTitle('PiClaw', WEB_PUSH_NOTIFICATION_SOURCE_LABEL)).toBe('PiClaw [Web Push]');
++});
++
++test('formatNotificationTitle falls back cleanly when no source marker is provided', () => {
++  expect(formatNotificationTitle('Pi', '')).toBe('Pi');
++  expect(formatNotificationTitle('', '')).toBe('PiClaw');
++});
+diff --git a/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts b/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts
+index f8ac6cf..3d5238a 100644
+--- a/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts
++++ b/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts
+@@ -302,7 +302,7 @@ export function useChatPaneRuntimeOrchestration(options: UseChatPaneRuntimeOrche
+     const agentsMap = agentsRef.current || {};
+     const agent = post?.data?.agent_id ? agentsMap[post.data.agent_id] : null;
+     const title = agent?.name || 'Pi';
+-    notify(title, body);
++    notify(title, body, { sourceLabel: 'Local' });
+   }, [agentsRef, lastAgentResponseRef, lastNotifiedIdRef, notify]);
+ 
+   return {
+diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
+index f5dc384..2f8d9ef 100644
+--- a/runtime/web/src/ui/use-notifications.ts
++++ b/runtime/web/src/ui/use-notifications.ts
+@@ -3,6 +3,15 @@ import { useCallback, useEffect, useRef, useState } from '../vendor/preact-htm.j
+ import { getLocalStorageBoolean, setLocalStorageItem } from '../utils/storage.js';
+ import { focusWindowBestEffort } from './notification-focus.js';
+ 
++export const LOCAL_NOTIFICATION_SOURCE_LABEL = 'Local';
++export const WEB_PUSH_NOTIFICATION_SOURCE_LABEL = 'Web Push';
++
++export function formatNotificationTitle(title, sourceLabel = '') {
++  const normalizedTitle = typeof title === 'string' && title.trim() ? title.trim() : 'PiClaw';
++  const normalizedSource = typeof sourceLabel === 'string' ? sourceLabel.trim() : '';
++  return normalizedSource ? `${normalizedTitle} [${normalizedSource}]` : normalizedTitle;
++}
++
+ function decodeBase64UrlToUint8Array(value) {
+   const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+@@ -145,6 +154,7 @@ export function useNotifications() {
+               body: 'Web Push is configured for this device.',
+               url: window.location.pathname + window.location.search,
+               tag: 'piclaw:test',
++              sourceLabel: WEB_PUSH_NOTIFICATION_SOURCE_LABEL,
+             });
+           } catch (error) {
+             console.warn('Failed to send a test web push notification:', error);
+@@ -161,12 +171,12 @@ export function useNotifications() {
+     }
+   }, [requestNotificationPermission]);
+ 
+-  const notify = useCallback((title, body) => {
++  const notify = useCallback((title, body, options = {}) => {
+     if (!notificationsEnabledRef.current) return false;
+     if (typeof Notification === 'undefined') return false;
+     if (Notification.permission !== 'granted') return false;
+     try {
+-      const notification = new Notification(title, { body });
++      const notification = new Notification(formatNotificationTitle(title, options?.sourceLabel || ''), { body });
+       notification.onclick = () => {
+         focusWindowBestEffort(window);
+       };
+diff --git a/runtime/web/static/sw.js b/runtime/web/static/sw.js
+index f6aa7e8..5b96ffe 100644
+--- a/runtime/web/static/sw.js
++++ b/runtime/web/static/sw.js
+@@ -1,3 +1,9 @@
++function formatNotificationTitle(title, sourceLabel) {
++  const normalizedTitle = String(title || '').trim() || 'PiClaw';
++  const normalizedSource = String(sourceLabel || '').trim();
++  return normalizedSource ? `${normalizedTitle} [${normalizedSource}]` : normalizedTitle;
++}
++
+ self.addEventListener('install', (event) => {
+   event.waitUntil(self.skipWaiting());
+ });
+@@ -12,6 +18,7 @@ self.addEventListener('push', (event) => {
+     body: 'You have a new update.',
+     tag: 'piclaw',
+     url: '/',
++    sourceLabel: '',
+   };
+ 
+   let payload = defaultNotification;
+@@ -33,7 +40,7 @@ self.addEventListener('push', (event) => {
+     }
+   }
+ 
+-  event.waitUntil(self.registration.showNotification(payload.title, {
++  event.waitUntil(self.registration.showNotification(formatNotificationTitle(payload.title, payload.sourceLabel), {
+     body: payload.body,
+     tag: payload.tag,
+     data: {

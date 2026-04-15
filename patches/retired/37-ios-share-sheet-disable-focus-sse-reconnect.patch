@@ -1,0 +1,87 @@
+diff --git a/runtime/test/web/use-sse-connection.test.ts b/runtime/test/web/use-sse-connection.test.ts
+index 9f427ea..0b8cca1 100644
+--- a/runtime/test/web/use-sse-connection.test.ts
++++ b/runtime/test/web/use-sse-connection.test.ts
+@@ -23,7 +23,7 @@ function createEventTarget() {
+   };
+ }
+ 
+-test('bindSseWakeLifecycle reconnects on focus but does not wake on visible-only churn', () => {
++test('bindSseWakeLifecycle reconnects on focus but does not wake on visible-only churn when focus reconnect is enabled', () => {
+   const win = createEventTarget() as any;
+   const doc = createEventTarget() as any;
+   doc.visibilityState = 'visible';
+@@ -42,6 +42,7 @@ test('bindSseWakeLifecycle reconnects on focus but does not wake on visible-only
+   }, {
+     window: win,
+     document: doc,
++    useFocusReconnect: true,
+   });
+ 
+   win.dispatch('focus');
+@@ -57,7 +58,7 @@ test('bindSseWakeLifecycle reconnects on focus but does not wake on visible-only
+   expect(doc.count('visibilitychange')).toBe(0);
+ });
+ 
+-test('bindSseWakeLifecycle reconnects and wakes once after a real return', () => {
++test('bindSseWakeLifecycle reconnects and wakes once after a real return without raw focus reconnect on iOS-style paths', () => {
+   const win = createEventTarget() as any;
+   const doc = createEventTarget() as any;
+   doc.visibilityState = 'visible';
+@@ -80,6 +81,7 @@ test('bindSseWakeLifecycle reconnects and wakes once after a real return', () =>
+     now: () => now,
+     minHiddenMs: 150,
+     dedupeMs: 1000,
++    useFocusReconnect: false,
+   });
+ 
+   doc.visibilityState = 'hidden';
+diff --git a/runtime/web/src/ui/use-sse-connection.ts b/runtime/web/src/ui/use-sse-connection.ts
+index 5dc1fe9..aedd677 100644
+--- a/runtime/web/src/ui/use-sse-connection.ts
++++ b/runtime/web/src/ui/use-sse-connection.ts
+@@ -1,6 +1,7 @@
+ // @ts-nocheck
+ import { useEffect, useRef } from '../vendor/preact-htm.js';
+ import { SSEClient } from '../api.js';
++import { isIOSDevice } from './app-helpers.js';
+ import { watchReturnToApp } from './app-resume.js';
+ 
+ export function bindSseWakeLifecycle({ sse, onWake }, runtime = {}) {
+@@ -10,10 +11,6 @@ export function bindSseWakeLifecycle({ sse, onWake }, runtime = {}) {
+     return () => {};
+   }
+ 
+-  const handleWindowFocus = () => {
+-    sse.reconnectIfNeeded();
+-  };
+-
+   const stopWatchingReturn = watchReturnToApp(() => {
+     sse.reconnectIfNeeded();
+     onWake?.();
+@@ -25,10 +22,23 @@ export function bindSseWakeLifecycle({ sse, onWake }, runtime = {}) {
+     ...(Number.isFinite(runtime.dedupeMs) ? { dedupeMs: runtime.dedupeMs } : {}),
+   });
+ 
+-  win.addEventListener('focus', handleWindowFocus);
++  const shouldUseFocusReconnect = typeof runtime.useFocusReconnect === 'boolean'
++    ? runtime.useFocusReconnect
++    : !isIOSDevice();
++
++  const handleWindowFocus = () => {
++    if (!shouldUseFocusReconnect) return;
++    sse.reconnectIfNeeded();
++  };
++
++  if (shouldUseFocusReconnect) {
++    win.addEventListener('focus', handleWindowFocus);
++  }
+ 
+   return () => {
+-    win.removeEventListener('focus', handleWindowFocus);
++    if (shouldUseFocusReconnect) {
++      win.removeEventListener('focus', handleWindowFocus);
++    }
+     stopWatchingReturn();
+   };
+ }

@@ -1,0 +1,169 @@
+diff --git a/runtime/test/web/use-sse-connection.test.ts b/runtime/test/web/use-sse-connection.test.ts
+new file mode 100644
+index 0000000..9f427ea
+--- /dev/null
++++ b/runtime/test/web/use-sse-connection.test.ts
+@@ -0,0 +1,96 @@
++import { expect, test } from 'bun:test';
++
++import { bindSseWakeLifecycle } from '../../web/src/ui/use-sse-connection.js';
++
++function createEventTarget() {
++  const listeners = new Map<string, Set<(...args: any[]) => void>>();
++  return {
++    addEventListener(type: string, listener: (...args: any[]) => void) {
++      if (!listeners.has(type)) listeners.set(type, new Set());
++      listeners.get(type)!.add(listener);
++    },
++    removeEventListener(type: string, listener: (...args: any[]) => void) {
++      listeners.get(type)?.delete(listener);
++    },
++    dispatch(type: string) {
++      for (const listener of listeners.get(type) || []) {
++        listener({ type });
++      }
++    },
++    count(type: string) {
++      return listeners.get(type)?.size || 0;
++    },
++  };
++}
++
++test('bindSseWakeLifecycle reconnects on focus but does not wake on visible-only churn', () => {
++  const win = createEventTarget() as any;
++  const doc = createEventTarget() as any;
++  doc.visibilityState = 'visible';
++
++  let reconnects = 0;
++  let wakes = 0;
++  const dispose = bindSseWakeLifecycle({
++    sse: {
++      reconnectIfNeeded() {
++        reconnects += 1;
++      },
++    },
++    onWake() {
++      wakes += 1;
++    },
++  }, {
++    window: win,
++    document: doc,
++  });
++
++  win.dispatch('focus');
++  win.dispatch('pageshow');
++  doc.dispatch('visibilitychange');
++
++  expect(reconnects).toBe(1);
++  expect(wakes).toBe(0);
++
++  dispose();
++  expect(win.count('focus')).toBe(0);
++  expect(win.count('pageshow')).toBe(0);
++  expect(doc.count('visibilitychange')).toBe(0);
++});
++
++test('bindSseWakeLifecycle reconnects and wakes once after a real return', () => {
++  const win = createEventTarget() as any;
++  const doc = createEventTarget() as any;
++  doc.visibilityState = 'visible';
++
++  let now = 1000;
++  let reconnects = 0;
++  let wakes = 0;
++  const dispose = bindSseWakeLifecycle({
++    sse: {
++      reconnectIfNeeded() {
++        reconnects += 1;
++      },
++    },
++    onWake() {
++      wakes += 1;
++    },
++  }, {
++    window: win,
++    document: doc,
++    now: () => now,
++    minHiddenMs: 150,
++    dedupeMs: 1000,
++  });
++
++  doc.visibilityState = 'hidden';
++  doc.dispatch('visibilitychange');
++  now += 175;
++  doc.visibilityState = 'visible';
++  win.dispatch('pageshow');
++  doc.dispatch('visibilitychange');
++
++  expect(reconnects).toBe(1);
++  expect(wakes).toBe(1);
++
++  dispose();
++});
+diff --git a/runtime/web/src/ui/use-sse-connection.ts b/runtime/web/src/ui/use-sse-connection.ts
+index a5f747e..5dc1fe9 100644
+--- a/runtime/web/src/ui/use-sse-connection.ts
++++ b/runtime/web/src/ui/use-sse-connection.ts
+@@ -1,6 +1,37 @@
+ // @ts-nocheck
+ import { useEffect, useRef } from '../vendor/preact-htm.js';
+ import { SSEClient } from '../api.js';
++import { watchReturnToApp } from './app-resume.js';
++
++export function bindSseWakeLifecycle({ sse, onWake }, runtime = {}) {
++  const win = runtime.window ?? (typeof window !== 'undefined' ? window : null);
++  const doc = runtime.document ?? (typeof document !== 'undefined' ? document : null);
++  if (!win || !doc || !sse) {
++    return () => {};
++  }
++
++  const handleWindowFocus = () => {
++    sse.reconnectIfNeeded();
++  };
++
++  const stopWatchingReturn = watchReturnToApp(() => {
++    sse.reconnectIfNeeded();
++    onWake?.();
++  }, {
++    window: win,
++    document: doc,
++    ...(typeof runtime.now === 'function' ? { now: runtime.now } : {}),
++    ...(Number.isFinite(runtime.minHiddenMs) ? { minHiddenMs: runtime.minHiddenMs } : {}),
++    ...(Number.isFinite(runtime.dedupeMs) ? { dedupeMs: runtime.dedupeMs } : {}),
++  });
++
++  win.addEventListener('focus', handleWindowFocus);
++
++  return () => {
++    win.removeEventListener('focus', handleWindowFocus);
++    stopWatchingReturn();
++  };
++}
+ 
+ /**
+  * Manages the SSE connection lifecycle.
+@@ -31,19 +62,13 @@ export function useSseConnection({ handleSseEvent, handleConnectionStatusChange,
+     );
+     sse.connect();
+ 
+-    const handleWindowFocus = () => {
+-      sse.reconnectIfNeeded();
+-      const doc = typeof document !== 'undefined' ? document : null;
+-      if (!doc || doc.visibilityState === 'visible') {
+-        onWakeRef.current?.();
+-      }
+-    };
+-    window.addEventListener('focus', handleWindowFocus);
+-    document.addEventListener('visibilitychange', handleWindowFocus);
++    const disposeWakeLifecycle = bindSseWakeLifecycle({
++      sse,
++      onWake: () => onWakeRef.current?.(),
++    });
+ 
+     return () => {
+-      window.removeEventListener('focus', handleWindowFocus);
+-      document.removeEventListener('visibilitychange', handleWindowFocus);
++      disposeWakeLifecycle();
+       sse.disconnect();
+     };
+   }, [chatJid]);

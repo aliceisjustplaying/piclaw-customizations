@@ -1,0 +1,209 @@
+diff --git a/runtime/src/channels/web/push/web-push-service.ts b/runtime/src/channels/web/push/web-push-service.ts
+index d1268e6..ce2ee50 100644
+--- a/runtime/src/channels/web/push/web-push-service.ts
++++ b/runtime/src/channels/web/push/web-push-service.ts
+@@ -49,6 +49,28 @@ export interface SendStoredWebPushNotificationOptions {
+       };
+     },
+   ) => Promise<unknown>;
++  generateRequestDetails?: (
++    subscription: StoredWebPushSubscription,
++    payload: string,
++    options: {
++      TTL: number;
++      urgency: "very-low" | "low" | "normal" | "high";
++      vapidDetails: {
++        subject: string;
++        publicKey: string;
++        privateKey: string;
++      };
++    },
++  ) => GeneratedWebPushRequestDetails;
++  fetchImpl?: typeof fetch;
++}
++
++export interface GeneratedWebPushRequestDetails {
++  endpoint: string;
++  method?: string;
++  headers?: Record<string, string | number>;
++  body?: BodyInit | null;
++  timeout?: number;
+ }
+ 
+ function resolvePushPath(url: string | undefined): string {
+@@ -99,16 +121,60 @@ function getStoredVapidDetails(baseDir?: string, vapidSubject?: string): {
+   };
+ }
+ 
+-async function loadSendNotificationImpl(): Promise<NonNullable<SendStoredWebPushNotificationOptions["sendNotification"]>> {
++async function loadGenerateRequestDetailsImpl(): Promise<NonNullable<SendStoredWebPushNotificationOptions["generateRequestDetails"]>> {
+   const mod = await import("web-push");
+   const api = (mod as Record<string, any>).default && typeof (mod as Record<string, any>).default === "object"
+     ? (mod as Record<string, any>).default
+     : mod;
+-  const sendNotification = api?.sendNotification;
+-  if (typeof sendNotification !== "function") {
+-    throw new Error("web-push sendNotification is unavailable.");
++  const generateRequestDetails = api?.generateRequestDetails;
++  if (typeof generateRequestDetails !== "function") {
++    throw new Error("web-push generateRequestDetails is unavailable.");
++  }
++  return generateRequestDetails.bind(api);
++}
++
++function normalizeRequestHeaders(headers: GeneratedWebPushRequestDetails["headers"]): Record<string, string> {
++  const normalized: Record<string, string> = {};
++  for (const [key, value] of Object.entries(headers || {})) {
++    const normalizedKey = String(key || "").trim();
++    if (!normalizedKey) continue;
++    if (normalizedKey.toLowerCase() === "content-length") continue;
++    normalized[normalizedKey] = String(value);
++  }
++  return normalized;
++}
++
++async function dispatchGeneratedWebPushRequest(
++  requestDetails: GeneratedWebPushRequestDetails,
++  fetchImpl: typeof fetch = fetch,
++): Promise<void> {
++  const controller = typeof AbortController !== "undefined" && Number.isFinite(requestDetails.timeout) && Number(requestDetails.timeout) > 0
++    ? new AbortController()
++    : null;
++  const timeoutId = controller
++    ? setTimeout(() => controller.abort(), Number(requestDetails.timeout))
++    : null;
++
++  try {
++    const response = await fetchImpl(requestDetails.endpoint, {
++      method: requestDetails.method || "POST",
++      headers: normalizeRequestHeaders(requestDetails.headers),
++      body: requestDetails.body ?? undefined,
++      ...(controller ? { signal: controller.signal } : {}),
++    });
++    if (response.ok) return;
++
++    const body = await response.text().catch(() => "");
++    throw {
++      message: "Received unexpected response code",
++      statusCode: response.status,
++      headers: Object.fromEntries(response.headers.entries()),
++      body,
++      endpoint: requestDetails.endpoint,
++    };
++  } finally {
++    if (timeoutId) clearTimeout(timeoutId);
+   }
+-  return sendNotification.bind(api);
+ }
+ 
+ function isExpiredSubscriptionError(error: unknown): boolean {
+@@ -168,7 +234,14 @@ export async function sendStoredWebPushNotification(
+   const normalizedPayload = normalizePayload(payload);
+   const serializedPayload = JSON.stringify(normalizedPayload);
+   const vapidDetails = getStoredVapidDetails(options.baseDir, options.vapidSubject);
+-  const sendNotification = options.sendNotification || await loadSendNotificationImpl();
++  const requestOptions = {
++    TTL: Number.isFinite(options.ttl) ? Number(options.ttl) : 60,
++    urgency: options.urgency || "normal",
++    vapidDetails,
++  } as const;
++  const generateRequestDetails = options.sendNotification
++    ? null
++    : (options.generateRequestDetails || await loadGenerateRequestDetailsImpl());
+ 
+   let sent = 0;
+   let removed = 0;
+@@ -176,11 +249,12 @@ export async function sendStoredWebPushNotification(
+ 
+   for (const subscription of subscriptions) {
+     try {
+-      await sendNotification(subscription, serializedPayload, {
+-        TTL: Number.isFinite(options.ttl) ? Number(options.ttl) : 60,
+-        urgency: options.urgency || "normal",
+-        vapidDetails,
+-      });
++      if (options.sendNotification) {
++        await options.sendNotification(subscription, serializedPayload, requestOptions);
++      } else if (generateRequestDetails) {
++        const requestDetails = generateRequestDetails(subscription, serializedPayload, requestOptions);
++        await dispatchGeneratedWebPushRequest(requestDetails, options.fetchImpl || fetch);
++      }
+       sent += 1;
+     } catch (error) {
+       if (isExpiredSubscriptionError(error)) {
+diff --git a/runtime/src/types/web-push.d.ts b/runtime/src/types/web-push.d.ts
+index d6dce51..60182f0 100644
+--- a/runtime/src/types/web-push.d.ts
++++ b/runtime/src/types/web-push.d.ts
+@@ -12,14 +12,29 @@ declare module "web-push" {
+     [key: string]: unknown;
+   }
+ 
++  export interface WebPushGeneratedRequestDetails {
++    endpoint: string;
++    method?: string;
++    headers?: Record<string, string | number>;
++    body?: BodyInit | null;
++    timeout?: number;
++  }
++
+   export function sendNotification(
+     subscription: unknown,
+     payload?: string | Buffer | null,
+     options?: WebPushRequestOptions,
+   ): Promise<unknown>;
+ 
++  export function generateRequestDetails(
++    subscription: unknown,
++    payload?: string | Buffer | null,
++    options?: WebPushRequestOptions,
++  ): WebPushGeneratedRequestDetails;
++
+   const api: {
+     sendNotification: typeof sendNotification;
++    generateRequestDetails: typeof generateRequestDetails;
+   };
+ 
+   export default api;
+diff --git a/runtime/test/channels/web/web-push-service.test.ts b/runtime/test/channels/web/web-push-service.test.ts
+index a3d1941..cfe17ee 100644
+--- a/runtime/test/channels/web/web-push-service.test.ts
++++ b/runtime/test/channels/web/web-push-service.test.ts
+@@ -108,6 +108,37 @@ describe("web push service", () => {
+     ]);
+   });
+ 
++  test("uses generated request details with fetch and cleans up 410 responses", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(5), { baseDir });
++
++    const result = await sendStoredWebPushNotification({
++      title: "Hello via fetch",
++      body: "Testing generated request details",
++    }, {
++      baseDir,
++      generateRequestDetails: (subscription, payload) => ({
++        endpoint: subscription.endpoint,
++        method: "POST",
++        headers: {
++          TTL: 60,
++          Authorization: "WebPush test",
++          "Content-Length": payload.length,
++        },
++        body: payload,
++      }),
++      fetchImpl: async () => ({
++        ok: false,
++        status: 410,
++        headers: new Headers({ "content-type": "text/plain" }),
++        text: async () => "gone",
++      } as Response),
++    });
++
++    expect(result).toEqual({ attempted: 1, sent: 0, removed: 1, failed: 0 });
++    expect(listStoredWebPushSubscriptions(baseDir)).toEqual([]);
++  });
++
+   test("builds a reply notification payload from a stored interaction", () => {
+     const payload = buildStoredAgentReplyWebPushNotification({
+       id: 42,

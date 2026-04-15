@@ -1,0 +1,785 @@
+diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
+index a77a57f7..9e56c228 100644
+--- a/runtime/src/channels/web/http/dispatch-agent.ts
++++ b/runtime/src/channels/web/http/dispatch-agent.ts
+@@ -3,6 +3,11 @@
+  */
+ 
+ import type { WebChannelLike } from "../core/web-channel-contracts.js";
++import {
++  handleWebPushSubscriptionDelete,
++  handleWebPushSubscriptionUpsert,
++  handleWebPushVapidPublicKey,
++} from "../push/web-push-routes.js";
+ 
+ interface ExactAgentRoute {
+   method: string;
+@@ -222,6 +227,21 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+     path: "/agent/card-action",
+     handle: (channel, req) => channel.handleAdaptiveCardAction(req),
+   },
++  {
++    method: "GET",
++    path: "/agent/push/vapid-public-key",
++    handle: () => handleWebPushVapidPublicKey(),
++  },
++  {
++    method: "POST",
++    path: "/agent/push/subscription",
++    handle: (_channel, req) => handleWebPushSubscriptionUpsert(req),
++  },
++  {
++    method: "DELETE",
++    path: "/agent/push/subscription",
++    handle: (_channel, req) => handleWebPushSubscriptionDelete(req),
++  },
+   {
+     method: "POST",
+     path: "/agent/side-prompt",
+diff --git a/runtime/src/channels/web/http/dispatch-shell.ts b/runtime/src/channels/web/http/dispatch-shell.ts
+index 7c66bca6..9afbef5f 100644
+--- a/runtime/src/channels/web/http/dispatch-shell.ts
++++ b/runtime/src/channels/web/http/dispatch-shell.ts
+@@ -49,6 +49,10 @@ export async function handleShellRoutes(
+     return await serveStaticAsset(req, pathname.slice(1));
+   }
+ 
++  if (flags.isServiceWorker) {
++    return channel.serveStatic("sw.js");
++  }
++
+   if (req.method === "GET" && pathname === "/ghostty-vt.wasm") {
+     return channel.serveStatic("js/vendor/ghostty-vt.wasm");
+   }
+diff --git a/runtime/src/channels/web/http/route-flags.ts b/runtime/src/channels/web/http/route-flags.ts
+index 7244599e..72bc5ab0 100644
+--- a/runtime/src/channels/web/http/route-flags.ts
++++ b/runtime/src/channels/web/http/route-flags.ts
+@@ -42,6 +42,8 @@ export type RouteFlags = {
+   isFavicon: boolean;
+   /** True when the request targets known Apple touch icon paths. */
+   isAppleIcon: boolean;
++  /** True when the request targets `/sw.js`. */
++  isServiceWorker: boolean;
+   /** True when the request path starts with `/static/`. */
+   isStaticAsset: boolean;
+   /** True when a static asset is safe to serve unauthenticated. */
+@@ -115,6 +117,7 @@ export function getRouteFlags(req: Request, pathname: string): RouteFlags {
+     isManifest: isGetOrHead && pathname === "/manifest.json",
+     isFavicon: isGetOrHead && pathname === "/favicon.ico",
+     isAppleIcon: isGetOrHead && APPLE_ICON_PATHS.has(pathname),
++    isServiceWorker: isGetOrHead && pathname === "/sw.js",
+     isStaticAsset,
+     isPublicStatic: isStaticAsset && isPublicStaticPath(pathname),
+     isDocsAsset: pathname.startsWith("/docs/"),
+@@ -143,6 +146,7 @@ export function shouldSkipAuthCheck(flags: RouteFlags, hasInternalAccess: boolea
+     flags.isManifest ||
+     flags.isFavicon ||
+     flags.isAppleIcon ||
++    flags.isServiceWorker ||
+     flags.isPublicStatic ||
+     flags.isAvatar
+   );
+diff --git a/runtime/src/channels/web/http/static.ts b/runtime/src/channels/web/http/static.ts
+index 4aa8e589..8fbf1c25 100644
+--- a/runtime/src/channels/web/http/static.ts
++++ b/runtime/src/channels/web/http/static.ts
+@@ -99,9 +99,11 @@ export async function serveStatic(relPath: string, notFound: () => Response): Pr
+   const cacheControl =
+     ext === ".html"
+       ? "no-cache, no-store, must-revalidate"
+-      : (relPath === "dist" || relPath.startsWith("dist/") || relPath.includes("/dist/"))
++      : relPath === "sw.js"
+         ? "no-cache, no-store, must-revalidate"
+-        : "public, max-age=3600";
++        : (relPath === "dist" || relPath.startsWith("dist/") || relPath.includes("/dist/"))
++          ? "no-cache, no-store, must-revalidate"
++          : "public, max-age=3600";
+ 
+   if (ext === ".html") {
+     const rendered = renderHtmlTemplate(relPath, await file.text());
+@@ -113,11 +115,17 @@ export async function serveStatic(relPath: string, notFound: () => Response): Pr
+     });
+   }
+ 
++  const responseHeaders: Record<string, string> = {
++    "Content-Type": contentType,
++    "Cache-Control": cacheControl,
++  };
++
++  if (relPath === "sw.js") {
++    responseHeaders["Service-Worker-Allowed"] = "/";
++  }
++
+   return new Response(file, {
+-    headers: {
+-      "Content-Type": contentType,
+-      "Cache-Control": cacheControl,
+-    },
++    headers: responseHeaders,
+   });
+ }
+ 
+diff --git a/runtime/src/channels/web/push/web-push-routes.ts b/runtime/src/channels/web/push/web-push-routes.ts
+new file mode 100644
+index 00000000..754d60f6
+--- /dev/null
++++ b/runtime/src/channels/web/push/web-push-routes.ts
+@@ -0,0 +1,48 @@
++/**
++ * web/push/web-push-routes.ts – HTTP handlers for VAPID key discovery and subscription persistence.
++ */
++
++import {
++  getStoredVapidPublicKey,
++  removeStoredWebPushSubscription,
++  upsertStoredWebPushSubscription,
++} from "./web-push-store.js";
++
++function resolveUserAgent(req: Request): string | null {
++  const value = req.headers.get("user-agent");
++  return value && value.trim() ? value.trim() : null;
++}
++
++export async function handleWebPushVapidPublicKey(): Promise<Response> {
++  return Response.json({ publicKey: getStoredVapidPublicKey() });
++}
++
++export async function handleWebPushSubscriptionUpsert(req: Request): Promise<Response> {
++  try {
++    const body = await req.json().catch(() => null);
++    const subscription = body && typeof body === "object" && body.subscription ? body.subscription : body;
++    const stored = upsertStoredWebPushSubscription(subscription, {
++      userAgent: resolveUserAgent(req),
++    });
++    return Response.json({ ok: true, endpoint: stored.endpoint });
++  } catch (error) {
++    return Response.json({ error: error instanceof Error ? error.message : "Invalid push subscription." }, { status: 400 });
++  }
++}
++
++export async function handleWebPushSubscriptionDelete(req: Request): Promise<Response> {
++  const body = await req.json().catch(() => null);
++  const subscription = body && typeof body === "object" && body.subscription ? body.subscription : body;
++  const endpoint = typeof subscription?.endpoint === "string"
++    ? subscription.endpoint.trim()
++    : typeof body?.endpoint === "string"
++      ? body.endpoint.trim()
++      : "";
++
++  if (!endpoint) {
++    return Response.json({ error: "Missing push subscription endpoint." }, { status: 400 });
++  }
++
++  const removed = removeStoredWebPushSubscription(endpoint);
++  return Response.json({ ok: true, removed });
++}
+diff --git a/runtime/src/channels/web/push/web-push-store.ts b/runtime/src/channels/web/push/web-push-store.ts
+new file mode 100644
+index 00000000..93f1efa0
+--- /dev/null
++++ b/runtime/src/channels/web/push/web-push-store.ts
+@@ -0,0 +1,200 @@
++/**
++ * web/push/web-push-store.ts – Minimal persistent storage for VAPID keys and Web Push subscriptions.
++ */
++
++import { createPublicKey, generateKeyPairSync } from "node:crypto";
++import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
++import { dirname, resolve } from "node:path";
++
++import { WORKSPACE_DIR } from "../../../core/config.js";
++import { createLogger, debugSuppressedError } from "../../../utils/logger.js";
++
++const log = createLogger("web.push.store");
++const DEFAULT_PUSH_DIR = resolve(WORKSPACE_DIR, ".piclaw", "web-push");
++const VAPID_FILE_NAME = "vapid-keys.json";
++const SUBSCRIPTIONS_FILE_NAME = "subscriptions.json";
++
++export interface StoredWebPushSubscription {
++  endpoint: string;
++  expirationTime: number | null;
++  keys: {
++    auth: string;
++    p256dh: string;
++  };
++  createdAt: string;
++  updatedAt: string;
++  userAgent: string | null;
++}
++
++export interface StoredVapidKeys {
++  createdAt: string;
++  publicKey: string;
++  publicKeyPem: string;
++  privateKeyPem: string;
++}
++
++function resolvePushDir(baseDir = DEFAULT_PUSH_DIR): string {
++  return resolve(baseDir);
++}
++
++function resolveVapidKeysPath(baseDir = DEFAULT_PUSH_DIR): string {
++  return resolve(resolvePushDir(baseDir), VAPID_FILE_NAME);
++}
++
++function resolveSubscriptionsPath(baseDir = DEFAULT_PUSH_DIR): string {
++  return resolve(resolvePushDir(baseDir), SUBSCRIPTIONS_FILE_NAME);
++}
++
++function readJsonFile<T>(path: string): T | null {
++  if (!existsSync(path)) return null;
++  try {
++    return JSON.parse(readFileSync(path, "utf-8")) as T;
++  } catch (error) {
++    debugSuppressedError(log, "Failed to read stored web push state; ignoring the stale file.", error, { path });
++    return null;
++  }
++}
++
++function writeJsonFile(path: string, value: unknown): void {
++  mkdirSync(dirname(path), { recursive: true });
++  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
++}
++
++function decodeBase64Url(value: string): Buffer {
++  return Buffer.from(value, "base64url");
++}
++
++function encodeBase64Url(value: Buffer | Uint8Array): string {
++  return Buffer.from(value).toString("base64url");
++}
++
++function createVapidKeys(): StoredVapidKeys {
++  const { publicKey, privateKey } = generateKeyPairSync("ec", {
++    namedCurve: "prime256v1",
++    publicKeyEncoding: { format: "pem", type: "spki" },
++    privateKeyEncoding: { format: "pem", type: "pkcs8" },
++  });
++
++  const publicJwk = createPublicKey(publicKey).export({ format: "jwk" }) as JsonWebKey;
++  const x = typeof publicJwk.x === "string" ? publicJwk.x : "";
++  const y = typeof publicJwk.y === "string" ? publicJwk.y : "";
++  if (!x || !y) {
++    throw new Error("Generated VAPID key is missing JWK coordinates.");
++  }
++
++  const publicPoint = Buffer.concat([
++    Buffer.from([0x04]),
++    decodeBase64Url(x),
++    decodeBase64Url(y),
++  ]);
++
++  return {
++    createdAt: new Date().toISOString(),
++    publicKey: encodeBase64Url(publicPoint),
++    publicKeyPem: publicKey,
++    privateKeyPem: privateKey,
++  };
++}
++
++function readStoredVapidKeys(baseDir = DEFAULT_PUSH_DIR): StoredVapidKeys | null {
++  const path = resolveVapidKeysPath(baseDir);
++  const parsed = readJsonFile<StoredVapidKeys>(path);
++  if (!parsed) return null;
++  if (!parsed.publicKey || !parsed.publicKeyPem || !parsed.privateKeyPem) return null;
++  return parsed;
++}
++
++export function ensureStoredVapidKeys(baseDir = DEFAULT_PUSH_DIR): StoredVapidKeys {
++  const existing = readStoredVapidKeys(baseDir);
++  if (existing) return existing;
++  const created = createVapidKeys();
++  writeJsonFile(resolveVapidKeysPath(baseDir), created);
++  return created;
++}
++
++export function getStoredVapidPublicKey(baseDir = DEFAULT_PUSH_DIR): string {
++  return ensureStoredVapidKeys(baseDir).publicKey;
++}
++
++export function normalizeStoredWebPushSubscription(
++  value: unknown,
++  options: { now?: string; userAgent?: string | null } = {}
++): StoredWebPushSubscription | null {
++  if (!value || typeof value !== "object") return null;
++  const input = value as Record<string, any>;
++  const endpoint = typeof input.endpoint === "string" ? input.endpoint.trim() : "";
++  const p256dh = typeof input.keys?.p256dh === "string" ? input.keys.p256dh.trim() : "";
++  const auth = typeof input.keys?.auth === "string" ? input.keys.auth.trim() : "";
++  if (!endpoint || !endpoint.startsWith("https://") || !p256dh || !auth) return null;
++
++  const now = options.now || new Date().toISOString();
++  const rawExpirationTime = input.expirationTime;
++  const expirationTime = rawExpirationTime === null || rawExpirationTime === undefined
++    ? null
++    : Number(rawExpirationTime);
++  return {
++    endpoint,
++    expirationTime: Number.isFinite(expirationTime) ? expirationTime : null,
++    keys: { auth, p256dh },
++    createdAt: now,
++    updatedAt: now,
++    userAgent: typeof options.userAgent === "string" && options.userAgent.trim() ? options.userAgent.trim() : null,
++  };
++}
++
++export function listStoredWebPushSubscriptions(baseDir = DEFAULT_PUSH_DIR): StoredWebPushSubscription[] {
++  const path = resolveSubscriptionsPath(baseDir);
++  const parsed = readJsonFile<StoredWebPushSubscription[]>(path);
++  if (!Array.isArray(parsed)) return [];
++  return parsed.filter((entry) => normalizeStoredWebPushSubscription(entry, {
++    now: typeof entry?.updatedAt === "string" && entry.updatedAt.trim() ? entry.updatedAt : new Date().toISOString(),
++    userAgent: typeof entry?.userAgent === "string" ? entry.userAgent : null,
++  }) !== null);
++}
++
++function writeStoredWebPushSubscriptions(entries: StoredWebPushSubscription[], baseDir = DEFAULT_PUSH_DIR): void {
++  writeJsonFile(resolveSubscriptionsPath(baseDir), entries);
++}
++
++export function upsertStoredWebPushSubscription(
++  value: unknown,
++  options: { baseDir?: string; userAgent?: string | null; now?: string } = {}
++): StoredWebPushSubscription {
++  const normalized = normalizeStoredWebPushSubscription(value, {
++    now: options.now,
++    userAgent: options.userAgent,
++  });
++  if (!normalized) {
++    throw new Error("Invalid push subscription.");
++  }
++
++  const baseDir = options.baseDir || DEFAULT_PUSH_DIR;
++  const entries = listStoredWebPushSubscriptions(baseDir);
++  const existingIndex = entries.findIndex((entry) => entry.endpoint === normalized.endpoint);
++  if (existingIndex !== -1) {
++    const existing = entries[existingIndex];
++    entries[existingIndex] = {
++      ...existing,
++      expirationTime: normalized.expirationTime,
++      keys: normalized.keys,
++      updatedAt: normalized.updatedAt,
++      userAgent: normalized.userAgent || existing.userAgent || null,
++    };
++    writeStoredWebPushSubscriptions(entries, baseDir);
++    return entries[existingIndex];
++  }
++
++  entries.push(normalized);
++  writeStoredWebPushSubscriptions(entries, baseDir);
++  return normalized;
++}
++
++export function removeStoredWebPushSubscription(endpoint: string, baseDir = DEFAULT_PUSH_DIR): boolean {
++  const normalizedEndpoint = typeof endpoint === "string" ? endpoint.trim() : "";
++  if (!normalizedEndpoint) return false;
++  const entries = listStoredWebPushSubscriptions(baseDir);
++  const nextEntries = entries.filter((entry) => entry.endpoint !== normalizedEndpoint);
++  if (nextEntries.length === entries.length) return false;
++  writeStoredWebPushSubscriptions(nextEntries, baseDir);
++  return true;
++}
+diff --git a/runtime/test/channels/web/helpers/route-flags.ts b/runtime/test/channels/web/helpers/route-flags.ts
+index 8aaf63ea..d6f6066f 100644
+--- a/runtime/test/channels/web/helpers/route-flags.ts
++++ b/runtime/test/channels/web/helpers/route-flags.ts
+@@ -21,6 +21,7 @@ export function buildRouteFlags(overrides: Partial<RouteFlags> = {}): RouteFlags
+     isManifest: false,
+     isFavicon: false,
+     isAppleIcon: false,
++    isServiceWorker: false,
+     isStaticAsset: false,
+     isPublicStatic: false,
+     isDocsAsset: false,
+diff --git a/runtime/test/channels/web/http-dispatch-shell.test.ts b/runtime/test/channels/web/http-dispatch-shell.test.ts
+index 892692d8..27114913 100644
+--- a/runtime/test/channels/web/http-dispatch-shell.test.ts
++++ b/runtime/test/channels/web/http-dispatch-shell.test.ts
+@@ -10,7 +10,7 @@ describe("web http shell dispatch", () => {
+     expect(response).toBeNull();
+   });
+ 
+-  test("dispatches index/manifest/static/docs/sse/terminal-session/vnc routes", async () => {
++  test("dispatches index/manifest/service-worker/static/docs/sse/terminal-session/vnc routes", async () => {
+     const channel = {
+       serveStatic: (rel: string) => new Response(`static:${rel}`),
+       handleManifest: () => new Response("manifest"),
+@@ -29,6 +29,9 @@ describe("web http shell dispatch", () => {
+     const manifestFlags = buildRouteFlags({ isManifest: true });
+     expect(await (await handleShellRoutes(channel, new Request("https://e/manifest.json", { method: "GET" }), "/manifest.json", manifestFlags, async () => new Response()))?.text()).toBe("manifest");
+ 
++    const serviceWorkerFlags = buildRouteFlags({ isServiceWorker: true });
++    expect(await (await handleShellRoutes(channel, new Request("https://e/sw.js", { method: "GET" }), "/sw.js", serviceWorkerFlags, async () => new Response()))?.text()).toBe("static:sw.js");
++
+     expect(await (await handleShellRoutes(channel, new Request("https://e/ghostty-vt.wasm", { method: "GET" }), "/ghostty-vt.wasm", buildRouteFlags(), async () => new Response()))?.text()).toBe("static:js/vendor/ghostty-vt.wasm");
+ 
+     const staticFlags = buildRouteFlags({ isStaticAsset: true });
+diff --git a/runtime/test/channels/web/route-flags.test.ts b/runtime/test/channels/web/route-flags.test.ts
+new file mode 100644
+index 00000000..57142338
+--- /dev/null
++++ b/runtime/test/channels/web/route-flags.test.ts
+@@ -0,0 +1,13 @@
++import { describe, expect, test } from "bun:test";
++
++import { getRouteFlags, shouldSkipAuthCheck } from "../../../src/channels/web/http/route-flags.js";
++
++describe("web route flags", () => {
++  test("marks the service worker script as a public shell route", () => {
++    const flags = getRouteFlags(new Request("https://example.com/sw.js", { method: "GET" }), "/sw.js");
++
++    expect(flags.isServiceWorker).toBe(true);
++    expect(flags.isStaticAsset).toBe(false);
++    expect(shouldSkipAuthCheck(flags, false)).toBe(true);
++  });
++});
+diff --git a/runtime/test/channels/web/web-push-store.test.ts b/runtime/test/channels/web/web-push-store.test.ts
+new file mode 100644
+index 00000000..369a8aff
+--- /dev/null
++++ b/runtime/test/channels/web/web-push-store.test.ts
+@@ -0,0 +1,97 @@
++import { afterEach, describe, expect, test } from "bun:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
++
++import {
++  ensureStoredVapidKeys,
++  getStoredVapidPublicKey,
++  listStoredWebPushSubscriptions,
++  normalizeStoredWebPushSubscription,
++  removeStoredWebPushSubscription,
++  upsertStoredWebPushSubscription,
++} from "../../../src/channels/web/push/web-push-store.js";
++
++const tempDirs: string[] = [];
++
++function createTempPushDir(): string {
++  const dir = mkdtempSync(join(tmpdir(), "piclaw-web-push-"));
++  tempDirs.push(dir);
++  return dir;
++}
++
++afterEach(() => {
++  while (tempDirs.length > 0) {
++    const dir = tempDirs.pop();
++    if (!dir) continue;
++    rmSync(dir, { recursive: true, force: true });
++  }
++});
++
++function createSubscription(endpoint = "https://push.example.test/device/1") {
++  return {
++    endpoint,
++    expirationTime: null,
++    keys: {
++      auth: "auth-token",
++      p256dh: "p256dh-token",
++    },
++  };
++}
++
++describe("web push store", () => {
++  test("generates and reuses a stored VAPID keypair", () => {
++    const baseDir = createTempPushDir();
++
++    const created = ensureStoredVapidKeys(baseDir);
++    const reread = ensureStoredVapidKeys(baseDir);
++
++    expect(created.publicKey).toBeTruthy();
++    expect(created.privateKeyPem).toContain("BEGIN PRIVATE KEY");
++    expect(created.publicKeyPem).toContain("BEGIN PUBLIC KEY");
++    expect(reread.publicKey).toBe(created.publicKey);
++    expect(getStoredVapidPublicKey(baseDir)).toBe(created.publicKey);
++  });
++
++  test("normalizes valid subscriptions and rejects malformed ones", () => {
++    const normalized = normalizeStoredWebPushSubscription(createSubscription());
++
++    expect(normalized?.endpoint).toBe("https://push.example.test/device/1");
++    expect(normalized?.expirationTime).toBeNull();
++    expect(normalized?.keys).toEqual({
++      auth: "auth-token",
++      p256dh: "p256dh-token",
++    });
++    expect(typeof normalized?.createdAt).toBe("string");
++    expect(typeof normalized?.updatedAt).toBe("string");
++    expect(normalized?.userAgent).toBeNull();
++
++    expect(normalizeStoredWebPushSubscription({ endpoint: "", keys: {} })).toBeNull();
++    expect(normalizeStoredWebPushSubscription(null)).toBeNull();
++  });
++
++  test("upserts and removes stored subscriptions by endpoint", () => {
++    const baseDir = createTempPushDir();
++
++    const created = upsertStoredWebPushSubscription(createSubscription(), {
++      baseDir,
++      userAgent: "PiClaw Test",
++      now: "2026-04-14T18:50:00.000Z",
++    });
++    const updated = upsertStoredWebPushSubscription(createSubscription(), {
++      baseDir,
++      userAgent: "PiClaw Test 2",
++      now: "2026-04-14T18:55:00.000Z",
++    });
++
++    expect(created.createdAt).toBe("2026-04-14T18:50:00.000Z");
++    expect(updated.createdAt).toBe("2026-04-14T18:50:00.000Z");
++    expect(updated.updatedAt).toBe("2026-04-14T18:55:00.000Z");
++    expect(updated.userAgent).toBe("PiClaw Test 2");
++    expect(listStoredWebPushSubscriptions(baseDir)).toHaveLength(1);
++
++    expect(removeStoredWebPushSubscription(created.endpoint, baseDir)).toBe(true);
++    expect(removeStoredWebPushSubscription(created.endpoint, baseDir)).toBe(false);
++    expect(listStoredWebPushSubscriptions(baseDir)).toHaveLength(0);
++  });
++});
+diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
+index a4c49719..e4b6a521 100644
+--- a/runtime/web/src/api.ts
++++ b/runtime/web/src/api.ts
+@@ -244,6 +244,24 @@ export async function sendPeerAgentMessage(sourceChatJid, targetChatOrName, cont
+     });
+ }
+ 
++export async function getWebPushPublicKey() {
++    return request('/agent/push/vapid-public-key');
++}
++
++export async function saveWebPushSubscription(subscription) {
++    return request('/agent/push/subscription', {
++        method: 'POST',
++        body: JSON.stringify({ subscription }),
++    });
++}
++
++export async function deleteWebPushSubscription(subscription) {
++    return request('/agent/push/subscription', {
++        method: 'DELETE',
++        body: JSON.stringify({ subscription }),
++    });
++}
++
+ /**
+  * Get available agents / current agent roster.
+  */
+diff --git a/runtime/web/src/ui/app-shell-bootstrap.ts b/runtime/web/src/ui/app-shell-bootstrap.ts
+index e50ddb08..65f856e5 100644
+--- a/runtime/web/src/ui/app-shell-bootstrap.ts
++++ b/runtime/web/src/ui/app-shell-bootstrap.ts
+@@ -26,6 +26,7 @@ interface AppApiSurface {
+ 
+ let initialized = false;
+ let browserNoiseFilterInstalled = false;
++let serviceWorkerRegistrationStarted = false;
+ 
+ export function configureMarked(markedInstance: { setOptions?: (options: Record<string, unknown>) => void } | null | undefined): void {
+   if (!markedInstance || typeof markedInstance.setOptions !== 'function') return;
+@@ -66,6 +67,16 @@ export function registerAppPaneExtensions(): void {
+   paneRegistry.register(terminalTabPaneExtension);
+ }
+ 
++export function registerAppServiceWorker(runtimeWindow: (Window & typeof globalThis) | null = typeof window !== 'undefined' ? window : null): void {
++  if (!runtimeWindow || serviceWorkerRegistrationStarted) return;
++  if (!runtimeWindow.isSecureContext) return;
++  if (!("serviceWorker" in runtimeWindow.navigator)) return;
++  serviceWorkerRegistrationStarted = true;
++  void runtimeWindow.navigator.serviceWorker.register('/sw.js').catch((error) => {
++    console.warn('Failed to register app service worker:', error);
++  });
++}
++
+ export function initializeAppShellRuntime(): void {
+   if (initialized) return;
+   const markedInstance = typeof window !== 'undefined'
+@@ -74,6 +85,7 @@ export function initializeAppShellRuntime(): void {
+   configureMarked(markedInstance);
+   installBrowserNoiseFilters(typeof window !== 'undefined' ? window : null);
+   registerAppPaneExtensions();
++  registerAppServiceWorker(typeof window !== 'undefined' ? window : null);
+   initialized = true;
+ }
+ 
+diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
+index 5ccaf9b6..522d9c62 100644
+--- a/runtime/web/src/ui/use-notifications.ts
++++ b/runtime/web/src/ui/use-notifications.ts
+@@ -1,7 +1,67 @@
++import { deleteWebPushSubscription, getWebPushPublicKey, saveWebPushSubscription } from '../api.js';
+ import { useCallback, useEffect, useRef, useState } from '../vendor/preact-htm.js';
+ import { getLocalStorageBoolean, setLocalStorageItem } from '../utils/storage.js';
+ import { focusWindowBestEffort } from './notification-focus.js';
+ 
++function decodeBase64UrlToUint8Array(value) {
++  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
++  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
++  const binary = atob(padded);
++  const bytes = new Uint8Array(binary.length);
++  for (let index = 0; index < binary.length; index += 1) {
++    bytes[index] = binary.charCodeAt(index);
++  }
++  return bytes;
++}
++
++function supportsWebPush(runtimeWindow = typeof window !== 'undefined' ? window : null) {
++  if (!runtimeWindow || !runtimeWindow.isSecureContext) return false;
++  return 'serviceWorker' in runtimeWindow.navigator && 'PushManager' in runtimeWindow;
++}
++
++async function ensureStoredWebPushSubscription(runtimeWindow) {
++  await runtimeWindow.navigator.serviceWorker.register('/sw.js');
++  const registration = await runtimeWindow.navigator.serviceWorker.ready;
++  const existing = await registration.pushManager.getSubscription();
++  if (existing) return existing;
++  const payload = await getWebPushPublicKey();
++  const publicKey = typeof payload?.publicKey === 'string' ? payload.publicKey.trim() : '';
++  if (!publicKey) {
++    throw new Error('Missing web push public key.');
++  }
++  return registration.pushManager.subscribe({
++    userVisibleOnly: true,
++    applicationServerKey: decodeBase64UrlToUint8Array(publicKey),
++  });
++}
++
++async function syncWebPushSubscription(runtimeWindow) {
++  if (!supportsWebPush(runtimeWindow)) return false;
++  const subscription = await ensureStoredWebPushSubscription(runtimeWindow);
++  await saveWebPushSubscription(subscription.toJSON ? subscription.toJSON() : subscription);
++  return true;
++}
++
++async function disableWebPushSubscription(runtimeWindow) {
++  if (!supportsWebPush(runtimeWindow)) return false;
++  await runtimeWindow.navigator.serviceWorker.register('/sw.js');
++  const registration = await runtimeWindow.navigator.serviceWorker.ready;
++  const subscription = await registration.pushManager.getSubscription();
++  if (!subscription) return false;
++  const serialized = subscription.toJSON ? subscription.toJSON() : subscription;
++  try {
++    await deleteWebPushSubscription(serialized);
++  } catch (error) {
++    console.warn('Failed to remove web push subscription from the server:', error);
++  }
++  try {
++    await subscription.unsubscribe();
++  } catch (error) {
++    console.warn('Failed to unsubscribe from web push notifications:', error);
++  }
++  return true;
++}
++
+ export function useNotifications() {
+   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+   const [notificationPermission, setNotificationPermission] = useState('default');
+@@ -58,6 +118,21 @@ export function useNotifications() {
+     notificationsEnabledRef.current = next;
+     setNotificationsEnabled(next);
+     setLocalStorageItem('notificationsEnabled', String(next));
++
++    if (supportsWebPush(window)) {
++      try {
++        if (next) {
++          await syncWebPushSubscription(window);
++        } else {
++          await disableWebPushSubscription(window);
++        }
++      } catch (error) {
++        console.warn('Failed to sync web push notifications:', error);
++        if (next) {
++          alert('Notifications were enabled, but web push setup failed. If you are on iPhone or iPad, reopen PiClaw from the Home Screen and try again.');
++        }
++      }
++    }
+   }, [requestNotificationPermission]);
+ 
+   const notify = useCallback((title, body) => {
+diff --git a/runtime/web/static/manifest.json b/runtime/web/static/manifest.json
+index 6c25751a..d5e8a1c6 100644
+--- a/runtime/web/static/manifest.json
++++ b/runtime/web/static/manifest.json
+@@ -1,4 +1,5 @@
+ {
++  "id": "/",
+   "name": "PiClaw",
+   "short_name": "PiClaw",
+   "description": "Slack-like interface for coding agents",
+diff --git a/runtime/web/static/sw.js b/runtime/web/static/sw.js
+new file mode 100644
+index 00000000..f6aa7e83
+--- /dev/null
++++ b/runtime/web/static/sw.js
+@@ -0,0 +1,70 @@
++self.addEventListener('install', (event) => {
++  event.waitUntil(self.skipWaiting());
++});
++
++self.addEventListener('activate', (event) => {
++  event.waitUntil(self.clients.claim());
++});
++
++self.addEventListener('push', (event) => {
++  const defaultNotification = {
++    title: 'PiClaw',
++    body: 'You have a new update.',
++    tag: 'piclaw',
++    url: '/',
++  };
++
++  let payload = defaultNotification;
++  try {
++    const next = event.data?.json?.();
++    if (next && typeof next === 'object') {
++      payload = {
++        ...defaultNotification,
++        ...next,
++      };
++    }
++  } catch {
++    const text = event.data?.text?.();
++    if (text) {
++      payload = {
++        ...defaultNotification,
++        body: text,
++      };
++    }
++  }
++
++  event.waitUntil(self.registration.showNotification(payload.title, {
++    body: payload.body,
++    tag: payload.tag,
++    data: {
++      url: payload.url || '/',
++    },
++    icon: '/static/icon-192.png',
++    badge: '/static/icon-192.png',
++  }));
++});
++
++self.addEventListener('notificationclick', (event) => {
++  event.notification.close();
++  const targetUrl = event.notification?.data?.url || '/';
++
++  event.waitUntil((async () => {
++    const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
++    for (const client of clientList) {
++      const clientUrl = client.url || '';
++      if (clientUrl === targetUrl || clientUrl.startsWith(targetUrl) || targetUrl === '/') {
++        if ('focus' in client) {
++          await client.focus();
++        }
++        if ('navigate' in client && targetUrl && clientUrl !== targetUrl) {
++          await client.navigate(targetUrl).catch(() => {});
++        }
++        return;
++      }
++    }
++
++    if (self.clients.openWindow) {
++      await self.clients.openWindow(targetUrl);
++    }
++  })());
++});

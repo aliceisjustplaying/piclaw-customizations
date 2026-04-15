@@ -1,0 +1,46 @@
+diff --git a/runtime/src/channels/web/push/web-push-service.ts b/runtime/src/channels/web/push/web-push-service.ts
+index ce2ee50..18d51be 100644
+--- a/runtime/src/channels/web/push/web-push-service.ts
++++ b/runtime/src/channels/web/push/web-push-service.ts
+@@ -14,7 +14,9 @@ import {
+ } from "./web-push-store.js";
+ 
+ const log = createLogger("web.push.service");
+-const DEFAULT_VAPID_SUBJECT = "mailto:piclaw@localhost.invalid";
++const DEFAULT_VAPID_SUBJECT = typeof process.env.PICLAW_WEB_PUSH_VAPID_SUBJECT === "string" && process.env.PICLAW_WEB_PUSH_VAPID_SUBJECT.trim()
++  ? process.env.PICLAW_WEB_PUSH_VAPID_SUBJECT.trim()
++  : "https://pix.mosphere.at";
+ 
+ export interface WebPushNotificationPayload {
+   title: string;
+diff --git a/runtime/test/channels/web/web-push-service.test.ts b/runtime/test/channels/web/web-push-service.test.ts
+index cfe17ee..a44f661 100644
+--- a/runtime/test/channels/web/web-push-service.test.ts
++++ b/runtime/test/channels/web/web-push-service.test.ts
+@@ -80,6 +80,26 @@ describe("web push service", () => {
+     expect(String((deliveries[0]?.options.vapidDetails as any)?.privateKey)).not.toContain("BEGIN");
+   });
+ 
++  test("defaults to the production VAPID subject when one is not supplied", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(11), { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    const result = await sendStoredWebPushNotification({
++      title: "Default subject",
++      body: "Uses the deployment URL subject",
++    }, {
++      baseDir,
++      sendNotification: async (_subscription, _payload, options) => {
++        deliveries.push(options.vapidDetails as Record<string, unknown>);
++      },
++    });
++
++    expect(result).toEqual({ attempted: 1, sent: 1, removed: 0, failed: 0 });
++    expect(deliveries).toHaveLength(1);
++    expect(deliveries[0]?.subject).toBe("https://pix.mosphere.at");
++  });
++
+   test("removes expired subscriptions and keeps non-expired failures", async () => {
+     const baseDir = createTempPushDir();
+     upsertStoredWebPushSubscription(createSubscription(1), { baseDir });

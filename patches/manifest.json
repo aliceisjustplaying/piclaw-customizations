@@ -18,17 +18,12 @@
       "upstream_prs": []
     },
     "05": {
-      "name": "web-update-autocomplete",
+      "name": "web-command-autocomplete",
       "track_upstream": false,
       "upstream_prs": []
     },
     "11": {
       "name": "db-lazy-init-for-extension-module-graph",
-      "track_upstream": false,
-      "upstream_prs": []
-    },
-    "15": {
-      "name": "web-rebuild-autocomplete",
       "track_upstream": false,
       "upstream_prs": []
     },
@@ -39,6 +34,26 @@
     },
     "28": {
       "name": "anthropic-oauth-provider-usage",
+      "track_upstream": false,
+      "upstream_prs": []
+    },
+    "29": {
+      "name": "thread-startup-and-prewarm-performance",
+      "track_upstream": false,
+      "upstream_prs": []
+    },
+    "30": {
+      "name": "web-push-and-notification-delivery",
+      "track_upstream": false,
+      "upstream_prs": []
+    },
+    "31": {
+      "name": "ui-thread-switch-perf-tracing",
+      "track_upstream": false,
+      "upstream_prs": []
+    },
+    "32": {
+      "name": "ios-share-sheet-resume-and-sse-guards",
       "track_upstream": false,
       "upstream_prs": []
     }

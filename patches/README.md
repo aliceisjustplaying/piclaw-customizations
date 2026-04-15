@@ -16,16 +16,21 @@ Automation helpers in this directory:
 | 01 | `runtime/src/agent-pool/session.ts` | Load `~/.pi/agent/SYSTEM.md` as system prompt override |
 | 02 | `runtime/src/runtime/bootstrap.ts` | Wire `broadcastEvent` to `globalThis` for extension widgets |
 | 04 | `dispatch-agent.ts`, `app-extension-status.ts`, `app-sidepanel-orchestration.ts`, `app-main-action-composition.ts` | Codex stop/dismiss endpoints, web UI action handlers, `setExtensionStatusPanels` plumbing |
-| 05 | `compose-box.ts` | Add `/update` and `/fast` to slash command autocomplete |
+| 05 | `compose-box.ts` | Add `/update`, `/rebuild`, and `/fast` to slash command autocomplete |
 | 11 | `runtime/src/db/connection.ts` | Lazy DB init for Jiti-loaded extension module graphs |
-| 15 | `compose-box.ts` | Add `/rebuild` to slash command autocomplete |
 | 24 | `package.json`, `bun.lock` | Pin `ghostty-web` vendoring to the forked commit that carries the upstream bootstrap/open-reset fix |
 | 28 | `provider-usage.ts`, `provider-usage.test.ts`, `compose-box.ts` | Anthropic OAuth provider usage: show 5h/week usage windows, fetch funded overage grant state, and keep extra-usage details in the model tooltip without adding them to the inline hint |
+| 29 | `agent-pool.ts`, `branch-manager.ts`, `branch-seeding.ts`, `session-manager.ts`, startup/bootstrap web callers, related tests | Consolidated thread-startup performance work: reduce branch/thread switch latency, defer branch seeding, prioritize current/default chat warmup, and keep the extension-binding regression test with the session startup lane |
+| 30 | `dispatch-agent.ts`, push routes/store/service, `use-notifications.ts`, `sw.js`, push client/server tests, docs | Consolidated web push and notification delivery: subscription/storage foundation, outbound delivery, Bun-safe request generation, real VAPID subject, reply notifications, source markers, and per-device per-chat delivery coordination |
+| 31 | `api.ts`, thread-switch web UI lifecycle/orchestration files, related web tests | Consolidated UI perf tracing for thread switching and branch creation, including the runtime contract fix for `window.__PICLAW_PERF__` |
+| 32 | `app-resume.ts`, `use-sse-connection.ts`, related web tests | Consolidated iOS Safari share-sheet mitigation: guarded return-to-app detection and SSE wake/focus reconnect suppression |
 
 ## Retired patches
 
 Retired patches that are still useful for history/reference are kept under `patches/retired/`.
-Numbering preserved — next new patch is **29**.
+Numbering preserved — next new patch is **45**.
+
+Historical note: the pre-consolidation split patches `29` through `44` were retired into `patches/retired/` on 2026-04-15 and replaced by the consolidated active patches `29` through `32`.
 
 | # | Status | Reason |
 |---|--------|--------|
@@ -33,6 +38,7 @@ Numbering preserved — next new patch is **29**.
 | ~~06~~ | Folded into 21 | Frontend terminal dock sizing/layout now rides with the popout/handoff lane |
 | ~~07–10~~ | Merged upstream | PRs #25, #23, #24; commit `4fcd82d` |
 | ~~12–14~~ | Merged upstream | Commit `071e2f4c`, PRs #27, other |
+| ~~15~~ | Folded into 05 | Slash-command autocomplete now ships as one compose-box patch |
 | ~~16~~ | Retired | Dock terminal instance reuse broke reopen |
 | ~~17~~ | Retired | Listener detach caused garbled redraw |
 | ~~18~~ | Merged upstream | PR #31 |

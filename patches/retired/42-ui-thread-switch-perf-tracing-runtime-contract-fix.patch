@@ -1,0 +1,131 @@
+diff --git a/runtime/test/web/app-perf-tracing.test.ts b/runtime/test/web/app-perf-tracing.test.ts
+index d00df5c4..7114c7f1 100644
+--- a/runtime/test/web/app-perf-tracing.test.ts
++++ b/runtime/test/web/app-perf-tracing.test.ts
+@@ -4,0 +5 @@ import {
++  completeAppPerfTraceIfReady,
+@@ -7,0 +9 @@ import {
++  installAppPerfTracing,
+@@ -34,0 +37,27 @@ test('app perf tracing reuses active traces per type/chat and completes them wit
++test('app perf tracing installs a stable window global with stable public method names', () => {
++  const runtimeWindow: Record<string, unknown> = {};
++  const perf = installAppPerfTracing(runtimeWindow as any);
++
++  expect(runtimeWindow['__PICLAW_PERF__']).toBe(perf);
++  expect(typeof (runtimeWindow['__PICLAW_PERF__'] as any)?.getTraces).toBe('function');
++  expect(typeof (runtimeWindow['__PICLAW_PERF__'] as any)?.getRequests).toBe('function');
++  expect(typeof (runtimeWindow['__PICLAW_PERF__'] as any)?.printSummary).toBe('function');
++});
++
++test('app perf tracing only auto-completes once required phases are present', () => {
++  const traceId = startAppPerfTrace('thread-switch', 'web:branch');
++  markAppPerfTrace(traceId, 'runtime-hydration-ready');
++  expect(completeAppPerfTraceIfReady(traceId, ['runtime-hydration-ready', 'timeline-first-paint'])).toBe(false);
++
++  markAppPerfTrace(traceId, 'timeline-first-paint');
++  expect(completeAppPerfTraceIfReady(traceId, ['runtime-hydration-ready', 'timeline-first-paint'])).toBe(true);
++
++  const traces = getAppPerfTracing().getTraces();
++  expect(traces[0]?.status).toBe('completed');
++  expect(traces[0]?.phases.map((phase) => phase.phase)).toEqual([
++    'runtime-hydration-ready',
++    'timeline-first-paint',
++    'settled',
++  ]);
++});
++
+diff --git a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
+index df9883f9..07b4a576 100644
+--- a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
++++ b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
+@@ -14 +14 @@ import {
+-  completeAppPerfTrace,
++  completeAppPerfTraceIfReady,
+@@ -196 +196,4 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+-          completeAppPerfTrace(activeTraceId, 'runtime-hydration-ready', {
++          markAppPerfTrace(activeTraceId, 'runtime-hydration-ready', {
++            chatJid,
++          });
++          completeAppPerfTraceIfReady(activeTraceId, ['runtime-hydration-ready', 'timeline-first-paint'], 'settled', {
+diff --git a/runtime/web/src/ui/app-perf-tracing.ts b/runtime/web/src/ui/app-perf-tracing.ts
+index e2ec6ffa..c9b6b56c 100644
+--- a/runtime/web/src/ui/app-perf-tracing.ts
++++ b/runtime/web/src/ui/app-perf-tracing.ts
+@@ -49 +49 @@ type PerfApi = {
+-type PerfWindow = Window & typeof globalThis & { __PICLAW_PERF__?: PerfApi };
++type PerfWindow = Window & typeof globalThis & Record<string, unknown>;
+@@ -50,0 +51 @@ type PerfWindow = Window & typeof globalThis & { __PICLAW_PERF__?: PerfApi };
++const PERF_GLOBAL_KEY = '__PICLAW_PERF__';
+@@ -139 +140 @@ const perfApi: PerfApi = {
+-  startTrace(type, chatJid, detail) {
++  'startTrace'(type, chatJid, detail) {
+@@ -142 +143 @@ const perfApi: PerfApi = {
+-  ensureTrace(type, chatJid, detail) {
++  'ensureTrace'(type, chatJid, detail) {
+@@ -149 +150 @@ const perfApi: PerfApi = {
+-  getActiveTraceId(type, chatJid) {
++  'getActiveTraceId'(type, chatJid) {
+@@ -153 +154 @@ const perfApi: PerfApi = {
+-  markTrace(traceId, phase, detail) {
++  'markTrace'(traceId, phase, detail) {
+@@ -159 +160 @@ const perfApi: PerfApi = {
+-  completeTrace(traceId, phase = 'settled', detail) {
++  'completeTrace'(traceId, phase = 'settled', detail) {
+@@ -162 +163 @@ const perfApi: PerfApi = {
+-  failTrace(traceId, error, phase = 'failed', detail) {
++  'failTrace'(traceId, error, phase = 'failed', detail) {
+@@ -165 +166 @@ const perfApi: PerfApi = {
+-  cancelTrace(traceId, phase = 'cancelled', detail) {
++  'cancelTrace'(traceId, phase = 'cancelled', detail) {
+@@ -168 +169 @@ const perfApi: PerfApi = {
+-  recordRequest(entry) {
++  'recordRequest'(entry) {
+@@ -174 +175 @@ const perfApi: PerfApi = {
+-  getTraces() {
++  'getTraces'() {
+@@ -181 +182 @@ const perfApi: PerfApi = {
+-  getRequests() {
++  'getRequests'() {
+@@ -184 +185 @@ const perfApi: PerfApi = {
+-  clear() {
++  'clear'() {
+@@ -189 +190 @@ const perfApi: PerfApi = {
+-  printSummary() {
++  'printSummary'() {
+@@ -191,2 +192,2 @@ const perfApi: PerfApi = {
+-      traces: perfApi.getTraces(),
+-      requests: perfApi.getRequests(),
++      traces: perfApi['getTraces'](),
++      requests: perfApi['getRequests'](),
+@@ -207 +208,2 @@ export function installAppPerfTracing(runtimeWindow: PerfWindow | null = getRunt
+-  if (runtimeWindow?.__PICLAW_PERF__) return runtimeWindow.__PICLAW_PERF__;
++  const existing = runtimeWindow?.[PERF_GLOBAL_KEY] as PerfApi | undefined;
++  if (existing) return existing;
+@@ -209 +211 @@ export function installAppPerfTracing(runtimeWindow: PerfWindow | null = getRunt
+-    runtimeWindow.__PICLAW_PERF__ = perfApi;
++    runtimeWindow[PERF_GLOBAL_KEY] = perfApi;
+@@ -237,0 +240,16 @@ export function completeAppPerfTrace(traceId: string | null | undefined, phase =
++export function completeAppPerfTraceIfReady(
++  traceId: string | null | undefined,
++  requiredPhases: string[],
++  phase = 'settled',
++  detail?: Record<string, unknown> | null,
++): boolean {
++  const trace = findTrace(traceId);
++  if (!trace || trace.status !== 'active') return false;
++  const seen = new Set(trace.phases.map((entry) => entry.phase));
++  if (!requiredPhases.every((required) => seen.has(required))) {
++    return false;
++  }
++  endTrace(traceId, 'completed', phase, detail);
++  return true;
++}
++
+diff --git a/runtime/web/src/ui/app-view-refresh-lifecycle.ts b/runtime/web/src/ui/app-view-refresh-lifecycle.ts
+index 4fbf8e72..4e36a061 100644
+--- a/runtime/web/src/ui/app-view-refresh-lifecycle.ts
++++ b/runtime/web/src/ui/app-view-refresh-lifecycle.ts
+@@ -6,0 +7 @@ import {
++  completeAppPerfTraceIfReady,
+@@ -134,0 +136 @@ export function useViewRefreshLifecycle(options: UseViewRefreshLifecycleOptions)
++        completeAppPerfTraceIfReady(traceId, ['runtime-hydration-ready', 'timeline-first-paint'], 'settled', detail || null);

@@ -1,0 +1,1357 @@
+diff --git a/runtime/src/agent-pool/branch-manager.ts b/runtime/src/agent-pool/branch-manager.ts
+index 1b04858..1f6ff13 100644
+--- a/runtime/src/agent-pool/branch-manager.ts
++++ b/runtime/src/agent-pool/branch-manager.ts
+@@ -22,7 +22,7 @@ import {
+   type ChatBranchRecord,
+ } from "../db.js";
+ import { createUuid } from "../utils/ids.js";
+-import { forcePersistSessionFile, seedRotatedSession } from "../session-rotation.js";
++import { createDeferredBranchSeed, writeDeferredBranchSeed } from "./branch-seeding.js";
+ import type { PoolEntry } from "./session-manager.js";
+ 
+ /** Active/known chat metadata surfaced by AgentPool. */
+@@ -47,6 +47,7 @@ export interface AgentBranchManagerOptions {
+   activeForkBaseLeafByChat: Map<string, string | null>;
+   getOrCreateRuntime: (chatJid: string) => Promise<AgentSessionRuntime>;
+   refreshRuntime: (chatJid: string, runtime: AgentSessionRuntime) => Promise<void>;
++  scheduleSessionWarmup?: (chatJid: string) => void;
+   isActive: (chatJid: string) => boolean;
+   onWarn?: (message: string, details: Record<string, unknown>) => void;
+ }
+@@ -368,75 +369,12 @@ export class AgentBranchManager {
+       agent_name: requestedAgentName,
+     });
+ 
+-    const targetRuntime = await this.options.getOrCreateRuntime(nextChatJid);
+-    const stableSeed = sourceIsActive
+-      ? getStableForkSeed(sourceSession, stableForkLeafId)
+-      : null;
+-    const sourceContext = sourceSession.sessionManager.buildSessionContext();
+-    const parentSession = sourceSession.sessionFile?.trim() || undefined;
+-    const setupName = nextBranch.agent_name;
+-    const sourceModel = stableSeed?.model || sourceContext.model || (sourceSession.model
+-      ? { provider: sourceSession.model.provider, modelId: sourceSession.model.id }
+-      : null);
+-
+-    const result = await targetRuntime.newSession({
+-      ...(parentSession ? { parentSession } : {}),
+-      setup: async (sessionManager) => {
+-        if (stableSeed) {
+-          seedSessionManagerFromBranchEntries(sessionManager, stableSeed.branchEntries, {
+-            sessionName: setupName,
+-            model: sourceModel,
+-          });
+-          return;
+-        }
+-        seedRotatedSession(sessionManager, sourceContext, {
+-          sessionName: setupName,
+-          model: sourceModel,
+-        });
+-      },
+-    });
+-    if (result.cancelled) {
+-      throw new Error("Branch fork was cancelled.");
+-    }
+-
+-    await this.options.refreshRuntime(nextChatJid, targetRuntime);
+-    const activeTargetSession = targetRuntime.session;
+-
+-    if (sourceSession.model) {
+-      try {
+-        await activeTargetSession.setModel(sourceSession.model);
+-      } catch (err) {
+-        this.options.onWarn?.("Failed to copy model to forked branch", {
+-          operation: "create_forked_chat_branch.copy_model",
+-          chatJid: nextChatJid,
+-          err,
+-        });
+-      }
+-    }
+-    try {
+-      const nextThinkingLevel = normalizeThinkingLevel(
+-        stableSeed?.thinkingLevel || sourceContext.thinkingLevel || sourceSession.thinkingLevel,
+-      );
+-      if (nextThinkingLevel) {
+-        activeTargetSession.setThinkingLevel(nextThinkingLevel);
+-      }
+-    } catch (err) {
+-      this.options.onWarn?.("Failed to copy thinking level to forked branch", {
+-        operation: "create_forked_chat_branch.copy_thinking_level",
+-        chatJid: nextChatJid,
+-        err,
+-      });
+-    }
+-    try {
+-      activeTargetSession.setSessionName(setupName);
+-    } catch (err) {
+-      this.options.onWarn?.("Failed to copy session name to forked branch", {
+-        operation: "create_forked_chat_branch.copy_session_name",
+-        chatJid: nextChatJid,
+-        err,
+-      });
+-    }
+-    forcePersistSessionFile(activeTargetSession);
++    writeDeferredBranchSeed(nextChatJid, createDeferredBranchSeed(sourceSession, {
++      stableLeafId: stableForkLeafId,
++      sessionName: nextBranch.agent_name,
++      sourceIsActive,
++    }));
++    this.options.scheduleSessionWarmup?.(nextChatJid);
+ 
+     return ensureChatBranch({
+       chat_jid: nextChatJid,
+diff --git a/target29/runtime/src/agent-pool/branch-seeding.ts b/runtime/src/agent-pool/branch-seeding.ts
+new file mode 100644
+index 0000000..aa93cb5
+--- /dev/null
++++ b/runtime/src/agent-pool/branch-seeding.ts
+@@ -0,0 +1,238 @@
++/**
++ * agent-pool/branch-seeding.ts – Deferred branch seed persistence and replay.
++ *
++ * Lets branch creation stay lightweight by persisting enough fork context to
++ * seed the target session later, either on first use or during background
++ * prewarm. This keeps branch correctness while moving expensive runtime/session
++ * hydration off the synchronous branch-fork request path.
++ */
++
++import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
++import { join } from "path";
++import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
++import type { ImageContent, Message, TextContent } from "@mariozechner/pi-ai";
++import type { AgentSession, SessionContext, SessionEntry, SessionManager } from "@mariozechner/pi-coding-agent";
++
++import { seedRotatedSession } from "../session-rotation.js";
++import { ensureSessionDir } from "./session.js";
++
++type LegacyCustomEntry = {
++  type: "custom_entry";
++  id?: string;
++  customType: string;
++  data?: unknown;
++};
++
++export type SeedBranchEntry = SessionEntry | LegacyCustomEntry;
++
++export interface DeferredBranchSeed {
++  version: 1;
++  parentSession: string | null;
++  sessionName: string | null;
++  model: { provider: string; modelId: string } | null;
++  thinkingLevel: ThinkingLevel | null;
++  mode: "stable_branch" | "rotated_context";
++  branchEntries?: SeedBranchEntry[];
++  context?: SessionContext;
++}
++
++type AppendableAgentMessage = Message | {
++  role: "bashExecution";
++  command: string;
++  output: string;
++  exitCode: number | undefined;
++  cancelled: boolean;
++  truncated: boolean;
++  fullOutputPath?: string;
++  timestamp: number;
++  excludeFromContext?: boolean;
++} | {
++  role: "custom";
++  customType: string;
++  content: string | (TextContent | ImageContent)[];
++  display: boolean;
++  details?: unknown;
++  timestamp: number;
++};
++
++type SeedSessionManager = Pick<
++  SessionManager,
++  | "appendMessage"
++  | "appendThinkingLevelChange"
++  | "appendModelChange"
++  | "appendCompaction"
++  | "appendSessionInfo"
++  | "appendCustomMessageEntry"
++  | "appendCustomEntry"
++>;
++
++const DEFERRED_BRANCH_SEED_FILE = ".branch-seed.json";
++
++export function normalizeThinkingLevel(value: string | null | undefined): ThinkingLevel | null {
++  return value === "off" || value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh"
++    ? value
++    : null;
++}
++
++function isAppendableAgentMessage(message: unknown): message is AppendableAgentMessage {
++  if (!message || typeof message !== "object") return false;
++  const role = (message as { role?: unknown }).role;
++  return role === "user"
++    || role === "assistant"
++    || role === "system"
++    || role === "tool"
++    || role === "bashExecution"
++    || role === "custom";
++}
++
++function getStableForkSeed(sourceSession: AgentSession, stableLeafId: string | null): {
++  branchEntries: SeedBranchEntry[];
++  model: { provider: string; modelId: string } | null;
++  thinkingLevel: ThinkingLevel | null;
++} {
++  const branchEntries = stableLeafId === null
++    ? []
++    : (typeof sourceSession.sessionManager?.getBranch === "function"
++        ? sourceSession.sessionManager.getBranch(stableLeafId)
++        : []);
++
++  let model: { provider: string; modelId: string } | null = null;
++  let thinkingLevel: ThinkingLevel | null = null;
++
++  for (const entry of branchEntries) {
++    if (entry?.type === "model_change" && typeof entry.provider === "string" && typeof entry.modelId === "string") {
++      model = { provider: entry.provider, modelId: entry.modelId };
++    } else if (entry?.type === "thinking_level_change" && typeof entry.thinkingLevel === "string") {
++      thinkingLevel = normalizeThinkingLevel(entry.thinkingLevel);
++    } else if (entry?.type === "message" && entry.message?.role === "assistant" && typeof entry.message?.provider === "string" && typeof entry.message?.model === "string") {
++      model = { provider: entry.message.provider, modelId: entry.message.model };
++    }
++  }
++
++  return { branchEntries, model, thinkingLevel };
++}
++
++export function createDeferredBranchSeed(
++  sourceSession: AgentSession,
++  options: { stableLeafId: string | null; sessionName?: string | null; sourceIsActive: boolean },
++): DeferredBranchSeed {
++  const stableSeed = options.sourceIsActive
++    ? getStableForkSeed(sourceSession, options.stableLeafId)
++    : null;
++  const sourceContext = stableSeed
++    ? null
++    : sourceSession.sessionManager.buildSessionContext();
++  const model = stableSeed?.model || sourceContext?.model || (sourceSession.model
++    ? { provider: sourceSession.model.provider, modelId: sourceSession.model.id }
++    : null);
++  const thinkingLevel = normalizeThinkingLevel(
++    stableSeed?.thinkingLevel || sourceContext?.thinkingLevel || sourceSession.thinkingLevel,
++  );
++
++  return {
++    version: 1,
++    parentSession: sourceSession.sessionFile?.trim() || null,
++    sessionName: options.sessionName?.trim() || null,
++    model,
++    thinkingLevel,
++    mode: stableSeed ? "stable_branch" : "rotated_context",
++    ...(stableSeed ? { branchEntries: stableSeed.branchEntries } : { context: sourceContext ?? undefined }),
++  };
++}
++
++function seedSessionManagerFromBranchEntries(
++  sessionManager: SeedSessionManager,
++  branchEntries: SeedBranchEntry[],
++  fallback: { sessionName?: string | null; model?: { provider: string; modelId: string } | null },
++): void {
++  if (!Array.isArray(branchEntries) || branchEntries.length === 0) {
++    if (fallback.sessionName?.trim()) {
++      sessionManager.appendSessionInfo(fallback.sessionName.trim());
++    }
++    if (fallback.model) {
++      sessionManager.appendModelChange(fallback.model.provider, fallback.model.modelId);
++    }
++    return;
++  }
++
++  const sourceToNewId = new Map<string, string>();
++  for (const entry of branchEntries) {
++    let newId: string | null = null;
++    if (entry?.type === "message" && isAppendableAgentMessage(entry.message)) {
++      newId = sessionManager.appendMessage(entry.message);
++    } else if (entry?.type === "thinking_level_change" && typeof entry.thinkingLevel === "string") {
++      newId = sessionManager.appendThinkingLevelChange(entry.thinkingLevel);
++    } else if (entry?.type === "model_change" && typeof entry.provider === "string" && typeof entry.modelId === "string") {
++      newId = sessionManager.appendModelChange(entry.provider, entry.modelId);
++    } else if (entry?.type === "compaction" && typeof entry.summary === "string") {
++      const firstKeptEntryId = sourceToNewId.get(entry.firstKeptEntryId)
++        ?? sourceToNewId.get(branchEntries[0]?.id ?? "")
++        ?? "rotated-context";
++      newId = sessionManager.appendCompaction(entry.summary, firstKeptEntryId, entry.tokensBefore ?? 0, entry.details, entry.fromHook);
++    } else if (entry?.type === "session_info" && typeof entry.name === "string" && entry.name.trim()) {
++      newId = sessionManager.appendSessionInfo(entry.name.trim());
++    } else if (entry?.type === "custom_message" && typeof entry.customType === "string") {
++      newId = sessionManager.appendCustomMessageEntry(entry.customType, entry.content, entry.display, entry.details);
++    } else if (entry?.type === "custom_entry" && typeof entry.customType === "string") {
++      newId = sessionManager.appendCustomEntry(entry.customType, entry.data);
++    }
++
++    if (entry?.id && newId) {
++      sourceToNewId.set(entry.id, newId);
++    }
++  }
++}
++
++export function seedSessionManagerFromDeferredBranchSeed(
++  sessionManager: SeedSessionManager,
++  seed: DeferredBranchSeed,
++): void {
++  if (seed.mode === "stable_branch") {
++    seedSessionManagerFromBranchEntries(sessionManager, seed.branchEntries ?? [], {
++      sessionName: seed.sessionName,
++      model: seed.model,
++    });
++    return;
++  }
++
++  if (seed.context) {
++    seedRotatedSession(sessionManager as SessionManager, seed.context, {
++      sessionName: seed.sessionName || undefined,
++      model: seed.model,
++    });
++    return;
++  }
++
++  if (seed.sessionName?.trim()) {
++    sessionManager.appendSessionInfo(seed.sessionName.trim());
++  }
++  if (seed.model) {
++    sessionManager.appendModelChange(seed.model.provider, seed.model.modelId);
++  }
++}
++
++function getDeferredBranchSeedPath(chatJid: string): string {
++  return join(ensureSessionDir(chatJid), DEFERRED_BRANCH_SEED_FILE);
++}
++
++export function writeDeferredBranchSeed(chatJid: string, seed: DeferredBranchSeed): void {
++  writeFileSync(getDeferredBranchSeedPath(chatJid), JSON.stringify(seed), "utf8");
++}
++
++export function readDeferredBranchSeed(chatJid: string): DeferredBranchSeed | null {
++  const path = getDeferredBranchSeedPath(chatJid);
++  if (!existsSync(path)) return null;
++
++  try {
++    const parsed = JSON.parse(readFileSync(path, "utf8"));
++    if (parsed?.version !== 1) return null;
++    if (parsed?.mode !== "stable_branch" && parsed?.mode !== "rotated_context") return null;
++    return parsed as DeferredBranchSeed;
++  } catch {
++    return null;
++  }
++}
++
++export function clearDeferredBranchSeed(chatJid: string): void {
++  rmSync(getDeferredBranchSeedPath(chatJid), { force: true });
++}
+diff --git a/runtime/src/agent-pool/runtime-facade.ts b/runtime/src/agent-pool/runtime-facade.ts
+index 4354d4f..48ca2b1 100644
+--- a/runtime/src/agent-pool/runtime-facade.ts
++++ b/runtime/src/agent-pool/runtime-facade.ts
+@@ -409,8 +409,13 @@ export class AgentRuntimeFacade {
+   }
+ 
+   async getAvailableModels(chatJid: string): Promise<AvailableModelsResult> {
+-    const session = (await this.options.getOrCreateRuntime(chatJid)).session;
+-    const registry = (session as AgentSession & { modelRegistry?: ModelRegistry }).modelRegistry ?? this.options.modelRegistry;
++    // Passive UI refreshes (thread switching, wake refresh, branch-picker
++    // updates) should not cold-start an AgentSession just to paint model state.
++    // When a runtime is already cached, return the full session-specific state.
++    // Otherwise, fall back to the shared registry so the UI can still render the
++    // available model list without paying multi-second runtime hydration costs.
++    const session = this.options.pool.get(chatJid)?.runtime.session ?? null;
++    const registry = (session as (AgentSession & { modelRegistry?: ModelRegistry }) | null)?.modelRegistry ?? this.options.modelRegistry;
+     registry.refresh();
+     const available = registry.getAvailable();
+     const modelOptions = available.map((model) => ({
+@@ -424,15 +429,15 @@ export class AgentRuntimeFacade {
+       reasoning: Boolean(model.reasoning),
+     }));
+     const models = modelOptions.map((model) => model.label);
+-    const currentModel = session.model ? `${session.model.provider}/${session.model.id}` : null;
+-    const thinkingLevel = session.thinkingLevel ?? null;
+-    const supportsThinking = typeof (session as AgentSession & { supportsThinking?: () => boolean }).supportsThinking === "function"
++    const currentModel = session?.model ? `${session.model.provider}/${session.model.id}` : null;
++    const thinkingLevel = session?.thinkingLevel ?? null;
++    const supportsThinking = session && typeof (session as AgentSession & { supportsThinking?: () => boolean }).supportsThinking === "function"
+       ? (session as AgentSession & { supportsThinking: () => boolean }).supportsThinking()
+-      : Boolean(session.model?.reasoning);
+-    const providerUsage = session.model?.provider
++      : Boolean(session?.model?.reasoning);
++    const providerUsage = session?.model?.provider
+       ? await getProviderUsage(this.options.authStorage, session.model.provider)
+       : null;
+-    const thinkingLevelLabel = thinkingLevel && session.model?.provider
++    const thinkingLevelLabel = thinkingLevel && session?.model?.provider
+       ? formatThinkingLevelForDisplay(thinkingLevel, session.model.provider)
+       : thinkingLevel;
+     return {
+diff --git a/runtime/src/agent-pool/service-factory.ts b/runtime/src/agent-pool/service-factory.ts
+index 7240429..977d609 100644
+--- a/runtime/src/agent-pool/service-factory.ts
++++ b/runtime/src/agent-pool/service-factory.ts
+@@ -106,6 +106,7 @@ export function createAgentPoolServices(options: AgentPoolServiceFactoryOptions)
+     activeForkBaseLeafByChat: options.activeForkBaseLeafByChat,
+     getOrCreateRuntime: (chatJid) => sessionManager.getOrCreate(chatJid),
+     refreshRuntime: (chatJid, runtime) => sessionManager.refreshRuntime(chatJid, runtime),
++    scheduleSessionWarmup: (chatJid) => sessionManager.prewarm(chatJid),
+     isActive: (chatJid) => runtimeFacade.isActive(chatJid),
+     onWarn: options.onWarn,
+   });
+diff --git a/runtime/src/agent-pool/session-manager.ts b/runtime/src/agent-pool/session-manager.ts
+index b42280c..a390e8a 100644
+--- a/runtime/src/agent-pool/session-manager.ts
++++ b/runtime/src/agent-pool/session-manager.ts
+@@ -8,8 +8,13 @@
+ 
+ import type { AgentSession, AgentSessionRuntime, ExtensionFactory, ModelRegistry, SettingsManager, AuthStorage } from "@mariozechner/pi-coding-agent";
+ 
++import {
++  clearDeferredBranchSeed,
++  readDeferredBranchSeed,
++  seedSessionManagerFromDeferredBranchSeed,
++} from "./branch-seeding.js";
+ import { createDefaultSession, createSessionInDir, ensureNamedSessionDir, ensureSessionDir } from "./session.js";
+-import { seedRotatedSession } from "../session-rotation.js";
++import { forcePersistSessionFile, seedRotatedSession } from "../session-rotation.js";
+ 
+ /** Cached session entry stored for each chat JID. */
+ export interface PoolEntry {
+@@ -39,6 +44,12 @@ export interface AgentSessionManagerOptions {
+  * Handles lifecycle operations for main and auxiliary AgentSession instances.
+  */
+ export class AgentSessionManager {
++  private readonly branchSeedRealizationInFlight = new Map<string, Promise<boolean>>();
++  private readonly prewarmInFlight = new Set<string>();
++  private readonly queuedPrewarms = new Set<string>();
++  private readonly prewarmQueue: string[] = [];
++  private prewarmLoopActive = false;
++
+   constructor(private readonly options: AgentSessionManagerOptions) {}
+ 
+   async refreshRuntime(chatJid: string, runtime: AgentSessionRuntime): Promise<void> {
+@@ -54,6 +65,7 @@ export class AgentSessionManager {
+     const existing = this.options.pool.get(chatJid);
+     if (existing) {
+       existing.lastUsed = Date.now();
++      await this.realizeDeferredBranchSeed(chatJid, existing.runtime);
+       return existing.runtime;
+     }
+ 
+@@ -76,7 +88,10 @@ export class AgentSessionManager {
+         });
+ 
+     this.options.pool.set(chatJid, { runtime, lastUsed: Date.now() });
+-    await this.applyDefaultModel(runtime.session);
++    const realizedDeferredSeed = await this.realizeDeferredBranchSeed(chatJid, runtime);
++    if (!realizedDeferredSeed) {
++      await this.applyDefaultModel(runtime.session);
++    }
+     await this.refreshRuntime(chatJid, runtime);
+     this.options.onInfo?.("Session ready", {
+       operation: this.options.createSession ? "get_or_create.create_main_session" : "get_or_create.create_default_session",
+@@ -171,6 +186,22 @@ export class AgentSessionManager {
+     await this.disposeEntry(this.options.sidePool, chatJid, "recreate.dispose_side_session", true);
+   }
+ 
++  prewarm(chatJid: string, options: { priority?: boolean } = {}): boolean {
++    const normalizedChatJid = String(chatJid || "").trim();
++    if (!normalizedChatJid) return false;
++    if (this.options.pool.has(normalizedChatJid) && !readDeferredBranchSeed(normalizedChatJid)) return false;
++    if (this.prewarmInFlight.has(normalizedChatJid) || this.queuedPrewarms.has(normalizedChatJid)) return false;
++
++    this.queuedPrewarms.add(normalizedChatJid);
++    if (options.priority) {
++      this.prewarmQueue.unshift(normalizedChatJid);
++    } else {
++      this.prewarmQueue.push(normalizedChatJid);
++    }
++    this.drainPrewarmQueue();
++    return true;
++  }
++
+   async shutdown(): Promise<void> {
+     for (const jid of [...this.options.pool.keys()]) {
+       await this.disposeEntry(this.options.pool, jid, "shutdown.dispose_main_session");
+@@ -253,16 +284,118 @@ export class AgentSessionManager {
+     }
+   }
+ 
++  private async realizeDeferredBranchSeed(chatJid: string, runtime: AgentSessionRuntime): Promise<boolean> {
++    const pending = this.branchSeedRealizationInFlight.get(chatJid);
++    if (pending) return await pending;
++
++    const task = (async () => {
++      const seed = readDeferredBranchSeed(chatJid);
++      if (!seed) return false;
++
++      const result = await runtime.newSession({
++        ...(seed.parentSession ? { parentSession: seed.parentSession } : {}),
++        setup: async (sessionManager) => {
++          seedSessionManagerFromDeferredBranchSeed(sessionManager, seed);
++        },
++      });
++      if (result.cancelled) {
++        throw new Error("Deferred branch seed was cancelled.");
++      }
++
++      const session = runtime.session;
++      await this.applyResolvedModel(session, seed.model, "realize_deferred_branch_seed");
++      try {
++        if (seed.thinkingLevel) {
++          session.setThinkingLevel(seed.thinkingLevel);
++        }
++      } catch (err) {
++        this.options.onWarn?.("Failed to restore deferred branch thinking level", {
++          operation: "realize_deferred_branch_seed.thinking_level",
++          chatJid,
++          err,
++        });
++      }
++      try {
++        if (seed.sessionName?.trim()) {
++          session.setSessionName(seed.sessionName.trim());
++        }
++      } catch (err) {
++        this.options.onWarn?.("Failed to restore deferred branch session name", {
++          operation: "realize_deferred_branch_seed.session_name",
++          chatJid,
++          err,
++        });
++      }
++
++      forcePersistSessionFile(session);
++      clearDeferredBranchSeed(chatJid);
++      return true;
++    })().finally(() => {
++      this.branchSeedRealizationInFlight.delete(chatJid);
++    });
++
++    this.branchSeedRealizationInFlight.set(chatJid, task);
++    return await task;
++  }
++
++  private drainPrewarmQueue(): void {
++    if (this.prewarmLoopActive) return;
++    this.prewarmLoopActive = true;
++
++    void (async () => {
++      try {
++        while (this.prewarmQueue.length > 0) {
++          const chatJid = this.prewarmQueue.shift();
++          if (!chatJid) continue;
++          this.queuedPrewarms.delete(chatJid);
++          if (this.prewarmInFlight.has(chatJid)) continue;
++          if (this.options.pool.has(chatJid) && !readDeferredBranchSeed(chatJid)) continue;
++
++          this.prewarmInFlight.add(chatJid);
++          try {
++            await this.getOrCreate(chatJid);
++            this.options.onInfo?.("Prewarmed chat session", {
++              operation: "prewarm_session",
++              chatJid,
++            });
++          } catch (err) {
++            this.options.onWarn?.("Failed to prewarm chat session", {
++              operation: "prewarm_session",
++              chatJid,
++              err,
++            });
++          } finally {
++            this.prewarmInFlight.delete(chatJid);
++          }
++        }
++      } finally {
++        this.prewarmLoopActive = false;
++        if (this.prewarmQueue.length > 0) {
++          this.drainPrewarmQueue();
++        }
++      }
++    })();
++  }
++
+   private async applyDefaultModel(session: AgentSession): Promise<void> {
+     const provider = this.options.settingsManager.getDefaultProvider();
+     const modelId = this.options.settingsManager.getDefaultModel();
+     if (!provider || !modelId) return;
++    await this.applyResolvedModel(session, { provider, modelId }, "apply_default_model");
++  }
++
++  private async applyResolvedModel(
++    session: AgentSession,
++    model: { provider: string; modelId: string } | null,
++    operation: string,
++  ): Promise<void> {
++    if (!model) return;
+ 
+     const current = session.model;
+-    if (current) return;
++    if (current && current.provider === model.provider && current.id === model.modelId) return;
+ 
+     const sessionRegistry = (session as AgentSession & { modelRegistry?: ModelRegistry }).modelRegistry ?? this.options.modelRegistry;
+-    const resolved = sessionRegistry.find(provider, modelId);
++    const resolved = sessionRegistry.find(model.provider, model.modelId);
+     if (!resolved) return;
+ 
+     const setModel = (session as { setModel?: (model: typeof resolved) => Promise<void> }).setModel;
+@@ -272,8 +405,8 @@ export class AgentSessionManager {
+       await setModel.call(session, resolved);
+     } catch (err) {
+       this.options.onWarn?.("Failed to restore model", {
+-        operation: "apply_default_model",
+-        model: `${provider}/${modelId}`,
++        operation,
++        model: `${model.provider}/${model.modelId}`,
+         err,
+       });
+     }
+diff --git a/runtime/src/agent-pool.ts b/runtime/src/agent-pool.ts
+index 5378a2a..00d0833 100644
+--- a/runtime/src/agent-pool.ts
++++ b/runtime/src/agent-pool.ts
+@@ -56,6 +56,7 @@ import {
+   type SshConfigSetResult,
+   deleteSshConfig,
+   getSshConfig,
++  listRecentChatJids,
+   upsertSshConfig,
+ } from "./db.js";
+ import { setSshToolHandlers } from "./extensions/ssh.js";
+@@ -90,7 +91,7 @@ export type {
+ } from "./agent-pool/contracts.js";
+ 
+ /** How long (ms) an idle session stays cached before being disposed. */
+-const DEFAULT_IDLE_TTL = 2 * 60 * 1000; // 2 minutes
++const DEFAULT_IDLE_TTL = 15 * 60 * 1000; // 15 minutes
+ const DEFAULT_CLEANUP_INTERVAL = 30 * 1000; // check every 30 seconds
+ 
+ function parsePositiveMs(value: string | undefined, fallback: number): number {
+@@ -345,6 +346,36 @@ export class AgentPool {
+     return this.branchManager.listKnownChats(rootChatJid, options);
+   }
+ 
++  scheduleChatWarmup(chatJid: string, options: { priority?: boolean } = {}): boolean {
++    return this.sessionManager.prewarm(chatJid, options);
++  }
++
++  scheduleRecentChatWarmup(options: { limit?: number; excludeChatJids?: string[] } = {}): string[] {
++    const targetCount = Math.max(1, Math.min(8, Math.trunc(options.limit ?? 3) || 3));
++    const excluded = new Set(
++      Array.isArray(options.excludeChatJids)
++        ? options.excludeChatJids.map((jid) => String(jid || "").trim()).filter(Boolean)
++        : [],
++    );
++
++    const scheduled: string[] = [];
++    const candidates = listRecentChatJids(targetCount * 4, {
++      excludeChatJids: [...excluded],
++    });
++    for (const chatJid of candidates) {
++      if (excluded.has(chatJid)) continue;
++      if (this.pool.has(chatJid)) continue;
++      scheduled.push(chatJid);
++      if (scheduled.length >= targetCount) break;
++    }
++
++    for (const chatJid of scheduled) {
++      this.sessionManager.prewarm(chatJid);
++    }
++
++    return scheduled;
++  }
++
+   findActiveChatByAgentName(agentName: string): ActiveChatAgent | null {
+     return this.branchManager.findActiveChatByAgentName(agentName);
+   }
+diff --git a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
+index a2e4e6a..d990bd8 100644
+--- a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
++++ b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
+@@ -188,6 +188,33 @@ export class WebChannelEndpointFacadeService {
+     const includeArchived = ["1", "true", "yes", "on"].includes(
+       String(url.searchParams.get("include_archived") || "").trim().toLowerCase(),
+     );
++    const prewarmRecent = ["1", "true", "yes", "on"].includes(
++      String(url.searchParams.get("prewarm_recent") || "").trim().toLowerCase(),
++    );
++    const prewarmLimitRaw = Number.parseInt(String(url.searchParams.get("prewarm_limit") || "").trim(), 10);
++    const prewarmLimit = Number.isFinite(prewarmLimitRaw)
++      ? Math.max(1, Math.min(8, prewarmLimitRaw))
++      : 5;
++    const excludeChatJid = typeof url.searchParams.get("exclude_chat_jid") === "string"
++      ? url.searchParams.get("exclude_chat_jid")!.trim()
++      : "";
++    const prewarmChatJid = typeof url.searchParams.get("prewarm_chat_jid") === "string"
++      ? url.searchParams.get("prewarm_chat_jid")!.trim()
++      : "";
++
++    if (!rootChatJid) {
++      if (prewarmChatJid && typeof this.options.agentPool.scheduleChatWarmup === "function") {
++        this.options.agentPool.scheduleChatWarmup(prewarmChatJid, { priority: true });
++      }
++      if (prewarmRecent && typeof this.options.agentPool.scheduleRecentChatWarmup === "function") {
++        const excludeChatJids = [excludeChatJid, prewarmChatJid].filter(Boolean);
++        this.options.agentPool.scheduleRecentChatWarmup({
++          limit: prewarmLimit,
++          excludeChatJids,
++        });
++      }
++    }
++
+     const chats = typeof this.options.listKnownChats === "function"
+       ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
+       : this.options.listActiveChats();
+diff --git a/runtime/src/db/messages.ts b/runtime/src/db/messages.ts
+index 9145015..2667c22 100644
+--- a/runtime/src/db/messages.ts
++++ b/runtime/src/db/messages.ts
+@@ -130,6 +130,29 @@ export function storeChatMetadata(chatJid: string, timestamp: string, name?: str
+   });
+ }
+ 
++export function listRecentChatJids(limit = 10, options?: { excludeChatJids?: string[] }): string[] {
++  const maxRows = Math.max(1, Math.min(100, Math.trunc(limit) || 10));
++  const excluded = Array.isArray(options?.excludeChatJids)
++    ? options!.excludeChatJids.map((jid) => String(jid || "").trim()).filter(Boolean)
++    : [];
++  const db = getDb();
++  const exclusionSql = excluded.length > 0
++    ? ` AND c.jid NOT IN (${excluded.map(() => "?").join(", ")})`
++    : "";
++  const rows = db.prepare(
++    `SELECT c.jid AS chat_jid
++       FROM chats c
++       LEFT JOIN chat_branches b ON b.chat_jid = c.jid
++      WHERE (b.chat_jid IS NULL OR b.archived_at IS NULL)${exclusionSql}
++      ORDER BY c.last_message_time DESC, c.jid ASC
++      LIMIT ?`
++  ).all(...excluded, maxRows) as Array<{ chat_jid: string | null | undefined }>;
++
++  return rows
++    .map((row) => (typeof row.chat_jid === "string" ? row.chat_jid.trim() : ""))
++    .filter(Boolean);
++}
++
+ /**
+  * Persist a message into the `messages` table (INSERT OR REPLACE).
+  * Returns the SQLite rowid of the inserted row (used as the interaction id
+diff --git a/runtime/src/db.ts b/runtime/src/db.ts
+index 1c1612b..cf205c4 100644
+--- a/runtime/src/db.ts
++++ b/runtime/src/db.ts
+@@ -21,6 +21,7 @@ export {
+ } from "./db/chat-branches.js";
+ export {
+   storeChatMetadata,
++  listRecentChatJids,
+   storeMessage,
+   getMessageByRowId,
+   getMessageByAnyRowId,
+diff --git a/runtime/src/runtime/startup.ts b/runtime/src/runtime/startup.ts
+index 0b5d0aa..fb20ed4 100644
+--- a/runtime/src/runtime/startup.ts
++++ b/runtime/src/runtime/startup.ts
+@@ -80,10 +80,32 @@ export function initializeRuntimeEnvironment(state: RuntimeState): void {
+   state.loadChats();
+ }
+ 
++export function queueStartupSessionWarmup(
++  agentPool: AgentPool & {
++    scheduleChatWarmup?: (chatJid: string, options?: { priority?: boolean }) => boolean;
++    scheduleRecentChatWarmup?: (options?: { limit?: number; excludeChatJids?: string[] }) => string[];
++  },
++  options: { defaultChatJid?: string; recentLimit?: number } = {},
++): void {
++  const defaultChatJid = typeof options.defaultChatJid === "string" && options.defaultChatJid.trim()
++    ? options.defaultChatJid.trim()
++    : "web:default";
++  const recentLimit = Math.max(0, Math.min(8, Math.trunc(options.recentLimit ?? 5) || 5));
++
++  agentPool.scheduleChatWarmup?.(defaultChatJid, { priority: true });
++  if (recentLimit > 0) {
++    agentPool.scheduleRecentChatWarmup?.({
++      limit: recentLimit,
++      excludeChatJids: [defaultChatJid],
++    });
++  }
++}
++
+ /** Start web channel and run immediate crash-recovery bootstrap. */
+ export async function startWebChannel(queue: AgentQueue, agentPool: AgentPool): Promise<WebChannel> {
+   const web = new WebChannel({ queue, agentPool });
+   await web.start();
++  queueStartupSessionWarmup(agentPool);
+   web.recoverInflightRuns();
+   // Run an immediate pending-resume scan at startup so deferred queued
+   // follow-ups are picked up even before IPC workers process resume tasks.
+diff --git a/runtime/test/agent-pool/agent-pool.test.ts b/runtime/test/agent-pool/agent-pool.test.ts
+index 847a616..ecdb7c7 100644
+--- a/runtime/test/agent-pool/agent-pool.test.ts
++++ b/runtime/test/agent-pool/agent-pool.test.ts
+@@ -278,7 +278,7 @@ test("agent pool evicts idle sessions and recreates them", async () => {
+   expect(createCalls).toBe(1);
+ 
+   const entry = (pool as any).pool.get("web:default");
+-  entry.lastUsed = Date.now() - 11 * 60 * 1000;
++  entry.lastUsed = Date.now() - 16 * 60 * 1000;
+   (pool as any).evictIdle();
+ 
+   expect(disposed).toBe(1);
+@@ -290,6 +290,86 @@ test("agent pool evicts idle sessions and recreates them", async () => {
+   await pool.shutdown();
+ });
+ 
++test("agent pool schedules warmup for the most recent inactive chats", async () => {
++  const ws = getTestWorkspace();
++  restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
++
++  const db = await importFresh<typeof import("../src/db.js")>("../src/db.js");
++  db.initDatabase();
++  db.storeChatMetadata("web:older", "2026-04-14T10:00:00.000Z", "Older");
++  db.storeChatMetadata("web:newer", "2026-04-14T11:00:00.000Z", "Newer");
++  db.storeChatMetadata("web:newest", "2026-04-14T12:00:00.000Z", "Newest");
++
++  const { AgentPool } = await importFresh<typeof import("../src/agent-pool.js")>("../src/agent-pool.js");
++
++  const created: string[] = [];
++  let activeCreates = 0;
++  let maxConcurrentCreates = 0;
++  class StubSession {
++    subscribe(_listener: (event: any) => void) {
++      return () => {};
++    }
++    async prompt(_prompt: string) {}
++    async abort() {}
++    dispose() {}
++  }
++
++  const pool = new AgentPool({
++    createSession: async (chatJid: string) => {
++      created.push(chatJid);
++      activeCreates += 1;
++      maxConcurrentCreates = Math.max(maxConcurrentCreates, activeCreates);
++      await Bun.sleep(10);
++      activeCreates -= 1;
++      return createRuntime(new StubSession()) as any;
++    },
++  });
++
++  const scheduled = (pool as any).scheduleRecentChatWarmup({
++    limit: 2,
++    excludeChatJids: ["web:default", "web:newest"],
++  });
++  expect(scheduled).toEqual(["web:newer", "web:older"]);
++
++  await Bun.sleep(40);
++  expect(created).toEqual(["web:newer", "web:older"]);
++  expect(maxConcurrentCreates).toBe(1);
++
++  await pool.shutdown();
++});
++
++test("consecutive default sessions still bind extension action methods", async () => {
++  const ws = getTestWorkspace();
++  restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
++
++  const sessionModule = await importFresh<typeof import("../src/agent-pool/session.js")>("../src/agent-pool/session.js");
++  const { AuthStorage, ModelRegistry, SettingsManager, getAgentDir } = await import("@mariozechner/pi-coding-agent");
++  const { WORKSPACE_DIR } = await import("../../src/core/config.js");
++  const authStorage = AuthStorage.create();
++  const modelRegistry = ModelRegistry.create(authStorage);
++  const settingsManager = SettingsManager.create(WORKSPACE_DIR, getAgentDir());
++
++  const runtimeA = await sessionModule.createDefaultSession("web:bind-a", {
++    authStorage,
++    modelRegistry,
++    settingsManager,
++    tools: [],
++  });
++  await expect(runtimeA.session.bindExtensions({})).resolves.toBeUndefined();
++
++  const runtimeB = await sessionModule.createDefaultSession("web:bind-b", {
++    authStorage,
++    modelRegistry,
++    settingsManager,
++    tools: [],
++  });
++  await expect(runtimeB.session.bindExtensions({})).resolves.toBeUndefined();
++  expect(runtimeB.session.getActiveToolNames()).toContain("activate_tools");
++
++  await runtimeA.dispose();
++  await runtimeB.dispose();
++});
++
+ test("agent pool can run a side prompt with the current model and thinking level", async () => {
+   const ws = getTestWorkspace();
+   restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
+@@ -535,6 +615,7 @@ test("agent pool forks active chats from the previous stable turn boundary", asy
+ 
+   const branch = await (pool as any).createForkedChatBranch(sourceChatJid);
+   expect(branch.chat_jid).not.toBe(sourceChatJid);
++  await (pool as any).getSessionForIntrospection(branch.chat_jid);
+   const forkedSession = created[branch.chat_jid];
+   const forkedMessages = forkedSession.sessionManager.buildSessionContext().messages;
+   const serialized = JSON.stringify(forkedMessages);
+diff --git a/runtime/test/agent-pool/branch-lifecycle-audit.test.ts b/runtime/test/agent-pool/branch-lifecycle-audit.test.ts
+index 303d7d2..9408c57 100644
+--- a/runtime/test/agent-pool/branch-lifecycle-audit.test.ts
++++ b/runtime/test/agent-pool/branch-lifecycle-audit.test.ts
+@@ -123,6 +123,7 @@ test("agent pool audit: forks active chats from the previous stable turn boundar
+ 
+   const branch = await (pool as any).createForkedChatBranch(sourceChatJid);
+   expect(branch.chat_jid).not.toBe(sourceChatJid);
++  await (pool as any).getSessionForIntrospection(branch.chat_jid);
+   const forkedSession = created[branch.chat_jid];
+   const forkedMessages = forkedSession.sessionManager.buildSessionContext().messages;
+   const serialized = JSON.stringify(forkedMessages);
+diff --git a/runtime/test/agent-pool/branch-manager.test.ts b/runtime/test/agent-pool/branch-manager.test.ts
+index 5ecd13a..9623096 100644
+--- a/runtime/test/agent-pool/branch-manager.test.ts
++++ b/runtime/test/agent-pool/branch-manager.test.ts
+@@ -1,6 +1,9 @@
+ import { afterEach, expect, test } from "bun:test";
+ 
+ import type { AgentSessionRuntime } from "@mariozechner/pi-coding-agent";
++import { SessionManager } from "@mariozechner/pi-coding-agent";
++import { join } from "path";
++import { readDeferredBranchSeed } from "../../src/agent-pool/branch-seeding.js";
+ import { AgentBranchManager } from "../../src/agent-pool/branch-manager.js";
+ import { createTempWorkspace, importFresh, setEnv } from "../helpers.js";
+ 
+@@ -40,6 +43,7 @@ function createManager(overrides: Partial<ConstructorParameters<typeof AgentBran
+     activeForkBaseLeafByChat,
+     getOrCreateRuntime: async (chatJid) => pool.get(chatJid)?.runtime,
+     refreshRuntime: async () => {},
++    scheduleSessionWarmup: () => {},
+     isActive: (chatJid) => {
+       const session = pool.get(chatJid)?.runtime.session;
+       return Boolean(session?.isStreaming || session?.isCompacting || session?.isRetrying || session?.isBashRunning);
+@@ -89,6 +93,74 @@ test("AgentBranchManager registers active chats and resolves agent handles", asy
+   ws.cleanup();
+ });
+ 
++test("AgentBranchManager writes a deferred fork seed and schedules branch warmup without hydrating the target runtime", async () => {
++  const ws = createTempWorkspace("piclaw-branch-seed-");
++  restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
++
++  const db = await importFresh<typeof import("../src/db.js")>("../src/db.js");
++  db.initDatabase();
++
++  const sourceManager = SessionManager.create(ws.workspace, join(ws.workspace, "source-session"));
++  sourceManager.appendSessionInfo("Research");
++  sourceManager.appendModelChange("openai", "gpt-test");
++  sourceManager.appendMessage({ role: "user", content: "stable user", timestamp: Date.now() } as const);
++  sourceManager.appendMessage({
++    role: "assistant",
++    content: [{ type: "text", text: "stable assistant" }],
++    provider: "openai",
++    model: "gpt-test",
++    usage: {
++      input: 1,
++      output: 1,
++      cacheRead: 0,
++      cacheWrite: 0,
++      totalTokens: 2,
++      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
++    },
++    stopReason: "stop",
++    timestamp: Date.now(),
++  } as const);
++
++  const scheduled: string[] = [];
++  let getOrCreateCalls = 0;
++  const sourceSession = {
++    sessionManager: sourceManager,
++    sessionFile: sourceManager.getSessionFile(),
++    sessionName: "Research",
++    model: { provider: "openai", id: "gpt-test", reasoning: true },
++    thinkingLevel: "high",
++    isStreaming: false,
++    isCompacting: false,
++    isRetrying: false,
++    isBashRunning: false,
++  };
++
++  const fixture = createManager({
++    getOrCreateRuntime: async (chatJid) => {
++      getOrCreateCalls += 1;
++      if (chatJid !== "web:default") throw new Error(`unexpected runtime hydration for ${chatJid}`);
++      return fixture.pool.get(chatJid)?.runtime;
++    },
++    scheduleSessionWarmup: (chatJid) => {
++      scheduled.push(chatJid);
++    },
++  });
++  fixture.pool.set("web:default", { runtime: createRuntime(sourceSession), lastUsed: Date.now() });
++
++  const branch = await fixture.manager.createForkedChatBranch("web:default");
++  expect(branch.chat_jid).not.toBe("web:default");
++  expect(getOrCreateCalls).toBe(1);
++  expect(scheduled).toEqual([branch.chat_jid]);
++
++  const seed = readDeferredBranchSeed(branch.chat_jid);
++  expect(seed?.version).toBe(1);
++  expect(seed?.sessionName).toBe(branch.agent_name);
++  expect(seed?.model).toEqual({ provider: "openai", modelId: "gpt-test" });
++  expect(seed?.mode).toBe("rotated_context");
++
++  ws.cleanup();
++});
++
+ test("AgentBranchManager prunes inactive branches and disposes cached sessions", async () => {
+   const ws = createTempWorkspace("piclaw-branch-prune-");
+   restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
+diff --git a/runtime/test/agent-pool/runtime-facade.test.ts b/runtime/test/agent-pool/runtime-facade.test.ts
+index 526195c..3459bc6 100644
+--- a/runtime/test/agent-pool/runtime-facade.test.ts
++++ b/runtime/test/agent-pool/runtime-facade.test.ts
+@@ -96,6 +96,48 @@ test("AgentRuntimeFacade reports available models and context usage", async () =
+   });
+ });
+ 
++test("AgentRuntimeFacade returns registry-backed model options without hydrating a cold chat runtime", async () => {
++  let refreshCalls = 0;
++  let getOrCreateCalls = 0;
++
++  const fixture = createFacade({
++    getOrCreateRuntime: async () => {
++      getOrCreateCalls += 1;
++      throw new Error("cold model lookup should not hydrate a runtime");
++    },
++    modelRegistry: {
++      refresh: () => { refreshCalls += 1; },
++      getAvailable: () => [
++        { provider: "openai", id: "gpt-fast", name: "GPT Fast", contextWindow: 128000, reasoning: true },
++      ],
++      getAll: () => [],
++      registerProvider: () => {},
++    } as any,
++  });
++
++  const available = await fixture.facade.getAvailableModels("web:cold");
++  expect(getOrCreateCalls).toBe(0);
++  expect(refreshCalls).toBe(1);
++  expect(available).toEqual({
++    current: null,
++    models: ["openai/gpt-fast"],
++    model_options: [
++      {
++        label: "openai/gpt-fast",
++        provider: "openai",
++        id: "gpt-fast",
++        name: "GPT Fast",
++        context_window: 128000,
++        reasoning: true,
++      },
++    ],
++    thinking_level: null,
++    thinking_level_label: null,
++    supports_thinking: false,
++    provider_usage: null,
++  });
++});
++
+ test("AgentRuntimeFacade removes one queued follow-up and replays the remaining queue", async () => {
+   const prompts: Array<{ text: string; behavior: string }> = [];
+   const session = {
+diff --git a/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts b/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts
+index b5e1733..847aaf6 100644
+--- a/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts
++++ b/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts
+@@ -71,11 +71,23 @@ function createFacade(getIdentitySnapshot: () => WebChannelIdentitySnapshot) {
+ 
+   const ensureCalls: string[] = [];
+   const postCalls: Array<{ isReply: boolean; chatJid: string }> = [];
++  const scheduledChatWarmups: Array<{ chatJid: string; priority?: boolean }> = [];
++  const scheduledWarmups: Array<{ limit?: number; excludeChatJids?: string[] }> = [];
+   const activeChats = [{ chat_jid: "web:default", agent_name: "Pi" }];
+   const knownChats = [{ chat_jid: "web:branch", agent_name: "Branch" }];
+   const options: WebChannelEndpointFacadeOptions = {
+     endpointContexts: contexts,
+     defaultChatJid: "web:default",
++    agentPool: {
++      scheduleChatWarmup: (chatJid: string, options?: { priority?: boolean }) => {
++        scheduledChatWarmups.push({ chatJid, priority: options?.priority });
++        return true;
++      },
++      scheduleRecentChatWarmup: (input: { limit?: number; excludeChatJids?: string[] }) => {
++        scheduledWarmups.push(input);
++        return [];
++      },
++    } as unknown as AgentPool,
+     getIdentitySnapshot,
+     ensureAvatarCache: async (_kind, source) => {
+       ensureCalls.push(source);
+@@ -95,6 +107,8 @@ function createFacade(getIdentitySnapshot: () => WebChannelIdentitySnapshot) {
+     facade: new WebChannelEndpointFacadeService(options),
+     ensureCalls,
+     postCalls,
++    scheduledChatWarmups,
++    scheduledWarmups,
+     activeChats,
+     knownChats,
+   };
+@@ -179,4 +193,16 @@ describe("web channel endpoint facade service", () => {
+     expect(branchesResponse.status).toBe(200);
+     expect(await branchesResponse.json()).toEqual({ chats: knownChats });
+   });
++
++  test("can schedule prioritized current-chat warmup plus recent-chat warmup from the branches endpoint without changing payload shape", async () => {
++    const { facade, knownChats, scheduledChatWarmups, scheduledWarmups } = createFacade(() => createIdentitySnapshot());
++
++    const branchesResponse = facade.handleAgentBranches(
++      new Request("https://example.com/agent/branches?include_archived=1&prewarm_recent=1&prewarm_limit=4&exclude_chat_jid=web%3Adefault&prewarm_chat_jid=web%3Abranch")
++    );
++    expect(branchesResponse.status).toBe(200);
++    expect(await branchesResponse.json()).toEqual({ chats: knownChats });
++    expect(scheduledChatWarmups).toEqual([{ chatJid: "web:branch", priority: true }]);
++    expect(scheduledWarmups).toEqual([{ limit: 4, excludeChatJids: ["web:default", "web:branch"] }]);
++  });
+ });
+diff --git a/runtime/test/runtime/startup.test.ts b/runtime/test/runtime/startup.test.ts
+index 94f1890..164d483 100644
+--- a/runtime/test/runtime/startup.test.ts
++++ b/runtime/test/runtime/startup.test.ts
+@@ -1,6 +1,7 @@
+ import { describe, expect, test } from "bun:test";
+ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
+ import { join } from "path";
++import { queueStartupSessionWarmup } from "../../src/runtime/startup.js";
+ import { createTempWorkspace } from "../helpers.js";
+ 
+ describe("runtime startup helpers", () => {
+@@ -10,7 +11,7 @@ describe("runtime startup helpers", () => {
+     try {
+       const run = Bun.spawnSync({
+         cmd: [
+-          "bun",
++          process.execPath,
+           "-e",
+           'import { initializeRuntimeEnvironment } from "./src/runtime/startup.js"; initializeRuntimeEnvironment({ loadTimestamps() {}, loadChats() {} });',
+         ],
+@@ -43,7 +44,7 @@ describe("runtime startup helpers", () => {
+     try {
+       const run = Bun.spawnSync({
+         cmd: [
+-          "bun",
++          process.execPath,
+           "-e",
+           'import { queueStartupResumePendingIpc } from "./src/runtime/startup.js"; queueStartupResumePendingIpc();',
+         ],
+@@ -82,7 +83,7 @@ describe("runtime startup helpers", () => {
+ 
+       const run = Bun.spawnSync({
+         cmd: [
+-          "bun",
++          process.execPath,
+           "-e",
+           'import { queueStartupResumePendingIpc } from "./src/runtime/startup.js"; queueStartupResumePendingIpc();',
+         ],
+@@ -107,4 +108,23 @@ describe("runtime startup helpers", () => {
+       ws.cleanup();
+     }
+   });
++
++  test("queueStartupSessionWarmup prioritizes the default chat and queues five recent chats by default", () => {
++    const scheduled: Array<{ chatJid: string; priority?: boolean }> = [];
++    const recentCalls: Array<{ limit?: number; excludeChatJids?: string[] }> = [];
++
++    queueStartupSessionWarmup({
++      scheduleChatWarmup: (chatJid: string, options?: { priority?: boolean }) => {
++        scheduled.push({ chatJid, priority: options?.priority });
++        return true;
++      },
++      scheduleRecentChatWarmup: (options?: { limit?: number; excludeChatJids?: string[] }) => {
++        recentCalls.push(options || {});
++        return [];
++      },
++    } as any);
++
++    expect(scheduled).toEqual([{ chatJid: "web:default", priority: true }]);
++    expect(recentCalls).toEqual([{ limit: 5, excludeChatJids: ["web:default"] }]);
++  });
+ });
+diff --git a/runtime/test/web/app-auth-bootstrap.test.ts b/runtime/test/web/app-auth-bootstrap.test.ts
+index 9a0630f..d0e5f72 100644
+--- a/runtime/test/web/app-auth-bootstrap.test.ts
++++ b/runtime/test/web/app-auth-bootstrap.test.ts
+@@ -197,6 +197,7 @@ test('handleMessageResponseRefresh triggers queue refresh only for queued respon
+ 
+ test('refreshActiveChatAgents merges active + archived branch rows for target chat', async () => {
+   let rows: any[] = [];
++  const branchOptions: any[] = [];
+ 
+   refreshActiveChatAgents({
+     currentChatJid: 'chat-a',
+@@ -205,19 +206,25 @@ test('refreshActiveChatAgents merges active + archived branch rows for target ch
+         { chat_jid: 'chat-a', root_chat_jid: 'chat-a', agent_name: 'Primary', is_active: true },
+       ],
+     }),
+-    getChatBranches: async () => ({
+-      chats: [
+-        { chat_jid: 'chat-a', root_chat_jid: 'chat-a', agent_name: 'Primary branch' },
+-        { chat_jid: 'chat-b', root_chat_jid: 'chat-a', agent_name: 'Branch', archived_at: '2026-01-01T00:00:00.000Z' },
+-      ],
+-    }),
++    getChatBranches: async (_rootChatJid, options) => {
++      branchOptions.push(options || null);
++      return {
++        chats: [
++          { chat_jid: 'chat-a', root_chat_jid: 'chat-a', agent_name: 'Primary branch' },
++          { chat_jid: 'chat-b', root_chat_jid: 'chat-a', agent_name: 'Branch', archived_at: '2026-01-01T00:00:00.000Z' },
++        ],
++      };
++    },
+     activeChatJidRef: { current: 'chat-a' },
+     setActiveChatAgents: (next) => {
+       rows = typeof next === 'function' ? next(rows) : next;
+     },
++    prewarmRecent: true,
++    prewarmLimit: 4,
+   });
+ 
+   await new Promise((resolve) => setTimeout(resolve, 0));
+ 
+   expect(rows.map((row) => row.chat_jid).sort()).toEqual(['chat-a', 'chat-b']);
++  expect(branchOptions).toEqual([{ includeArchived: true, prewarmRecent: true, prewarmLimit: 4, excludeChatJid: 'chat-a', prewarmChatJid: 'chat-a' }]);
+ });
+diff --git a/runtime/test/web/app-window-actions.test.ts b/runtime/test/web/app-window-actions.test.ts
+index 87f95a6..60644f8 100644
+--- a/runtime/test/web/app-window-actions.test.ts
++++ b/runtime/test/web/app-window-actions.test.ts
+@@ -16,15 +16,19 @@ afterEach(() => {
+   }
+ });
+ 
+-test('createSessionFromCompose refreshes branch state and navigates to the new chat', async () => {
++test('createSessionFromCompose navigates immediately to the branch-loader route', async () => {
+   const toasts: Array<[string, string, string, number]> = [];
+   const navigateCalls: string[] = [];
+   const refreshes: string[] = [];
++  let forkCalls = 0;
+ 
+   const created = await createSessionFromCompose({
+     currentChatJid: 'web:root',
+     chatOnlyMode: true,
+-    forkChatBranch: async () => ({ branch: { chat_jid: 'web:new', agent_name: 'feature' } }),
++    forkChatBranch: async () => {
++      forkCalls += 1;
++      return { branch: { chat_jid: 'web:new', agent_name: 'feature' } };
++    },
+     refreshActiveChatAgents: async () => { refreshes.push('active'); },
+     refreshCurrentChatBranches: async () => { refreshes.push('branches'); },
+     showIntentToast: (title: string, message: string, kind: string, timeout: number) => {
+@@ -35,9 +39,11 @@ test('createSessionFromCompose refreshes branch state and navigates to the new c
+   });
+ 
+   expect(created).toBe(true);
+-  expect(refreshes.sort()).toEqual(['active', 'branches']);
+-  expect(toasts).toContainEqual(['New branch created', 'Switched to @feature.', 'info', 2500]);
+-  expect(navigateCalls[0]).toContain('chat_jid=web%3Anew');
++  expect(forkCalls).toBe(0);
++  expect(refreshes).toEqual([]);
++  expect(toasts).toEqual([]);
++  expect(navigateCalls[0]).toContain('branch_loader=1');
++  expect(navigateCalls[0]).toContain('branch_source_chat_jid=web%3Aroot');
+ });
+ 
+ test('popOutPane transfers pane state and closes the source tab after navigation', async () => {
+diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
+index a4c4971..6588804 100644
+--- a/runtime/web/src/api.ts
++++ b/runtime/web/src/api.ts
+@@ -172,6 +172,7 @@ export async function getChatBranches(rootChatJid = null, options = {}) {
+     const params = new URLSearchParams();
+     if (rootChatJid) params.set('root_chat_jid', String(rootChatJid));
+     if (options?.includeArchived) params.set('include_archived', '1');
++    if (options?.prewarmChatJid) params.set('prewarm_chat_jid', String(options.prewarmChatJid));
+     const query = params.toString() ? `?${params.toString()}` : '';
+     return request(`/agent/branches${query}`);
+ }
+diff --git a/runtime/web/src/ui/app-auth-bootstrap.ts b/runtime/web/src/ui/app-auth-bootstrap.ts
+index 4fe41c4..7c8260b 100644
+--- a/runtime/web/src/ui/app-auth-bootstrap.ts
++++ b/runtime/web/src/ui/app-auth-bootstrap.ts
+@@ -156,6 +156,8 @@ export interface RefreshActiveChatAgentsOptions {
+   getChatBranches: (rootChatJid: string | null, options?: Record<string, unknown>) => Promise<{ chats?: unknown[] }>;
+   activeChatJidRef: { current: string };
+   setActiveChatAgents: StateSetter<any[]>;
++  prewarmRecent?: boolean;
++  prewarmLimit?: number;
+ }
+ 
+ export function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions): void {
+@@ -165,13 +167,23 @@ export function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions)
+     getChatBranches,
+     activeChatJidRef,
+     setActiveChatAgents,
++    prewarmRecent = false,
++    prewarmLimit = 3,
+   } = options;
+ 
+   const targetChatJid = currentChatJid;
+ 
+   Promise.all([
+     getActiveChatAgents().catch(() => ({ chats: [] /* expected: active-agent refresh is best-effort. */ })),
+-    getChatBranches(null, { includeArchived: true }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
++    getChatBranches(null, {
++      includeArchived: true,
++      ...(prewarmRecent ? {
++        prewarmRecent: true,
++        prewarmLimit,
++        excludeChatJid: targetChatJid,
++        prewarmChatJid: targetChatJid,
++      } : {}),
++    }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
+   ])
+     .then(([activePayload, branchPayload]) => {
+       if (activeChatJidRef.current !== targetChatJid) return;
+diff --git a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
+index 9335899..ac9fffd 100644
+--- a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
++++ b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
+@@ -124,7 +124,16 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+       sidebarWidthRef,
+       shellElement: appShellRef.current,
+     });
+-  }, [appShellRef, loadAgents, readStoredNumber, sidebarWidthRef]);
++    refreshActiveChatAgentsState({
++      currentChatJid,
++      getActiveChatAgents,
++      getChatBranches,
++      activeChatJidRef,
++      setActiveChatAgents,
++      prewarmRecent: true,
++      prewarmLimit: 5,
++    });
++  }, [activeChatJidRef, appShellRef, currentChatJid, getActiveChatAgents, getChatBranches, loadAgents, readStoredNumber, setActiveChatAgents, sidebarWidthRef]);
+ 
+   const updateAgentProfile = useCallback((payload: any) => {
+     updateAgentProfileFromEvent({
+diff --git a/runtime/web/src/ui/app-window-actions.ts b/runtime/web/src/ui/app-window-actions.ts
+index 5242d6d..d7954be 100644
+--- a/runtime/web/src/ui/app-window-actions.ts
++++ b/runtime/web/src/ui/app-window-actions.ts
+@@ -53,6 +53,21 @@ export async function createSessionFromCompose(options: CreateSessionFromCompose
+     baseHref,
+   } = options;
+ 
++  // Fast path for the main web UI: navigate immediately to the lightweight
++  // branch-loader route so chat creation feels instant. The loader route reuses
++  // the existing async fork flow without blocking the current window on full
++  // runtime/session creation.
++  if (typeof navigate === 'function') {
++    try {
++      const loaderUrl = buildBranchLoaderUrl(baseHref, currentChatJid, { chatOnly: chatOnlyMode });
++      navigate(loaderUrl);
++      return true;
++    } catch (error) {
++      showIntentToast?.('Could not create branch', describeBranchOpenError(error), 'warning', 5000);
++      return false;
++    }
++  }
++
+   try {
+     const response = await forkChatBranch(currentChatJid);
+     const branch = response?.branch;

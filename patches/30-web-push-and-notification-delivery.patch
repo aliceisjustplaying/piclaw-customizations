@@ -1,0 +1,2895 @@
+diff --git a/bun.lock b/bun.lock
+index 9f9afd5..911c28d 100644
+--- a/bun.lock
++++ b/bun.lock
+@@ -26,6 +26,7 @@
+         "pptxviewjs": "^1.1.8",
+         "preact": "10.29.0",
+         "qrcode-terminal": "0.12.0",
++        "web-push": "3.6.7",
+         "xlsx": "^0.18.5",
+       },
+       "devDependencies": {
+@@ -585,6 +586,8 @@
+ 
+     "argparse": ["argparse@2.0.1", "", {}, "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="],
+ 
++    "asn1.js": ["asn1.js@5.4.1", "", { "dependencies": { "bn.js": "^4.0.0", "inherits": "^2.0.1", "minimalistic-assert": "^1.0.0", "safer-buffer": "^2.1.0" } }, "sha512-+I//4cYPccV8LdmBLiX8CYvf9Sp3vQsrqu2QNXRcrbiWvcx/UdlFiqUJJzxRQxgsZmvhXhn4cSKeSmoFjVdupA=="],
++
+     "asn1js": ["asn1js@3.0.7", "", { "dependencies": { "pvtsutils": "^1.3.6", "pvutils": "^1.1.3", "tslib": "^2.8.1" } }, "sha512-uLvq6KJu04qoQM6gvBfKFjlh6Gl0vOKQuR5cJMDHQkmwfMOQeN3F3SHCv9SNYSL+CRoHvOGFfllDlVz03GQjvQ=="],
+ 
+     "assemblyscript": ["assemblyscript@0.28.10", "", { "dependencies": { "binaryen": "123.0.0-nightly.20250530", "long": "^5.2.4" }, "bin": { "asc": "bin/asc.js", "asinit": "bin/asinit.js" } }, "sha512-MGqjjNlPMmcWjfnme3cGFKmbBY/rj0bmE4M1Wg8tNqmHusA1PAjOMgWK67KWBK63lmvotFDoP8e5N0URxKlR/Q=="],
+@@ -607,6 +610,8 @@
+ 
+     "binaryen": ["binaryen@123.0.0-nightly.20250530", "", { "bin": { "wasm-as": "bin/wasm-as", "wasm2js": "bin/wasm2js", "wasm-dis": "bin/wasm-dis", "wasm-opt": "bin/wasm-opt", "wasm-merge": "bin/wasm-merge", "wasm-shell": "bin/wasm-shell", "wasm-reduce": "bin/wasm-reduce", "wasm-metadce": "bin/wasm-metadce", "wasm-ctor-eval": "bin/wasm-ctor-eval" } }, "sha512-d1zPHBN5YlOd3Ff+OUxvVExuFeh8heSnqe+X3bjItFxGLvn4VGBKmrvv7pgy/cRhrIUGuPW138iaWfDhwjyDqg=="],
+ 
++    "bn.js": ["bn.js@4.12.3", "", {}, "sha512-fGTi3gxV/23FTYdAoUtLYp6qySe2KE3teyZitipKNRuVYcBkoP/bB3guXN/XVKUe9mxCHXnc9C4ocyz8OmgN0g=="],
++
+     "body-parser": ["body-parser@2.2.2", "", { "dependencies": { "bytes": "^3.1.2", "content-type": "^1.0.5", "debug": "^4.4.3", "http-errors": "^2.0.0", "iconv-lite": "^0.7.0", "on-finished": "^2.4.1", "qs": "^6.14.1", "raw-body": "^3.0.1", "type-is": "^2.0.1" } }, "sha512-oP5VkATKlNwcgvxi0vM0p/D3n2C3EReYVX+DNYs5TjZFn/oQt2j+4sVJtSMr18pdRr8wjTcBl6LoV+FUwzPmNA=="],
+ 
+     "bowser": ["bowser@2.14.1", "", {}, "sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg=="],
+@@ -929,6 +934,8 @@
+ 
+     "http-proxy-agent": ["http-proxy-agent@7.0.2", "", { "dependencies": { "agent-base": "^7.1.0", "debug": "^4.3.4" } }, "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig=="],
+ 
++    "http_ece": ["http_ece@1.2.0", "", {}, "sha512-JrF8SSLVmcvc5NducxgyOrKXe3EsyHMgBFgSaIUGmArKe+rwr0uphRkRXvwiom3I+fpIfoItveHrfudL8/rxuA=="],
++
+     "https-proxy-agent": ["https-proxy-agent@7.0.6", "", { "dependencies": { "agent-base": "^7.1.2", "debug": "4" } }, "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw=="],
+ 
+     "iconv-lite": ["iconv-lite@0.6.3", "", { "dependencies": { "safer-buffer": ">= 2.1.2 < 3.0.0" } }, "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw=="],
+@@ -1035,8 +1042,12 @@
+ 
+     "mime-types": ["mime-types@3.0.2", "", { "dependencies": { "mime-db": "^1.54.0" } }, "sha512-Lbgzdk0h4juoQ9fCKXW4by0UJqj+nOOrI9MJ1sSj4nI8aI2eo1qmvQEie4VD1glsS250n15LsWsYtCugiStS5A=="],
+ 
++    "minimalistic-assert": ["minimalistic-assert@1.0.1", "", {}, "sha512-UtJcAD4yEaGtjPezWuO9wC4nwUnVH/8/Im3yEHQP4b67cXlD/Qr9hdITCU1xDbSEXg2XKNaP8jsReV7vQd00/A=="],
++
+     "minimatch": ["minimatch@10.2.4", "", { "dependencies": { "brace-expansion": "^5.0.2" } }, "sha512-oRjTw/97aTBN0RHbYCdtF1MQfvusSIBQM0IZEgzl6426+8jSC0nF1a/GmnVLpfB9yyr6g6FTqWqiZVbxrtaCIg=="],
+ 
++    "minimist": ["minimist@1.2.8", "", {}, "sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA=="],
++
+     "minipass": ["minipass@7.1.3", "", {}, "sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A=="],
+ 
+     "mkdirp": ["mkdirp@1.0.4", "", { "bin": { "mkdirp": "bin/cmd.js" } }, "sha512-vVqVZQyf3WLx2Shd0qJ9xuvqgAyKPLAiqITEtqW0oIUjzo3PePDd6fW9iFz30ef7Ysp/oiWqbhszeGWW2T6Gzw=="],
+@@ -1315,6 +1326,8 @@
+ 
+     "w3c-keyname": ["w3c-keyname@2.2.8", "", {}, "sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ=="],
+ 
++    "web-push": ["web-push@3.6.7", "", { "dependencies": { "asn1.js": "^5.3.0", "http_ece": "1.2.0", "https-proxy-agent": "^7.0.0", "jws": "^4.0.0", "minimist": "^1.2.5" }, "bin": { "web-push": "src/cli.js" } }, "sha512-OpiIUe8cuGjrj3mMBFWY+e4MMIkW3SVT+7vEIjvD9kejGUypv8GPDf84JdPWskK8zMRIJ6xYGm+Kxr8YkPyA0A=="],
++
+     "web-streams-polyfill": ["web-streams-polyfill@3.3.3", "", {}, "sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw=="],
+ 
+     "which": ["which@2.0.2", "", { "dependencies": { "isexe": "^2.0.0" }, "bin": { "node-which": "./bin/node-which" } }, "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA=="],
+diff --git a/target30/docs/web-notification-delivery-policy.md b/docs/web-notification-delivery-policy.md
+new file mode 100644
+index 0000000..721fab1
+--- /dev/null
++++ b/docs/web-notification-delivery-policy.md
+@@ -0,0 +1,70 @@
++# Web notification delivery policy
++
++PiClaw uses a per-**device**, per-**chat** delivery coordinator to decide whether a finished agent reply should surface as a local in-page notification or as server-side Web Push.
++
++## Rule
++
++For a given **device + chat_jid** pair:
++
++- **Visible live client** → **no notification** on that device for that chat
++- **Hidden-but-live client(s)** → **local notification only** on that device for that chat
++- **No live client** → **Web Push only** on that device for that chat
++
++## Why this is chat-scoped instead of device-scoped
++
++PiClaw can have multiple chats running at once. A user may be actively viewing one thread while other threads continue working in the background.
++
++Because of that, notification routing is based on the specific `chat_jid` that produced the reply:
++
++- If you are actively viewing chat **A**, replies in chat **A** should stay quiet on that device.
++- If chat **B** finishes while no live client for **B** exists on that device, PiClaw should still notify you for **B** even if chat **A** is currently visible.
++
++This ensures non-active threads still notify when they complete.
++
++## Local notification election
++
++Multiple hidden tabs or windows on the same device can still be live for the same chat. To avoid duplicate local notifications, the client elects exactly one hidden tab/window per **device + chat** to show the local notification.
++
++If any tab/window for that same chat is visible, hidden tabs stay silent.
++
++## Web Push suppression
++
++Each Web Push subscription is associated with a stable device id. Before sending a reply notification, the server checks whether that device has a recent live client for the same `chat_jid`.
++
++- live same-chat client present → suppress Web Push for that device
++- no live same-chat client → allow Web Push for that device
++
++This avoids `[Local]` + `[Web Push]` duplicates for the same chat on the same device while still allowing other chats to notify.
++
++## Presence model
++
++The client publishes lightweight presence updates containing:
++
++- `device_id`
++- `client_id`
++- `chat_jid`
++- `visibility_state`
++- `has_focus`
++
++Presence is refreshed periodically and expires quickly if the page disappears without clean shutdown.
++
++## Practical examples
++
++### Phone visible on chat A, chat B finishes
++
++- chat A is visible on the phone
++- no live phone client exists for chat B
++- result: **Web Push may still fire for chat B**
++
++### Hidden laptop tab on chat A, phone swiped away, chat A finishes
++
++- laptop has a hidden live client for chat A
++- phone has no live client for chat A
++- result:
++  - **laptop:** local notification only
++  - **phone:** Web Push only
++
++### Two hidden tabs for chat A on the same laptop
++
++- both are live, neither is visible
++- result: exactly **one** hidden tab shows the local notification
+diff --git a/package.json b/package.json
+index 55ca110..0980cb1 100644
+--- a/package.json
++++ b/package.json
+@@ -100,6 +100,7 @@
+     "pptxviewjs": "^1.1.8",
+     "preact": "10.29.0",
+     "qrcode-terminal": "0.12.0",
++    "web-push": "3.6.7",
+     "xlsx": "^0.18.5"
+   },
+   "devDependencies": {
+diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
+index a77a57f..66dd04e 100644
+--- a/runtime/src/channels/web/http/dispatch-agent.ts
++++ b/runtime/src/channels/web/http/dispatch-agent.ts
+@@ -3,6 +3,13 @@
+  */
+ 
+ import type { WebChannelLike } from "../core/web-channel-contracts.js";
++import {
++  handleWebPushPresence,
++  handleWebPushSubscriptionDelete,
++  handleWebPushSubscriptionUpsert,
++  handleWebPushTest,
++  handleWebPushVapidPublicKey,
++} from "../push/web-push-routes.js";
+ 
+ interface ExactAgentRoute {
+   method: string;
+@@ -222,6 +229,31 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+     path: "/agent/card-action",
+     handle: (channel, req) => channel.handleAdaptiveCardAction(req),
+   },
++  {
++    method: "GET",
++    path: "/agent/push/vapid-public-key",
++    handle: () => handleWebPushVapidPublicKey(),
++  },
++  {
++    method: "POST",
++    path: "/agent/push/subscription",
++    handle: (_channel, req) => handleWebPushSubscriptionUpsert(req),
++  },
++  {
++    method: "DELETE",
++    path: "/agent/push/subscription",
++    handle: (_channel, req) => handleWebPushSubscriptionDelete(req),
++  },
++  {
++    method: "POST",
++    path: "/agent/push/presence",
++    handle: (_channel, req) => handleWebPushPresence(req),
++  },
++  {
++    method: "POST",
++    path: "/agent/push/test",
++    handle: (_channel, req) => handleWebPushTest(req),
++  },
+   {
+     method: "POST",
+     path: "/agent/side-prompt",
+diff --git a/runtime/src/channels/web/http/dispatch-shell.ts b/runtime/src/channels/web/http/dispatch-shell.ts
+index 7c66bca..9afbef5 100644
+--- a/runtime/src/channels/web/http/dispatch-shell.ts
++++ b/runtime/src/channels/web/http/dispatch-shell.ts
+@@ -49,6 +49,10 @@ export async function handleShellRoutes(
+     return await serveStaticAsset(req, pathname.slice(1));
+   }
+ 
++  if (flags.isServiceWorker) {
++    return channel.serveStatic("sw.js");
++  }
++
+   if (req.method === "GET" && pathname === "/ghostty-vt.wasm") {
+     return channel.serveStatic("js/vendor/ghostty-vt.wasm");
+   }
+diff --git a/runtime/src/channels/web/http/route-flags.ts b/runtime/src/channels/web/http/route-flags.ts
+index 7244599..72bc5ab 100644
+--- a/runtime/src/channels/web/http/route-flags.ts
++++ b/runtime/src/channels/web/http/route-flags.ts
+@@ -42,6 +42,8 @@ export type RouteFlags = {
+   isFavicon: boolean;
+   /** True when the request targets known Apple touch icon paths. */
+   isAppleIcon: boolean;
++  /** True when the request targets `/sw.js`. */
++  isServiceWorker: boolean;
+   /** True when the request path starts with `/static/`. */
+   isStaticAsset: boolean;
+   /** True when a static asset is safe to serve unauthenticated. */
+@@ -115,6 +117,7 @@ export function getRouteFlags(req: Request, pathname: string): RouteFlags {
+     isManifest: isGetOrHead && pathname === "/manifest.json",
+     isFavicon: isGetOrHead && pathname === "/favicon.ico",
+     isAppleIcon: isGetOrHead && APPLE_ICON_PATHS.has(pathname),
++    isServiceWorker: isGetOrHead && pathname === "/sw.js",
+     isStaticAsset,
+     isPublicStatic: isStaticAsset && isPublicStaticPath(pathname),
+     isDocsAsset: pathname.startsWith("/docs/"),
+@@ -143,6 +146,7 @@ export function shouldSkipAuthCheck(flags: RouteFlags, hasInternalAccess: boolea
+     flags.isManifest ||
+     flags.isFavicon ||
+     flags.isAppleIcon ||
++    flags.isServiceWorker ||
+     flags.isPublicStatic ||
+     flags.isAvatar
+   );
+diff --git a/runtime/src/channels/web/http/static.ts b/runtime/src/channels/web/http/static.ts
+index 4aa8e58..8fbf1c2 100644
+--- a/runtime/src/channels/web/http/static.ts
++++ b/runtime/src/channels/web/http/static.ts
+@@ -99,9 +99,11 @@ export async function serveStatic(relPath: string, notFound: () => Response): Pr
+   const cacheControl =
+     ext === ".html"
+       ? "no-cache, no-store, must-revalidate"
+-      : (relPath === "dist" || relPath.startsWith("dist/") || relPath.includes("/dist/"))
++      : relPath === "sw.js"
+         ? "no-cache, no-store, must-revalidate"
+-        : "public, max-age=3600";
++        : (relPath === "dist" || relPath.startsWith("dist/") || relPath.includes("/dist/"))
++          ? "no-cache, no-store, must-revalidate"
++          : "public, max-age=3600";
+ 
+   if (ext === ".html") {
+     const rendered = renderHtmlTemplate(relPath, await file.text());
+@@ -113,11 +115,17 @@ export async function serveStatic(relPath: string, notFound: () => Response): Pr
+     });
+   }
+ 
++  const responseHeaders: Record<string, string> = {
++    "Content-Type": contentType,
++    "Cache-Control": cacheControl,
++  };
++
++  if (relPath === "sw.js") {
++    responseHeaders["Service-Worker-Allowed"] = "/";
++  }
++
+   return new Response(file, {
+-    headers: {
+-      "Content-Type": contentType,
+-      "Cache-Control": cacheControl,
+-    },
++    headers: responseHeaders,
+   });
+ }
+ 
+diff --git a/runtime/src/channels/web/messaging/agent-message-store.ts b/runtime/src/channels/web/messaging/agent-message-store.ts
+index 5df9d44..88cc1ef 100644
+--- a/runtime/src/channels/web/messaging/agent-message-store.ts
++++ b/runtime/src/channels/web/messaging/agent-message-store.ts
+@@ -12,6 +12,10 @@ import type { WebChannelLike } from "../core/web-channel-contracts.js";
+ import type { AttachmentInfo } from "../../../agent-pool/attachments.js";
+ import type { AgentEventEmitter } from "../sse/agent-events.js";
+ import { formatOutbound, type ChatChannel } from "../../../router.js";
++import { createLogger, debugSuppressedError } from "../../../utils/logger.js";
++import { sendStoredAgentReplyWebPushNotification } from "../push/web-push-service.js";
++
++const log = createLogger("web.agent-message-store");
+ 
+ function buildAttachmentBlocks(attachments: AttachmentInfo[]): {
+   mediaIds: number[];
+@@ -28,6 +32,19 @@ function buildAttachmentBlocks(attachments: AttachmentInfo[]): {
+   return { mediaIds, contentBlocks };
+ }
+ 
++function dispatchStoredReplyWebPush(
++  interaction: ReturnType<WebChannelLike["storeMessage"]>,
++  dispatchWebPushNotification?: (interaction: ReturnType<WebChannelLike["storeMessage"]>) => Promise<unknown>,
++): void {
++  if (!interaction) return;
++  void (dispatchWebPushNotification || sendStoredAgentReplyWebPushNotification)(interaction).catch((error) => {
++    debugSuppressedError(log, "Failed to dispatch Web Push for stored agent reply.", error, {
++      chatJid: interaction.chat_jid,
++      rowId: interaction.id,
++    });
++  });
++}
++
+ /** Persist the accumulated agent turn (text + attachments) to the database. */
+ export function storeAgentTurn(
+   channel: WebChannelLike,
+@@ -44,6 +61,7 @@ export function storeAgentTurn(
+     skipPlaceholder?: boolean;
+     /** True only for the terminal persisted assistant message of a run. */
+     isTerminalAgentReply?: boolean;
++    dispatchWebPushNotification?: (interaction: ReturnType<WebChannelLike["storeMessage"]>) => Promise<unknown>;
+   }
+ ): boolean {
+   const { mediaIds, contentBlocks } = buildAttachmentBlocks(params.attachments);
+@@ -71,6 +89,9 @@ export function storeAgentTurn(
+           thread_id: params.threadId ?? null,
+           row_id: placeholderId,
+         });
++        if (params.isTerminalAgentReply) {
++          dispatchStoredReplyWebPush(updated, params.dispatchWebPushNotification);
++        }
+         return true;
+       }
+     }
+@@ -83,6 +104,9 @@ export function storeAgentTurn(
+   });
+   if (interaction) {
+     emitter.response(interaction);
++    if (params.isTerminalAgentReply) {
++      dispatchStoredReplyWebPush(interaction, params.dispatchWebPushNotification);
++    }
+     return true;
+   }
+   return false;
+diff --git a/target30/runtime/src/channels/web/push/web-notification-presence-service.ts b/runtime/src/channels/web/push/web-notification-presence-service.ts
+new file mode 100644
+index 0000000..bde649d
+--- /dev/null
++++ b/runtime/src/channels/web/push/web-notification-presence-service.ts
+@@ -0,0 +1,137 @@
++/**
++ * web/push/web-notification-presence-service.ts – in-memory device/chat presence for notification routing.
++ *
++ * Tracks recent live browser clients by device + tab/window so reply delivery can distinguish:
++ * - visible current chat on a device → no notification on that device
++ * - hidden-but-live current chat on a device → local notification only on that device
++ * - no live client for that chat on a device → Web Push allowed for that device
++ */
++
++export const DEFAULT_WEB_NOTIFICATION_PRESENCE_TTL_MS = 45000;
++
++export interface WebNotificationPresenceRecord {
++  deviceId: string;
++  clientId: string;
++  chatJid: string;
++  visibilityState: "visible" | "hidden";
++  hasFocus: boolean;
++  updatedAtMs: number;
++  userAgent: string | null;
++}
++
++export interface WebNotificationPresenceState {
++  hasLiveClient: boolean;
++  hasVisibleClient: boolean;
++  clients: WebNotificationPresenceRecord[];
++}
++
++function normalizeTrimmedString(value: unknown): string {
++  return typeof value === "string" ? value.trim() : "";
++}
++
++export function normalizeWebNotificationPresence(
++  value: unknown,
++  options: { nowMs?: number; userAgent?: string | null } = {},
++): WebNotificationPresenceRecord | null {
++  if (!value || typeof value !== "object") return null;
++  const input = value as Record<string, unknown>;
++  const deviceId = normalizeTrimmedString(input.device_id ?? input.deviceId);
++  const clientId = normalizeTrimmedString(input.client_id ?? input.clientId);
++  const chatJid = normalizeTrimmedString(input.chat_jid ?? input.chatJid);
++  if (!deviceId || !clientId || !chatJid) return null;
++
++  const rawVisibility = normalizeTrimmedString(input.visibility_state ?? input.visibilityState).toLowerCase();
++  const visibilityState = rawVisibility === "hidden" ? "hidden" : "visible";
++  const hasFocus = Boolean(input.has_focus ?? input.hasFocus);
++  const rawUpdatedAtMs = Number(input.updated_at_ms ?? input.updatedAtMs);
++  const updatedAtMs = Number.isFinite(rawUpdatedAtMs) ? rawUpdatedAtMs : (options.nowMs ?? Date.now());
++
++  return {
++    deviceId,
++    clientId,
++    chatJid,
++    visibilityState,
++    hasFocus,
++    updatedAtMs,
++    userAgent: typeof options.userAgent === "string" && options.userAgent.trim() ? options.userAgent.trim() : null,
++  };
++}
++
++export class WebNotificationPresenceService {
++  private readonly records = new Map<string, WebNotificationPresenceRecord>();
++  private readonly now: () => number;
++  private readonly ttlMs: number;
++
++  constructor(options: { ttlMs?: number; now?: () => number } = {}) {
++    this.ttlMs = Number.isFinite(options.ttlMs) ? Number(options.ttlMs) : DEFAULT_WEB_NOTIFICATION_PRESENCE_TTL_MS;
++    this.now = typeof options.now === "function" ? options.now : () => Date.now();
++  }
++
++  private buildKey(deviceId: string, clientId: string): string {
++    return `${deviceId}::${clientId}`;
++  }
++
++  private isLive(record: WebNotificationPresenceRecord, nowMs = this.now()): boolean {
++    return nowMs - record.updatedAtMs <= this.ttlMs;
++  }
++
++  prune(nowMs = this.now()): void {
++    for (const [key, record] of this.records.entries()) {
++      if (this.isLive(record, nowMs)) continue;
++      this.records.delete(key);
++    }
++  }
++
++  upsert(value: unknown, options: { nowMs?: number; userAgent?: string | null } = {}): WebNotificationPresenceRecord {
++    const normalized = normalizeWebNotificationPresence(value, {
++      nowMs: options.nowMs ?? this.now(),
++      userAgent: options.userAgent,
++    });
++    if (!normalized) {
++      throw new Error("Invalid web notification presence payload.");
++    }
++    this.prune(normalized.updatedAtMs);
++    this.records.set(this.buildKey(normalized.deviceId, normalized.clientId), normalized);
++    return normalized;
++  }
++
++  remove(value: { device_id?: unknown; deviceId?: unknown; client_id?: unknown; clientId?: unknown }): boolean {
++    const deviceId = normalizeTrimmedString(value?.device_id ?? value?.deviceId);
++    const clientId = normalizeTrimmedString(value?.client_id ?? value?.clientId);
++    if (!deviceId || !clientId) return false;
++    return this.records.delete(this.buildKey(deviceId, clientId));
++  }
++
++  getDeviceChatState(deviceId: string, chatJid: string, nowMs = this.now()): WebNotificationPresenceState {
++    const normalizedDeviceId = normalizeTrimmedString(deviceId);
++    const normalizedChatJid = normalizeTrimmedString(chatJid);
++    if (!normalizedDeviceId || !normalizedChatJid) {
++      return { hasLiveClient: false, hasVisibleClient: false, clients: [] };
++    }
++
++    this.prune(nowMs);
++    const clients = Array.from(this.records.values())
++      .filter((record) => record.deviceId === normalizedDeviceId && record.chatJid === normalizedChatJid && this.isLive(record, nowMs))
++      .sort((left, right) => left.clientId.localeCompare(right.clientId));
++
++    return {
++      hasLiveClient: clients.length > 0,
++      hasVisibleClient: clients.some((record) => record.visibilityState === "visible"),
++      clients,
++    };
++  }
++
++  shouldSendWebPush(deviceId: string | null | undefined, chatJid: string | null | undefined, nowMs = this.now()): boolean {
++    const normalizedDeviceId = normalizeTrimmedString(deviceId);
++    const normalizedChatJid = normalizeTrimmedString(chatJid);
++    if (!normalizedDeviceId || !normalizedChatJid) return true;
++    return !this.getDeviceChatState(normalizedDeviceId, normalizedChatJid, nowMs).hasLiveClient;
++  }
++
++  list(nowMs = this.now()): WebNotificationPresenceRecord[] {
++    this.prune(nowMs);
++    return Array.from(this.records.values()).sort((left, right) => left.deviceId.localeCompare(right.deviceId) || left.clientId.localeCompare(right.clientId));
++  }
++}
++
++export const webNotificationPresenceService = new WebNotificationPresenceService();
+diff --git a/target30/runtime/src/channels/web/push/web-push-routes.ts b/runtime/src/channels/web/push/web-push-routes.ts
+new file mode 100644
+index 0000000..16885b5
+--- /dev/null
++++ b/runtime/src/channels/web/push/web-push-routes.ts
+@@ -0,0 +1,117 @@
++/**
++ * web/push/web-push-routes.ts – HTTP handlers for VAPID key discovery and subscription persistence.
++ */
++
++import {
++  getStoredVapidPublicKey,
++  removeStoredWebPushSubscription,
++  upsertStoredWebPushSubscription,
++} from "./web-push-store.js";
++import {
++  sendStoredWebPushTestNotification,
++  type SendStoredWebPushNotificationOptions,
++} from "./web-push-service.js";
++import {
++  webNotificationPresenceService,
++  type WebNotificationPresenceService,
++} from "./web-notification-presence-service.js";
++
++function resolveUserAgent(req: Request): string | null {
++  const value = req.headers.get("user-agent");
++  return value && value.trim() ? value.trim() : null;
++}
++
++function resolveDeviceId(value: unknown): string | null {
++  const normalized = typeof value === "string" ? value.trim() : "";
++  return normalized || null;
++}
++
++export async function handleWebPushVapidPublicKey(options: { baseDir?: string } = {}): Promise<Response> {
++  return Response.json({ publicKey: getStoredVapidPublicKey(options.baseDir) });
++}
++
++export async function handleWebPushSubscriptionUpsert(req: Request, options: { baseDir?: string } = {}): Promise<Response> {
++  try {
++    const body = await req.json().catch(() => null);
++    const subscription = body && typeof body === "object" && body.subscription ? body.subscription : body;
++    const stored = upsertStoredWebPushSubscription(subscription, {
++      baseDir: options.baseDir,
++      userAgent: resolveUserAgent(req),
++      deviceId: resolveDeviceId((body as Record<string, unknown> | null)?.device_id ?? (body as Record<string, unknown> | null)?.deviceId),
++    });
++    return Response.json({ ok: true, endpoint: stored.endpoint, device_id: stored.deviceId });
++  } catch (error) {
++    return Response.json({ error: error instanceof Error ? error.message : "Invalid push subscription." }, { status: 400 });
++  }
++}
++
++export async function handleWebPushSubscriptionDelete(req: Request, options: { baseDir?: string } = {}): Promise<Response> {
++  const body = await req.json().catch(() => null);
++  const subscription = body && typeof body === "object" && body.subscription ? body.subscription : body;
++  const endpoint = typeof subscription?.endpoint === "string"
++    ? subscription.endpoint.trim()
++    : typeof body?.endpoint === "string"
++      ? body.endpoint.trim()
++      : "";
++
++  if (!endpoint) {
++    return Response.json({ error: "Missing push subscription endpoint." }, { status: 400 });
++  }
++
++  const removed = removeStoredWebPushSubscription(endpoint, options.baseDir);
++  return Response.json({ ok: true, removed });
++}
++
++export async function handleWebPushPresence(
++  req: Request,
++  options: { presenceService?: WebNotificationPresenceService } = {},
++): Promise<Response> {
++  try {
++    const body = await req.json().catch(() => null);
++    const payload = body && typeof body === "object" ? body as Record<string, unknown> : null;
++    if (!payload) {
++      return Response.json({ error: "Invalid web notification presence payload." }, { status: 400 });
++    }
++
++    const presenceService = options.presenceService || webNotificationPresenceService;
++    if (payload.active === false) {
++      const removed = presenceService.remove(payload);
++      return Response.json({ ok: true, active: false, removed });
++    }
++
++    const stored = presenceService.upsert(payload, { userAgent: resolveUserAgent(req) });
++    return Response.json({
++      ok: true,
++      active: true,
++      device_id: stored.deviceId,
++      client_id: stored.clientId,
++      chat_jid: stored.chatJid,
++      visibility_state: stored.visibilityState,
++    });
++  } catch (error) {
++    return Response.json({ error: error instanceof Error ? error.message : "Invalid web notification presence payload." }, { status: 400 });
++  }
++}
++
++export async function handleWebPushTest(
++  req: Request,
++  options: SendStoredWebPushNotificationOptions = {},
++): Promise<Response> {
++  try {
++    const body = await req.json().catch(() => null);
++    const payload = body && typeof body === "object" ? body : {};
++    const result = await sendStoredWebPushTestNotification({
++      ...options,
++      title: typeof payload.title === "string" ? payload.title : undefined,
++      body: typeof payload.body === "string" ? payload.body : undefined,
++      url: typeof payload.url === "string" ? payload.url : undefined,
++      tag: typeof payload.tag === "string" ? payload.tag : undefined,
++      sourceLabel: typeof payload.sourceLabel === "string" ? payload.sourceLabel : undefined,
++      urgency: options.urgency || "high",
++      ttl: options.ttl ?? 120,
++    });
++    return Response.json({ ok: true, ...result });
++  } catch (error) {
++    return Response.json({ error: error instanceof Error ? error.message : "Failed to send test push notification." }, { status: 500 });
++  }
++}
+diff --git a/target30/runtime/src/channels/web/push/web-push-service.ts b/runtime/src/channels/web/push/web-push-service.ts
+new file mode 100644
+index 0000000..ab619ed
+--- /dev/null
++++ b/runtime/src/channels/web/push/web-push-service.ts
+@@ -0,0 +1,314 @@
++/**
++ * web/push/web-push-service.ts – outbound Web Push delivery helpers.
++ */
++
++import { createPrivateKey } from "node:crypto";
++
++import type { InteractionRow } from "../../../db.js";
++import { createLogger, debugSuppressedError } from "../../../utils/logger.js";
++import {
++  ensureStoredVapidKeys,
++  listStoredWebPushSubscriptions,
++  removeStoredWebPushSubscription,
++  type StoredWebPushSubscription,
++} from "./web-push-store.js";
++import {
++  webNotificationPresenceService,
++  type WebNotificationPresenceService,
++} from "./web-notification-presence-service.js";
++
++const log = createLogger("web.push.service");
++const DEFAULT_VAPID_SUBJECT = typeof process.env.PICLAW_WEB_PUSH_VAPID_SUBJECT === "string" && process.env.PICLAW_WEB_PUSH_VAPID_SUBJECT.trim()
++  ? process.env.PICLAW_WEB_PUSH_VAPID_SUBJECT.trim()
++  : "https://pix.mosphere.at";
++
++export interface WebPushNotificationPayload {
++  title: string;
++  body: string;
++  url?: string;
++  tag?: string;
++  sourceLabel?: string;
++}
++
++export interface StoredWebPushSendResult {
++  attempted: number;
++  sent: number;
++  removed: number;
++  failed: number;
++}
++
++export interface SendStoredWebPushNotificationOptions {
++  baseDir?: string;
++  vapidSubject?: string;
++  chatJid?: string;
++  ttl?: number;
++  urgency?: "very-low" | "low" | "normal" | "high";
++  sendNotification?: (
++    subscription: StoredWebPushSubscription,
++    payload: string,
++    options: {
++      TTL: number;
++      urgency: "very-low" | "low" | "normal" | "high";
++      vapidDetails: {
++        subject: string;
++        publicKey: string;
++        privateKey: string;
++      };
++    },
++  ) => Promise<unknown>;
++  generateRequestDetails?: (
++    subscription: StoredWebPushSubscription,
++    payload: string,
++    options: {
++      TTL: number;
++      urgency: "very-low" | "low" | "normal" | "high";
++      vapidDetails: {
++        subject: string;
++        publicKey: string;
++        privateKey: string;
++      };
++    },
++  ) => GeneratedWebPushRequestDetails;
++  fetchImpl?: typeof fetch;
++  presenceService?: WebNotificationPresenceService;
++}
++
++export interface GeneratedWebPushRequestDetails {
++  endpoint: string;
++  method?: string;
++  headers?: Record<string, string | number>;
++  body?: BodyInit | null;
++  timeout?: number;
++}
++
++function resolvePushPath(url: string | undefined): string {
++  const value = typeof url === "string" ? url.trim() : "";
++  if (!value) return "/";
++  if (value.startsWith("/")) return value;
++  return `/${value}`;
++}
++
++function normalizePayload(payload: WebPushNotificationPayload): WebPushNotificationPayload {
++  const title = typeof payload?.title === "string" && payload.title.trim()
++    ? payload.title.trim()
++    : "PiClaw";
++  const body = typeof payload?.body === "string" && payload.body.trim()
++    ? payload.body.trim()
++    : "You have a new update.";
++  const tag = typeof payload?.tag === "string" && payload.tag.trim()
++    ? payload.tag.trim()
++    : "piclaw";
++  const sourceLabel = typeof payload?.sourceLabel === "string" && payload.sourceLabel.trim()
++    ? payload.sourceLabel.trim()
++    : undefined;
++  return {
++    title,
++    body,
++    tag,
++    url: resolvePushPath(payload?.url),
++    ...(sourceLabel ? { sourceLabel } : {}),
++  };
++}
++
++function getStoredVapidDetails(baseDir?: string, vapidSubject?: string): {
++  subject: string;
++  publicKey: string;
++  privateKey: string;
++} {
++  const keys = ensureStoredVapidKeys(baseDir);
++  const privateJwk = createPrivateKey(keys.privateKeyPem).export({ format: "jwk" }) as JsonWebKey;
++  const privateKey = typeof privateJwk.d === "string" ? privateJwk.d : "";
++  if (!privateKey) {
++    throw new Error("Stored VAPID key is missing the private key scalar.");
++  }
++
++  return {
++    subject: typeof vapidSubject === "string" && vapidSubject.trim() ? vapidSubject.trim() : DEFAULT_VAPID_SUBJECT,
++    publicKey: keys.publicKey,
++    privateKey,
++  };
++}
++
++async function loadGenerateRequestDetailsImpl(): Promise<NonNullable<SendStoredWebPushNotificationOptions["generateRequestDetails"]>> {
++  const mod = await import("web-push");
++  const api = (mod as Record<string, any>).default && typeof (mod as Record<string, any>).default === "object"
++    ? (mod as Record<string, any>).default
++    : mod;
++  const generateRequestDetails = api?.generateRequestDetails;
++  if (typeof generateRequestDetails !== "function") {
++    throw new Error("web-push generateRequestDetails is unavailable.");
++  }
++  return generateRequestDetails.bind(api);
++}
++
++function normalizeRequestHeaders(headers: GeneratedWebPushRequestDetails["headers"]): Record<string, string> {
++  const normalized: Record<string, string> = {};
++  for (const [key, value] of Object.entries(headers || {})) {
++    const normalizedKey = String(key || "").trim();
++    if (!normalizedKey) continue;
++    if (normalizedKey.toLowerCase() === "content-length") continue;
++    normalized[normalizedKey] = String(value);
++  }
++  return normalized;
++}
++
++async function dispatchGeneratedWebPushRequest(
++  requestDetails: GeneratedWebPushRequestDetails,
++  fetchImpl: typeof fetch = fetch,
++): Promise<void> {
++  const controller = typeof AbortController !== "undefined" && Number.isFinite(requestDetails.timeout) && Number(requestDetails.timeout) > 0
++    ? new AbortController()
++    : null;
++  const timeoutId = controller
++    ? setTimeout(() => controller.abort(), Number(requestDetails.timeout))
++    : null;
++
++  try {
++    const response = await fetchImpl(requestDetails.endpoint, {
++      method: requestDetails.method || "POST",
++      headers: normalizeRequestHeaders(requestDetails.headers),
++      body: requestDetails.body ?? undefined,
++      ...(controller ? { signal: controller.signal } : {}),
++    });
++    if (response.ok) return;
++
++    const body = await response.text().catch(() => "");
++    throw {
++      message: "Received unexpected response code",
++      statusCode: response.status,
++      headers: Object.fromEntries(response.headers.entries()),
++      body,
++      endpoint: requestDetails.endpoint,
++    };
++  } finally {
++    if (timeoutId) clearTimeout(timeoutId);
++  }
++}
++
++function isExpiredSubscriptionError(error: unknown): boolean {
++  const statusCode = Number((error as { statusCode?: unknown } | null)?.statusCode);
++  return statusCode === 404 || statusCode === 410;
++}
++
++function buildReplyNotificationBody(interaction: InteractionRow): string {
++  const content = String(interaction?.data?.content || "").trim();
++  if (content) {
++    return content.replace(/\s+/g, " ").slice(0, 200);
++  }
++  const contentBlocks = Array.isArray(interaction?.data?.content_blocks)
++    ? interaction.data.content_blocks
++    : [];
++  if (contentBlocks.length > 0) {
++    return "Sent an attachment.";
++  }
++  return "You have a new reply.";
++}
++
++export function buildStoredAgentReplyWebPushNotification(interaction: InteractionRow): WebPushNotificationPayload | null {
++  if (!interaction || typeof interaction !== "object") return null;
++  const chatJid = typeof interaction.chat_jid === "string" ? interaction.chat_jid.trim() : "";
++  if (!chatJid) return null;
++  const rowId = Number(interaction.id);
++  const suffix = rowId > 0 ? `#msg-${rowId}` : "";
++  return {
++    title: "PiClaw reply",
++    body: buildReplyNotificationBody(interaction),
++    url: `/?chat_jid=${encodeURIComponent(chatJid)}${suffix}`,
++    tag: `piclaw:reply:${chatJid}`,
++    sourceLabel: "Web Push",
++  };
++}
++
++export async function sendStoredAgentReplyWebPushNotification(
++  interaction: InteractionRow,
++  options: SendStoredWebPushNotificationOptions = {},
++): Promise<StoredWebPushSendResult> {
++  const payload = buildStoredAgentReplyWebPushNotification(interaction);
++  if (!payload) {
++    return { attempted: 0, sent: 0, removed: 0, failed: 0 };
++  }
++  return await sendStoredWebPushNotification(payload, {
++    ...options,
++    chatJid: typeof interaction.chat_jid === "string" ? interaction.chat_jid.trim() : options.chatJid,
++  });
++}
++
++export async function sendStoredWebPushNotification(
++  payload: WebPushNotificationPayload,
++  options: SendStoredWebPushNotificationOptions = {},
++): Promise<StoredWebPushSendResult> {
++  const subscriptions = listStoredWebPushSubscriptions(options.baseDir);
++  if (subscriptions.length === 0) {
++    return { attempted: 0, sent: 0, removed: 0, failed: 0 };
++  }
++
++  const normalizedPayload = normalizePayload(payload);
++  const serializedPayload = JSON.stringify(normalizedPayload);
++  const vapidDetails = getStoredVapidDetails(options.baseDir, options.vapidSubject);
++  const requestOptions = {
++    TTL: Number.isFinite(options.ttl) ? Number(options.ttl) : 60,
++    urgency: options.urgency || "normal",
++    vapidDetails,
++  } as const;
++  const generateRequestDetails = options.sendNotification
++    ? null
++    : (options.generateRequestDetails || await loadGenerateRequestDetailsImpl());
++  const presenceService = options.presenceService || webNotificationPresenceService;
++
++  let attempted = 0;
++  let sent = 0;
++  let removed = 0;
++  let failed = 0;
++
++  for (const subscription of subscriptions) {
++    if (!presenceService.shouldSendWebPush(subscription.deviceId, options.chatJid)) {
++      continue;
++    }
++
++    attempted += 1;
++    try {
++      if (options.sendNotification) {
++        await options.sendNotification(subscription, serializedPayload, requestOptions);
++      } else if (generateRequestDetails) {
++        const requestDetails = generateRequestDetails(subscription, serializedPayload, requestOptions);
++        await dispatchGeneratedWebPushRequest(requestDetails, options.fetchImpl || fetch);
++      }
++      sent += 1;
++    } catch (error) {
++      if (isExpiredSubscriptionError(error)) {
++        if (removeStoredWebPushSubscription(subscription.endpoint, options.baseDir)) {
++          removed += 1;
++        }
++        log.info("Removed expired web push subscription after delivery failure.", {
++          endpoint: subscription.endpoint,
++          statusCode: (error as { statusCode?: unknown } | null)?.statusCode,
++        });
++        continue;
++      }
++
++      failed += 1;
++      debugSuppressedError(log, "Web push delivery failed for a stored subscription.", error, {
++        endpoint: subscription.endpoint,
++      });
++    }
++  }
++
++  return {
++    attempted,
++    sent,
++    removed,
++    failed,
++  };
++}
++
++export async function sendStoredWebPushTestNotification(
++  options: SendStoredWebPushNotificationOptions & { title?: string; body?: string; url?: string; tag?: string; sourceLabel?: string } = {},
++): Promise<StoredWebPushSendResult> {
++  return await sendStoredWebPushNotification({
++    title: options.title || "PiClaw notifications enabled",
++    body: options.body || "Web Push is configured for this device.",
++    url: options.url || "/",
++    tag: options.tag || "piclaw:test",
++    sourceLabel: options.sourceLabel || "Web Push",
++  }, options);
++}
+diff --git a/target30/runtime/src/channels/web/push/web-push-store.ts b/runtime/src/channels/web/push/web-push-store.ts
+new file mode 100644
+index 0000000..82853db
+--- /dev/null
++++ b/runtime/src/channels/web/push/web-push-store.ts
+@@ -0,0 +1,208 @@
++/**
++ * web/push/web-push-store.ts – Minimal persistent storage for VAPID keys and Web Push subscriptions.
++ */
++
++import { createPublicKey, generateKeyPairSync } from "node:crypto";
++import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
++import { dirname, resolve } from "node:path";
++
++import { WORKSPACE_DIR } from "../../../core/config.js";
++import { createLogger, debugSuppressedError } from "../../../utils/logger.js";
++
++const log = createLogger("web.push.store");
++const DEFAULT_PUSH_DIR = resolve(WORKSPACE_DIR, ".piclaw", "web-push");
++const VAPID_FILE_NAME = "vapid-keys.json";
++const SUBSCRIPTIONS_FILE_NAME = "subscriptions.json";
++
++export interface StoredWebPushSubscription {
++  endpoint: string;
++  expirationTime: number | null;
++  keys: {
++    auth: string;
++    p256dh: string;
++  };
++  createdAt: string;
++  updatedAt: string;
++  userAgent: string | null;
++  deviceId: string | null;
++}
++
++export interface StoredVapidKeys {
++  createdAt: string;
++  publicKey: string;
++  publicKeyPem: string;
++  privateKeyPem: string;
++}
++
++function resolvePushDir(baseDir = DEFAULT_PUSH_DIR): string {
++  return resolve(baseDir);
++}
++
++function resolveVapidKeysPath(baseDir = DEFAULT_PUSH_DIR): string {
++  return resolve(resolvePushDir(baseDir), VAPID_FILE_NAME);
++}
++
++function resolveSubscriptionsPath(baseDir = DEFAULT_PUSH_DIR): string {
++  return resolve(resolvePushDir(baseDir), SUBSCRIPTIONS_FILE_NAME);
++}
++
++function readJsonFile<T>(path: string): T | null {
++  if (!existsSync(path)) return null;
++  try {
++    return JSON.parse(readFileSync(path, "utf-8")) as T;
++  } catch (error) {
++    debugSuppressedError(log, "Failed to read stored web push state; ignoring the stale file.", error, { path });
++    return null;
++  }
++}
++
++function writeJsonFile(path: string, value: unknown): void {
++  mkdirSync(dirname(path), { recursive: true });
++  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
++}
++
++function decodeBase64Url(value: string): Buffer {
++  return Buffer.from(value, "base64url");
++}
++
++function encodeBase64Url(value: Buffer | Uint8Array): string {
++  return Buffer.from(value).toString("base64url");
++}
++
++function createVapidKeys(): StoredVapidKeys {
++  const { publicKey, privateKey } = generateKeyPairSync("ec", {
++    namedCurve: "prime256v1",
++    publicKeyEncoding: { format: "pem", type: "spki" },
++    privateKeyEncoding: { format: "pem", type: "pkcs8" },
++  });
++
++  const publicJwk = createPublicKey(publicKey).export({ format: "jwk" }) as JsonWebKey;
++  const x = typeof publicJwk.x === "string" ? publicJwk.x : "";
++  const y = typeof publicJwk.y === "string" ? publicJwk.y : "";
++  if (!x || !y) {
++    throw new Error("Generated VAPID key is missing JWK coordinates.");
++  }
++
++  const publicPoint = Buffer.concat([
++    Buffer.from([0x04]),
++    decodeBase64Url(x),
++    decodeBase64Url(y),
++  ]);
++
++  return {
++    createdAt: new Date().toISOString(),
++    publicKey: encodeBase64Url(publicPoint),
++    publicKeyPem: publicKey,
++    privateKeyPem: privateKey,
++  };
++}
++
++function readStoredVapidKeys(baseDir = DEFAULT_PUSH_DIR): StoredVapidKeys | null {
++  const path = resolveVapidKeysPath(baseDir);
++  const parsed = readJsonFile<StoredVapidKeys>(path);
++  if (!parsed) return null;
++  if (!parsed.publicKey || !parsed.publicKeyPem || !parsed.privateKeyPem) return null;
++  return parsed;
++}
++
++export function ensureStoredVapidKeys(baseDir = DEFAULT_PUSH_DIR): StoredVapidKeys {
++  const existing = readStoredVapidKeys(baseDir);
++  if (existing) return existing;
++  const created = createVapidKeys();
++  writeJsonFile(resolveVapidKeysPath(baseDir), created);
++  return created;
++}
++
++export function getStoredVapidPublicKey(baseDir = DEFAULT_PUSH_DIR): string {
++  return ensureStoredVapidKeys(baseDir).publicKey;
++}
++
++export function normalizeStoredWebPushSubscription(
++  value: unknown,
++  options: { now?: string; userAgent?: string | null; deviceId?: string | null } = {}
++): StoredWebPushSubscription | null {
++  if (!value || typeof value !== "object") return null;
++  const input = value as Record<string, any>;
++  const endpoint = typeof input.endpoint === "string" ? input.endpoint.trim() : "";
++  const p256dh = typeof input.keys?.p256dh === "string" ? input.keys.p256dh.trim() : "";
++  const auth = typeof input.keys?.auth === "string" ? input.keys.auth.trim() : "";
++  if (!endpoint || !endpoint.startsWith("https://") || !p256dh || !auth) return null;
++
++  const now = options.now || new Date().toISOString();
++  const rawExpirationTime = input.expirationTime;
++  const expirationTime = rawExpirationTime === null || rawExpirationTime === undefined
++    ? null
++    : Number(rawExpirationTime);
++  return {
++    endpoint,
++    expirationTime: Number.isFinite(expirationTime) ? expirationTime : null,
++    keys: { auth, p256dh },
++    createdAt: now,
++    updatedAt: now,
++    userAgent: typeof options.userAgent === "string" && options.userAgent.trim() ? options.userAgent.trim() : null,
++    deviceId: typeof options.deviceId === "string" && options.deviceId.trim() ? options.deviceId.trim() : (typeof input.deviceId === "string" && input.deviceId.trim() ? input.deviceId.trim() : null),
++  };
++}
++
++export function listStoredWebPushSubscriptions(baseDir = DEFAULT_PUSH_DIR): StoredWebPushSubscription[] {
++  const path = resolveSubscriptionsPath(baseDir);
++  const parsed = readJsonFile<StoredWebPushSubscription[]>(path);
++  if (!Array.isArray(parsed)) return [];
++  return parsed.filter((entry) => normalizeStoredWebPushSubscription(entry, {
++    now: typeof entry?.updatedAt === "string" && entry.updatedAt.trim() ? entry.updatedAt : new Date().toISOString(),
++    userAgent: typeof entry?.userAgent === "string" ? entry.userAgent : null,
++    deviceId: typeof entry?.deviceId === "string" ? entry.deviceId : null,
++  }) !== null);
++}
++
++function writeStoredWebPushSubscriptions(entries: StoredWebPushSubscription[], baseDir = DEFAULT_PUSH_DIR): void {
++  writeJsonFile(resolveSubscriptionsPath(baseDir), entries);
++}
++
++export function upsertStoredWebPushSubscription(
++  value: unknown,
++  options: { baseDir?: string; userAgent?: string | null; now?: string; deviceId?: string | null } = {}
++): StoredWebPushSubscription {
++  const normalized = normalizeStoredWebPushSubscription(value, {
++    now: options.now,
++    userAgent: options.userAgent,
++    deviceId: options.deviceId,
++  });
++  if (!normalized) {
++    throw new Error("Invalid push subscription.");
++  }
++
++  const baseDir = options.baseDir || DEFAULT_PUSH_DIR;
++  const entries = listStoredWebPushSubscriptions(baseDir);
++  const endpointIndex = entries.findIndex((entry) => entry.endpoint === normalized.endpoint);
++  const deviceIndex = normalized.deviceId ? entries.findIndex((entry) => entry.deviceId === normalized.deviceId) : -1;
++  const existingIndex = endpointIndex !== -1 ? endpointIndex : deviceIndex;
++  if (existingIndex !== -1) {
++    const existing = entries[existingIndex];
++    entries[existingIndex] = {
++      ...existing,
++      endpoint: normalized.endpoint,
++      expirationTime: normalized.expirationTime,
++      keys: normalized.keys,
++      updatedAt: normalized.updatedAt,
++      userAgent: normalized.userAgent || existing.userAgent || null,
++      deviceId: normalized.deviceId || existing.deviceId || null,
++    };
++    writeStoredWebPushSubscriptions(entries, baseDir);
++    return entries[existingIndex];
++  }
++
++  entries.push(normalized);
++  writeStoredWebPushSubscriptions(entries, baseDir);
++  return normalized;
++}
++
++export function removeStoredWebPushSubscription(endpoint: string, baseDir = DEFAULT_PUSH_DIR): boolean {
++  const normalizedEndpoint = typeof endpoint === "string" ? endpoint.trim() : "";
++  if (!normalizedEndpoint) return false;
++  const entries = listStoredWebPushSubscriptions(baseDir);
++  const nextEntries = entries.filter((entry) => entry.endpoint !== normalizedEndpoint);
++  if (nextEntries.length === entries.length) return false;
++  writeStoredWebPushSubscriptions(nextEntries, baseDir);
++  return true;
++}
+diff --git a/target30/runtime/src/types/web-push.d.ts b/runtime/src/types/web-push.d.ts
+new file mode 100644
+index 0000000..60182f0
+--- /dev/null
++++ b/runtime/src/types/web-push.d.ts
+@@ -0,0 +1,41 @@
++declare module "web-push" {
++  export interface WebPushVapidDetails {
++    subject: string;
++    publicKey: string;
++    privateKey: string;
++  }
++
++  export interface WebPushRequestOptions {
++    TTL?: number;
++    urgency?: "very-low" | "low" | "normal" | "high";
++    vapidDetails?: WebPushVapidDetails;
++    [key: string]: unknown;
++  }
++
++  export interface WebPushGeneratedRequestDetails {
++    endpoint: string;
++    method?: string;
++    headers?: Record<string, string | number>;
++    body?: BodyInit | null;
++    timeout?: number;
++  }
++
++  export function sendNotification(
++    subscription: unknown,
++    payload?: string | Buffer | null,
++    options?: WebPushRequestOptions,
++  ): Promise<unknown>;
++
++  export function generateRequestDetails(
++    subscription: unknown,
++    payload?: string | Buffer | null,
++    options?: WebPushRequestOptions,
++  ): WebPushGeneratedRequestDetails;
++
++  const api: {
++    sendNotification: typeof sendNotification;
++    generateRequestDetails: typeof generateRequestDetails;
++  };
++
++  export default api;
++}
+diff --git a/target30/runtime/test/channels/web/agent-message-store.test.ts b/runtime/test/channels/web/agent-message-store.test.ts
+new file mode 100644
+index 0000000..eacbc82
+--- /dev/null
++++ b/runtime/test/channels/web/agent-message-store.test.ts
+@@ -0,0 +1,79 @@
++import { describe, expect, test } from "bun:test";
++
++import { storeAgentTurn } from "../../../src/channels/web/messaging/agent-message-store.js";
++
++describe("agent message store", () => {
++  test("dispatches Web Push for terminal persisted replies", async () => {
++    const interaction = {
++      id: 101,
++      chat_jid: "web:default",
++      timestamp: "2026-04-14T22:10:00.000Z",
++      data: {
++        content: "Final reply",
++      },
++    } as any;
++
++    const deliveries: any[] = [];
++    const emitter = {
++      response(payload: any) {
++        deliveries.push({ type: "response", payload });
++      },
++    } as any;
++
++    const pushCalls: any[] = [];
++    const ok = storeAgentTurn({
++      consumeQueuedFollowupPlaceholder: () => null,
++      replaceQueuedFollowupPlaceholder: () => null,
++      broadcastEvent: () => {},
++      storeMessage: () => interaction,
++    } as any, emitter, {
++      chatJid: "web:default",
++      text: "Final reply",
++      attachments: [],
++      channelName: "web" as any,
++      isTerminalAgentReply: true,
++      dispatchWebPushNotification: async (payload) => {
++        pushCalls.push(payload);
++      },
++    });
++
++    expect(ok).toBe(true);
++    expect(deliveries).toHaveLength(1);
++    await Promise.resolve();
++    expect(pushCalls).toEqual([interaction]);
++  });
++
++  test("does not dispatch Web Push for non-terminal replies", async () => {
++    const interaction = {
++      id: 102,
++      chat_jid: "web:default",
++      timestamp: "2026-04-14T22:11:00.000Z",
++      data: {
++        content: "Intermediate reply",
++      },
++    } as any;
++
++    const pushCalls: any[] = [];
++    const ok = storeAgentTurn({
++      consumeQueuedFollowupPlaceholder: () => null,
++      replaceQueuedFollowupPlaceholder: () => null,
++      broadcastEvent: () => {},
++      storeMessage: () => interaction,
++    } as any, {
++      response: () => {},
++    } as any, {
++      chatJid: "web:default",
++      text: "Intermediate reply",
++      attachments: [],
++      channelName: "web" as any,
++      isTerminalAgentReply: false,
++      dispatchWebPushNotification: async (payload) => {
++        pushCalls.push(payload);
++      },
++    });
++
++    expect(ok).toBe(true);
++    await Promise.resolve();
++    expect(pushCalls).toEqual([]);
++  });
++});
+diff --git a/runtime/test/channels/web/helpers/route-flags.ts b/runtime/test/channels/web/helpers/route-flags.ts
+index 8aaf63e..d6f6066 100644
+--- a/runtime/test/channels/web/helpers/route-flags.ts
++++ b/runtime/test/channels/web/helpers/route-flags.ts
+@@ -21,6 +21,7 @@ export function buildRouteFlags(overrides: Partial<RouteFlags> = {}): RouteFlags
+     isManifest: false,
+     isFavicon: false,
+     isAppleIcon: false,
++    isServiceWorker: false,
+     isStaticAsset: false,
+     isPublicStatic: false,
+     isDocsAsset: false,
+diff --git a/runtime/test/channels/web/http-dispatch-agent.test.ts b/runtime/test/channels/web/http-dispatch-agent.test.ts
+index e3d02f9..713888e 100644
+--- a/runtime/test/channels/web/http-dispatch-agent.test.ts
++++ b/runtime/test/channels/web/http-dispatch-agent.test.ts
+@@ -134,6 +134,19 @@ describe("web http agent dispatch", () => {
+     const sidePromptStreamReq = new Request("https://example.com/agent/side-prompt/stream", { method: "POST" });
+     expect((await handleAgentRoutes(channel, sidePromptStreamReq, "/agent/side-prompt/stream", new URL(sidePromptStreamReq.url)))?.status).toBe(207);
+ 
++    const presenceReq = new Request("https://example.com/agent/push/presence", {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({
++        device_id: "device-1",
++        client_id: "client-1",
++        chat_jid: "web:default",
++        visibility_state: "hidden",
++        has_focus: false,
++      }),
++    });
++    expect((await handleAgentRoutes(channel, presenceReq, "/agent/push/presence", new URL(presenceReq.url)))?.status).toBe(200);
++
+     const whitelistReq = new Request("https://example.com/agent/whitelist", { method: "POST" });
+     expect((await handleAgentRoutes(channel, whitelistReq, "/agent/whitelist", new URL(whitelistReq.url)))?.status).toBe(404);
+   });
+diff --git a/runtime/test/channels/web/http-dispatch-shell.test.ts b/runtime/test/channels/web/http-dispatch-shell.test.ts
+index 892692d..2711491 100644
+--- a/runtime/test/channels/web/http-dispatch-shell.test.ts
++++ b/runtime/test/channels/web/http-dispatch-shell.test.ts
+@@ -10,7 +10,7 @@ describe("web http shell dispatch", () => {
+     expect(response).toBeNull();
+   });
+ 
+-  test("dispatches index/manifest/static/docs/sse/terminal-session/vnc routes", async () => {
++  test("dispatches index/manifest/service-worker/static/docs/sse/terminal-session/vnc routes", async () => {
+     const channel = {
+       serveStatic: (rel: string) => new Response(`static:${rel}`),
+       handleManifest: () => new Response("manifest"),
+@@ -29,6 +29,9 @@ describe("web http shell dispatch", () => {
+     const manifestFlags = buildRouteFlags({ isManifest: true });
+     expect(await (await handleShellRoutes(channel, new Request("https://e/manifest.json", { method: "GET" }), "/manifest.json", manifestFlags, async () => new Response()))?.text()).toBe("manifest");
+ 
++    const serviceWorkerFlags = buildRouteFlags({ isServiceWorker: true });
++    expect(await (await handleShellRoutes(channel, new Request("https://e/sw.js", { method: "GET" }), "/sw.js", serviceWorkerFlags, async () => new Response()))?.text()).toBe("static:sw.js");
++
+     expect(await (await handleShellRoutes(channel, new Request("https://e/ghostty-vt.wasm", { method: "GET" }), "/ghostty-vt.wasm", buildRouteFlags(), async () => new Response()))?.text()).toBe("static:js/vendor/ghostty-vt.wasm");
+ 
+     const staticFlags = buildRouteFlags({ isStaticAsset: true });
+diff --git a/target30/runtime/test/channels/web/route-flags.test.ts b/runtime/test/channels/web/route-flags.test.ts
+new file mode 100644
+index 0000000..5714233
+--- /dev/null
++++ b/runtime/test/channels/web/route-flags.test.ts
+@@ -0,0 +1,13 @@
++import { describe, expect, test } from "bun:test";
++
++import { getRouteFlags, shouldSkipAuthCheck } from "../../../src/channels/web/http/route-flags.js";
++
++describe("web route flags", () => {
++  test("marks the service worker script as a public shell route", () => {
++    const flags = getRouteFlags(new Request("https://example.com/sw.js", { method: "GET" }), "/sw.js");
++
++    expect(flags.isServiceWorker).toBe(true);
++    expect(flags.isStaticAsset).toBe(false);
++    expect(shouldSkipAuthCheck(flags, false)).toBe(true);
++  });
++});
+diff --git a/target30/runtime/test/channels/web/web-notification-presence-service.test.ts b/runtime/test/channels/web/web-notification-presence-service.test.ts
+new file mode 100644
+index 0000000..90842e0
+--- /dev/null
++++ b/runtime/test/channels/web/web-notification-presence-service.test.ts
+@@ -0,0 +1,91 @@
++import { describe, expect, test } from "bun:test";
++
++import {
++  WebNotificationPresenceService,
++  normalizeWebNotificationPresence,
++} from "../../../src/channels/web/push/web-notification-presence-service.js";
++
++describe("web notification presence service", () => {
++  test("normalizes valid client presence payloads", () => {
++    const normalized = normalizeWebNotificationPresence({
++      device_id: "device-1",
++      client_id: "client-1",
++      chat_jid: "web:default",
++      visibility_state: "hidden",
++      has_focus: false,
++    }, { nowMs: 1234, userAgent: "PiClaw Test" });
++
++    expect(normalized).toEqual({
++      deviceId: "device-1",
++      clientId: "client-1",
++      chatJid: "web:default",
++      visibilityState: "hidden",
++      hasFocus: false,
++      updatedAtMs: 1234,
++      userAgent: "PiClaw Test",
++    });
++    expect(normalizeWebNotificationPresence(null)).toBeNull();
++  });
++
++  test("suppresses Web Push only when the same device still has the chat live", () => {
++    let now = 1000;
++    const service = new WebNotificationPresenceService({ now: () => now, ttlMs: 5000 });
++    service.upsert({
++      device_id: "device-1",
++      client_id: "client-1",
++      chat_jid: "web:default",
++      visibility_state: "hidden",
++      has_focus: false,
++    });
++
++    expect(service.shouldSendWebPush("device-1", "web:default")).toBe(false);
++    expect(service.shouldSendWebPush("device-1", "web:other")).toBe(true);
++    expect(service.shouldSendWebPush("device-2", "web:default")).toBe(true);
++
++    now = 7000;
++    expect(service.shouldSendWebPush("device-1", "web:default")).toBe(true);
++  });
++
++  test("reports visible clients for the matching device/chat", () => {
++    const service = new WebNotificationPresenceService({ now: () => 1000 });
++    service.upsert({
++      device_id: "device-1",
++      client_id: "client-a",
++      chat_jid: "web:default",
++      visibility_state: "visible",
++      has_focus: true,
++    });
++    service.upsert({
++      device_id: "device-1",
++      client_id: "client-b",
++      chat_jid: "web:default",
++      visibility_state: "hidden",
++      has_focus: false,
++    });
++
++    expect(service.getDeviceChatState("device-1", "web:default")).toEqual({
++      hasLiveClient: true,
++      hasVisibleClient: true,
++      clients: [
++        {
++          deviceId: "device-1",
++          clientId: "client-a",
++          chatJid: "web:default",
++          visibilityState: "visible",
++          hasFocus: true,
++          updatedAtMs: 1000,
++          userAgent: null,
++        },
++        {
++          deviceId: "device-1",
++          clientId: "client-b",
++          chatJid: "web:default",
++          visibilityState: "hidden",
++          hasFocus: false,
++          updatedAtMs: 1000,
++          userAgent: null,
++        },
++      ],
++    });
++  });
++});
+diff --git a/target30/runtime/test/channels/web/web-push-routes.test.ts b/runtime/test/channels/web/web-push-routes.test.ts
+new file mode 100644
+index 0000000..798f2d9
+--- /dev/null
++++ b/runtime/test/channels/web/web-push-routes.test.ts
+@@ -0,0 +1,127 @@
++import { afterEach, describe, expect, test } from "bun:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
++
++import { upsertStoredWebPushSubscription } from "../../../src/channels/web/push/web-push-store.js";
++import { WebNotificationPresenceService } from "../../../src/channels/web/push/web-notification-presence-service.js";
++import {
++  handleWebPushPresence,
++  handleWebPushSubscriptionUpsert,
++  handleWebPushTest,
++} from "../../../src/channels/web/push/web-push-routes.js";
++
++const tempDirs: string[] = [];
++
++function createTempPushDir(): string {
++  const dir = mkdtempSync(join(tmpdir(), "piclaw-web-push-routes-"));
++  tempDirs.push(dir);
++  return dir;
++}
++
++afterEach(() => {
++  while (tempDirs.length > 0) {
++    const dir = tempDirs.pop();
++    if (!dir) continue;
++    rmSync(dir, { recursive: true, force: true });
++  }
++});
++
++describe("web push routes", () => {
++  test("stores subscription device ids and tracks live presence updates", async () => {
++    const baseDir = createTempPushDir();
++    const upsertReq = new Request("https://example.com/agent/push/subscription", {
++      method: "POST",
++      headers: { "Content-Type": "application/json", "user-agent": "PiClaw Test" },
++      body: JSON.stringify({
++        device_id: "device-1",
++        subscription: {
++          endpoint: "https://push.example.test/device/1",
++          expirationTime: null,
++          keys: {
++            auth: "auth-token",
++            p256dh: "p256dh-token",
++          },
++        },
++      }),
++    });
++
++    const upsertResponse = await handleWebPushSubscriptionUpsert(upsertReq, { baseDir });
++    expect(upsertResponse.status).toBe(200);
++    expect(await upsertResponse.json()).toEqual({ ok: true, endpoint: "https://push.example.test/device/1", device_id: "device-1" });
++
++    const presenceService = new WebNotificationPresenceService({ now: () => 1000 });
++    const presenceReq = new Request("https://example.com/agent/push/presence", {
++      method: "POST",
++      headers: { "Content-Type": "application/json", "user-agent": "PiClaw Test" },
++      body: JSON.stringify({
++        device_id: "device-1",
++        client_id: "client-1",
++        chat_jid: "web:default",
++        visibility_state: "hidden",
++        has_focus: false,
++      }),
++    });
++
++    const presenceResponse = await handleWebPushPresence(presenceReq, { presenceService });
++    expect(presenceResponse.status).toBe(200);
++    expect(await presenceResponse.json()).toEqual({
++      ok: true,
++      active: true,
++      device_id: "device-1",
++      client_id: "client-1",
++      chat_jid: "web:default",
++      visibility_state: "hidden",
++    });
++    expect(presenceService.getDeviceChatState("device-1", "web:default").hasLiveClient).toBe(true);
++  });
++
++  test("sends a test notification using stored subscriptions", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription({
++      endpoint: "https://push.example.test/device/1",
++      expirationTime: null,
++      keys: {
++        auth: "auth-token",
++        p256dh: "p256dh-token",
++      },
++    }, { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    const req = new Request("https://example.com/agent/push/test", {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({
++        title: "Custom title",
++        body: "Custom body",
++        url: "/?chat_jid=web%3Atest",
++        tag: "piclaw:custom",
++        sourceLabel: "Web Push",
++      }),
++    });
++
++    const response = await handleWebPushTest(req, {
++      baseDir,
++      sendNotification: async (subscription, payload, options) => {
++        deliveries.push({
++          endpoint: subscription.endpoint,
++          payload: JSON.parse(payload),
++          options,
++        });
++      },
++    });
++
++    expect(response.status).toBe(200);
++    expect(await response.json()).toEqual({ ok: true, attempted: 1, sent: 1, removed: 0, failed: 0 });
++    expect(deliveries).toHaveLength(1);
++    expect(deliveries[0]?.payload).toEqual({
++      title: "Custom title",
++      body: "Custom body",
++      url: "/?chat_jid=web%3Atest",
++      tag: "piclaw:custom",
++      sourceLabel: "Web Push",
++    });
++    expect(((deliveries[0]?.options as any)?.TTL)).toBe(120);
++    expect(((deliveries[0]?.options as any)?.urgency)).toBe("high");
++  });
++});
+diff --git a/target30/runtime/test/channels/web/web-push-service.test.ts b/runtime/test/channels/web/web-push-service.test.ts
+new file mode 100644
+index 0000000..98e3e8d
+--- /dev/null
++++ b/runtime/test/channels/web/web-push-service.test.ts
+@@ -0,0 +1,263 @@
++import { afterEach, describe, expect, test } from "bun:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
++
++import { upsertStoredWebPushSubscription, listStoredWebPushSubscriptions } from "../../../src/channels/web/push/web-push-store.js";
++import {
++  buildStoredAgentReplyWebPushNotification,
++  sendStoredAgentReplyWebPushNotification,
++  sendStoredWebPushNotification,
++  sendStoredWebPushTestNotification,
++} from "../../../src/channels/web/push/web-push-service.js";
++import { WebNotificationPresenceService } from "../../../src/channels/web/push/web-notification-presence-service.js";
++
++const tempDirs: string[] = [];
++
++function createTempPushDir(): string {
++  const dir = mkdtempSync(join(tmpdir(), "piclaw-web-push-service-"));
++  tempDirs.push(dir);
++  return dir;
++}
++
++afterEach(() => {
++  while (tempDirs.length > 0) {
++    const dir = tempDirs.pop();
++    if (!dir) continue;
++    rmSync(dir, { recursive: true, force: true });
++  }
++});
++
++function createSubscription(id: number, deviceId: string | null = null) {
++  return {
++    endpoint: `https://push.example.test/device/${id}`,
++    expirationTime: null,
++    keys: {
++      auth: `auth-${id}`,
++      p256dh: `p256dh-${id}`,
++    },
++    ...(deviceId ? { deviceId } : {}),
++  };
++}
++
++describe("web push service", () => {
++  test("sends payloads with derived VAPID details", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(1), { baseDir });
++
++    const deliveries: Array<{ endpoint: string; payload: Record<string, unknown>; options: Record<string, unknown> }> = [];
++    const result = await sendStoredWebPushNotification({
++      title: "Hello",
++      body: "World",
++      url: "/?chat_jid=web%3Adefault",
++      tag: "piclaw:test",
++    }, {
++      baseDir,
++      vapidSubject: "mailto:test@example.com",
++      ttl: 30,
++      urgency: "high",
++      sendNotification: async (subscription, payload, options) => {
++        deliveries.push({
++          endpoint: subscription.endpoint,
++          payload: JSON.parse(payload),
++          options,
++        });
++      },
++    });
++
++    expect(result).toEqual({ attempted: 1, sent: 1, removed: 0, failed: 0 });
++    expect(deliveries).toHaveLength(1);
++    expect(deliveries[0]?.endpoint).toBe("https://push.example.test/device/1");
++    expect(deliveries[0]?.payload).toEqual({
++      title: "Hello",
++      body: "World",
++      url: "/?chat_jid=web%3Adefault",
++      tag: "piclaw:test",
++    });
++    expect(deliveries[0]?.options.TTL).toBe(30);
++    expect(deliveries[0]?.options.urgency).toBe("high");
++    expect((deliveries[0]?.options.vapidDetails as any)?.subject).toBe("mailto:test@example.com");
++    expect((deliveries[0]?.options.vapidDetails as any)?.publicKey).toBeTruthy();
++    expect((deliveries[0]?.options.vapidDetails as any)?.privateKey).toBeTruthy();
++    expect(String((deliveries[0]?.options.vapidDetails as any)?.privateKey)).not.toContain("BEGIN");
++  });
++
++  test("defaults to the production VAPID subject when one is not supplied", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(11), { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    const result = await sendStoredWebPushNotification({
++      title: "Default subject",
++      body: "Uses the deployment URL subject",
++    }, {
++      baseDir,
++      sendNotification: async (_subscription, _payload, options) => {
++        deliveries.push(options.vapidDetails as Record<string, unknown>);
++      },
++    });
++
++    expect(result).toEqual({ attempted: 1, sent: 1, removed: 0, failed: 0 });
++    expect(deliveries).toHaveLength(1);
++    expect(deliveries[0]?.subject).toBe("https://pix.mosphere.at");
++  });
++
++  test("removes expired subscriptions and keeps non-expired failures", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(1), { baseDir });
++    upsertStoredWebPushSubscription(createSubscription(2), { baseDir });
++    upsertStoredWebPushSubscription(createSubscription(3), { baseDir });
++
++    const result = await sendStoredWebPushNotification({
++      title: "Hello again",
++      body: "Testing cleanup",
++    }, {
++      baseDir,
++      sendNotification: async (subscription) => {
++        if (subscription.endpoint.endsWith("/1")) {
++          throw { statusCode: 410 };
++        }
++        if (subscription.endpoint.endsWith("/2")) {
++          throw new Error("temporary failure");
++        }
++      },
++    });
++
++    expect(result).toEqual({ attempted: 3, sent: 1, removed: 1, failed: 1 });
++    expect(listStoredWebPushSubscriptions(baseDir).map((entry) => entry.endpoint)).toEqual([
++      "https://push.example.test/device/2",
++      "https://push.example.test/device/3",
++    ]);
++  });
++
++  test("uses generated request details with fetch and cleans up 410 responses", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(5), { baseDir });
++
++    const result = await sendStoredWebPushNotification({
++      title: "Hello via fetch",
++      body: "Testing generated request details",
++    }, {
++      baseDir,
++      generateRequestDetails: (subscription, payload) => ({
++        endpoint: subscription.endpoint,
++        method: "POST",
++        headers: {
++          TTL: 60,
++          Authorization: "WebPush test",
++          "Content-Length": payload.length,
++        },
++        body: payload,
++      }),
++      fetchImpl: async () => ({
++        ok: false,
++        status: 410,
++        headers: new Headers({ "content-type": "text/plain" }),
++        text: async () => "gone",
++      } as Response),
++    });
++
++    expect(result).toEqual({ attempted: 1, sent: 0, removed: 1, failed: 0 });
++    expect(listStoredWebPushSubscriptions(baseDir)).toEqual([]);
++  });
++
++  test("suppresses Web Push when the same device still has a live client for that chat", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(13, "device-13"), { baseDir, deviceId: "device-13" });
++
++    const presenceService = new WebNotificationPresenceService({ now: () => 1000 });
++    presenceService.upsert({
++      device_id: "device-13",
++      client_id: "client-1",
++      chat_jid: "web:default",
++      visibility_state: "hidden",
++      has_focus: false,
++    }, { nowMs: 1000 });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    const result = await sendStoredAgentReplyWebPushNotification({
++      id: 88,
++      chat_jid: "web:default",
++      timestamp: "2026-04-14T22:02:00.000Z",
++      data: { content: "Suppressed" },
++    } as any, {
++      baseDir,
++      presenceService,
++      sendNotification: async (_subscription, payload) => {
++        deliveries.push(JSON.parse(payload));
++      },
++    });
++
++    expect(result).toEqual({ attempted: 0, sent: 0, removed: 0, failed: 0 });
++    expect(deliveries).toEqual([]);
++  });
++
++  test("builds a reply notification payload from a stored interaction", () => {
++    const payload = buildStoredAgentReplyWebPushNotification({
++      id: 42,
++      chat_jid: "web:default:branch:abc",
++      timestamp: "2026-04-14T22:00:00.000Z",
++      data: {
++        content: "Hello from PiClaw\n\nwith extra whitespace.",
++      },
++    } as any);
++
++    expect(payload).toEqual({
++      title: "PiClaw reply",
++      body: "Hello from PiClaw with extra whitespace.",
++      url: "/?chat_jid=web%3Adefault%3Abranch%3Aabc#msg-42",
++      tag: "piclaw:reply:web:default:branch:abc",
++      sourceLabel: "Web Push",
++    });
++  });
++
++  test("sends a reply notification built from a stored interaction", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(7), { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    const result = await sendStoredAgentReplyWebPushNotification({
++      id: 77,
++      chat_jid: "web:default",
++      timestamp: "2026-04-14T22:01:00.000Z",
++      data: {
++        content: "Reply body",
++      },
++    } as any, {
++      baseDir,
++      sendNotification: async (_subscription, payload) => {
++        deliveries.push(JSON.parse(payload));
++      },
++    });
++
++    expect(result).toEqual({ attempted: 1, sent: 1, removed: 0, failed: 0 });
++    expect(deliveries).toEqual([{
++      title: "PiClaw reply",
++      body: "Reply body",
++      url: "/?chat_jid=web%3Adefault#msg-77",
++      tag: "piclaw:reply:web:default",
++      sourceLabel: "Web Push",
++    }]);
++  });
++
++  test("adds a default source marker to test notifications", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(9), { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    await sendStoredWebPushTestNotification({
++      baseDir,
++      sendNotification: async (_subscription, payload) => {
++        deliveries.push(JSON.parse(payload));
++      },
++    });
++
++    expect(deliveries).toEqual([{
++      title: "PiClaw notifications enabled",
++      body: "Web Push is configured for this device.",
++      url: "/",
++      tag: "piclaw:test",
++      sourceLabel: "Web Push",
++    }]);
++  });
++});
+diff --git a/target30/runtime/test/channels/web/web-push-store.test.ts b/runtime/test/channels/web/web-push-store.test.ts
+new file mode 100644
+index 0000000..b8b2c15
+--- /dev/null
++++ b/runtime/test/channels/web/web-push-store.test.ts
+@@ -0,0 +1,121 @@
++import { afterEach, describe, expect, test } from "bun:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
++
++import {
++  ensureStoredVapidKeys,
++  getStoredVapidPublicKey,
++  listStoredWebPushSubscriptions,
++  normalizeStoredWebPushSubscription,
++  removeStoredWebPushSubscription,
++  upsertStoredWebPushSubscription,
++} from "../../../src/channels/web/push/web-push-store.js";
++
++const tempDirs: string[] = [];
++
++function createTempPushDir(): string {
++  const dir = mkdtempSync(join(tmpdir(), "piclaw-web-push-"));
++  tempDirs.push(dir);
++  return dir;
++}
++
++afterEach(() => {
++  while (tempDirs.length > 0) {
++    const dir = tempDirs.pop();
++    if (!dir) continue;
++    rmSync(dir, { recursive: true, force: true });
++  }
++});
++
++function createSubscription(endpoint = "https://push.example.test/device/1", deviceId: string | null = null) {
++  return {
++    endpoint,
++    expirationTime: null,
++    keys: {
++      auth: "auth-token",
++      p256dh: "p256dh-token",
++    },
++    ...(deviceId ? { deviceId } : {}),
++  };
++}
++
++describe("web push store", () => {
++  test("generates and reuses a stored VAPID keypair", () => {
++    const baseDir = createTempPushDir();
++
++    const created = ensureStoredVapidKeys(baseDir);
++    const reread = ensureStoredVapidKeys(baseDir);
++
++    expect(created.publicKey).toBeTruthy();
++    expect(created.privateKeyPem).toContain("BEGIN PRIVATE KEY");
++    expect(created.publicKeyPem).toContain("BEGIN PUBLIC KEY");
++    expect(reread.publicKey).toBe(created.publicKey);
++    expect(getStoredVapidPublicKey(baseDir)).toBe(created.publicKey);
++  });
++
++  test("normalizes valid subscriptions and rejects malformed ones", () => {
++    const normalized = normalizeStoredWebPushSubscription(createSubscription());
++
++    expect(normalized?.endpoint).toBe("https://push.example.test/device/1");
++    expect(normalized?.expirationTime).toBeNull();
++    expect(normalized?.keys).toEqual({
++      auth: "auth-token",
++      p256dh: "p256dh-token",
++    });
++    expect(typeof normalized?.createdAt).toBe("string");
++    expect(typeof normalized?.updatedAt).toBe("string");
++    expect(normalized?.userAgent).toBeNull();
++    expect(normalized?.deviceId).toBeNull();
++
++    expect(normalizeStoredWebPushSubscription({ endpoint: "", keys: {} })).toBeNull();
++    expect(normalizeStoredWebPushSubscription(null)).toBeNull();
++  });
++
++  test("upserts and removes stored subscriptions by endpoint", () => {
++    const baseDir = createTempPushDir();
++
++    const created = upsertStoredWebPushSubscription(createSubscription(), {
++      baseDir,
++      userAgent: "PiClaw Test",
++      now: "2026-04-14T18:50:00.000Z",
++    });
++    const updated = upsertStoredWebPushSubscription(createSubscription(), {
++      baseDir,
++      userAgent: "PiClaw Test 2",
++      now: "2026-04-14T18:55:00.000Z",
++    });
++
++    expect(created.createdAt).toBe("2026-04-14T18:50:00.000Z");
++    expect(updated.createdAt).toBe("2026-04-14T18:50:00.000Z");
++    expect(updated.updatedAt).toBe("2026-04-14T18:55:00.000Z");
++    expect(updated.userAgent).toBe("PiClaw Test 2");
++    expect(listStoredWebPushSubscriptions(baseDir)).toHaveLength(1);
++
++    expect(removeStoredWebPushSubscription(created.endpoint, baseDir)).toBe(true);
++    expect(removeStoredWebPushSubscription(created.endpoint, baseDir)).toBe(false);
++    expect(listStoredWebPushSubscriptions(baseDir)).toHaveLength(0);
++  });
++
++  test("replaces an existing subscription when the same device gets a new endpoint", () => {
++    const baseDir = createTempPushDir();
++
++    upsertStoredWebPushSubscription(createSubscription("https://push.example.test/device/old", "device-1"), {
++      baseDir,
++      userAgent: "PiClaw Test",
++      now: "2026-04-14T19:00:00.000Z",
++    });
++    const updated = upsertStoredWebPushSubscription(createSubscription("https://push.example.test/device/new", "device-1"), {
++      baseDir,
++      userAgent: "PiClaw Test",
++      now: "2026-04-14T19:05:00.000Z",
++      deviceId: "device-1",
++    });
++
++    expect(updated.endpoint).toBe("https://push.example.test/device/new");
++    expect(updated.deviceId).toBe("device-1");
++    expect(listStoredWebPushSubscriptions(baseDir).map((entry) => entry.endpoint)).toEqual([
++      "https://push.example.test/device/new",
++    ]);
++  });
++});
+diff --git a/target30/runtime/test/web/notification-delivery-coordinator.test.ts b/runtime/test/web/notification-delivery-coordinator.test.ts
+new file mode 100644
+index 0000000..a4993ad
+--- /dev/null
++++ b/runtime/test/web/notification-delivery-coordinator.test.ts
+@@ -0,0 +1,144 @@
++import { describe, expect, test } from 'bun:test';
++
++import {
++  createLocalNotificationPresenceSnapshot,
++  getOrCreateNotificationClientId,
++  getOrCreateNotificationDeviceId,
++  listLiveLocalNotificationPresence,
++  publishLocalNotificationPresence,
++  shouldNotifyLocallyForChat,
++  withdrawLocalNotificationPresence,
++} from '../../web/src/ui/notification-delivery-coordinator.ts';
++
++function createStorage() {
++  const values = new Map();
++  return {
++    get length() {
++      return values.size;
++    },
++    getItem(key) {
++      return values.has(key) ? values.get(key) : null;
++    },
++    setItem(key, value) {
++      values.set(String(key), String(value));
++    },
++    removeItem(key) {
++      values.delete(String(key));
++    },
++    key(index) {
++      return Array.from(values.keys())[index] || null;
++    },
++  };
++}
++
++function createRuntime() {
++  const localStorage = createStorage();
++  const sessionStorage = createStorage();
++  const document = {
++    visibilityState: 'visible',
++    hasFocus() {
++      return true;
++    },
++  };
++  const runtimeWindow = {
++    localStorage,
++    sessionStorage,
++  };
++  return { runtimeWindow, document };
++}
++
++describe('notification delivery coordinator', () => {
++  test('creates stable device and client ids', () => {
++    const { runtimeWindow } = createRuntime();
++    const deviceId = getOrCreateNotificationDeviceId(runtimeWindow as any);
++    const clientId = getOrCreateNotificationClientId(runtimeWindow as any);
++
++    expect(deviceId).toBe(getOrCreateNotificationDeviceId(runtimeWindow as any));
++    expect(clientId).toBe(getOrCreateNotificationClientId(runtimeWindow as any));
++  });
++
++  test('elects exactly one hidden local notifier per device/chat', () => {
++    const { runtimeWindow, document } = createRuntime();
++    const deviceId = getOrCreateNotificationDeviceId(runtimeWindow as any);
++
++    publishLocalNotificationPresence({
++      deviceId,
++      clientId: 'client-a',
++      chatJid: 'web:default',
++      visibilityState: 'hidden',
++      hasFocus: false,
++      updatedAtMs: 1000,
++    }, runtimeWindow as any);
++    publishLocalNotificationPresence({
++      deviceId,
++      clientId: 'client-b',
++      chatJid: 'web:default',
++      visibilityState: 'hidden',
++      hasFocus: false,
++      updatedAtMs: 1000,
++    }, runtimeWindow as any);
++
++    expect(shouldNotifyLocallyForChat({
++      chatJid: 'web:default',
++      runtimeWindow: runtimeWindow as any,
++      runtimeDocument: { ...document, visibilityState: 'hidden', hasFocus: () => false } as any,
++      deviceId,
++      clientId: 'client-a',
++      updatedAtMs: 1000,
++    })).toBe(true);
++    expect(shouldNotifyLocallyForChat({
++      chatJid: 'web:default',
++      runtimeWindow: runtimeWindow as any,
++      runtimeDocument: { ...document, visibilityState: 'hidden', hasFocus: () => false } as any,
++      deviceId,
++      clientId: 'client-b',
++      updatedAtMs: 1000,
++    })).toBe(false);
++  });
++
++  test('suppresses local notifications when the same chat is visible elsewhere on the device', () => {
++    const { runtimeWindow, document } = createRuntime();
++    const deviceId = getOrCreateNotificationDeviceId(runtimeWindow as any);
++    publishLocalNotificationPresence({
++      deviceId,
++      clientId: 'client-visible',
++      chatJid: 'web:default',
++      visibilityState: 'visible',
++      hasFocus: true,
++      updatedAtMs: 1000,
++    }, runtimeWindow as any);
++
++    expect(shouldNotifyLocallyForChat({
++      chatJid: 'web:default',
++      runtimeWindow: runtimeWindow as any,
++      runtimeDocument: { ...document, visibilityState: 'hidden', hasFocus: () => false } as any,
++      deviceId,
++      clientId: 'client-hidden',
++      updatedAtMs: 1000,
++    })).toBe(false);
++  });
++
++  test('prunes withdrawn or stale presence records', () => {
++    const { runtimeWindow, document } = createRuntime();
++    const snapshot = createLocalNotificationPresenceSnapshot({
++      chatJid: 'web:default',
++      runtimeWindow: runtimeWindow as any,
++      runtimeDocument: document as any,
++      updatedAtMs: 1000,
++    });
++    publishLocalNotificationPresence(snapshot, runtimeWindow as any);
++
++    expect(listLiveLocalNotificationPresence({
++      runtimeWindow: runtimeWindow as any,
++      deviceId: snapshot.deviceId,
++      nowMs: 1000,
++    })).toHaveLength(1);
++
++    withdrawLocalNotificationPresence(snapshot, runtimeWindow as any);
++    expect(listLiveLocalNotificationPresence({
++      runtimeWindow: runtimeWindow as any,
++      deviceId: snapshot.deviceId,
++      nowMs: 1000,
++    })).toHaveLength(0);
++  });
++});
+diff --git a/target30/runtime/test/web/use-notifications.test.ts b/runtime/test/web/use-notifications.test.ts
+new file mode 100644
+index 0000000..19aa88e
+--- /dev/null
++++ b/runtime/test/web/use-notifications.test.ts
+@@ -0,0 +1,17 @@
++import { expect, test } from 'bun:test';
++
++import {
++  formatNotificationTitle,
++  LOCAL_NOTIFICATION_SOURCE_LABEL,
++  WEB_PUSH_NOTIFICATION_SOURCE_LABEL,
++} from '../../web/src/ui/use-notifications.js';
++
++test('formatNotificationTitle appends a visible source marker', () => {
++  expect(formatNotificationTitle('Pi', LOCAL_NOTIFICATION_SOURCE_LABEL)).toBe('Pi [Local]');
++  expect(formatNotificationTitle('PiClaw', WEB_PUSH_NOTIFICATION_SOURCE_LABEL)).toBe('PiClaw [Web Push]');
++});
++
++test('formatNotificationTitle falls back cleanly when no source marker is provided', () => {
++  expect(formatNotificationTitle('Pi', '')).toBe('Pi');
++  expect(formatNotificationTitle('', '')).toBe('PiClaw');
++});
+diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
+index 6588804..c8b8389 100644
+--- a/runtime/web/src/api.ts
++++ b/runtime/web/src/api.ts
+@@ -172,6 +172,9 @@ export async function getChatBranches(rootChatJid = null, options = {}) {
+     const params = new URLSearchParams();
+     if (rootChatJid) params.set('root_chat_jid', String(rootChatJid));
+     if (options?.includeArchived) params.set('include_archived', '1');
++    if (options?.prewarmRecent) params.set('prewarm_recent', '1');
++    if (Number.isFinite(options?.prewarmLimit)) params.set('prewarm_limit', String(options.prewarmLimit));
++    if (options?.excludeChatJid) params.set('exclude_chat_jid', String(options.excludeChatJid));
+     if (options?.prewarmChatJid) params.set('prewarm_chat_jid', String(options.prewarmChatJid));
+     const query = params.toString() ? `?${params.toString()}` : '';
+     return request(`/agent/branches${query}`);
+@@ -245,6 +248,39 @@ export async function sendPeerAgentMessage(sourceChatJid, targetChatOrName, cont
+     });
+ }
+ 
++export async function getWebPushPublicKey() {
++    return request('/agent/push/vapid-public-key');
++}
++
++export async function saveWebPushSubscription(subscription, options = {}) {
++    const payload = {
++        subscription,
++        ...(options?.deviceId ? { device_id: options.deviceId } : {}),
++    };
++    return request('/agent/push/subscription', {
++        method: 'POST',
++        body: JSON.stringify(payload),
++    });
++}
++
++export async function deleteWebPushSubscription(subscription, options = {}) {
++    const payload = {
++        subscription,
++        ...(options?.deviceId ? { device_id: options.deviceId } : {}),
++    };
++    return request('/agent/push/subscription', {
++        method: 'DELETE',
++        body: JSON.stringify(payload),
++    });
++}
++
++export async function sendWebPushTestNotification(payload = {}) {
++    return request('/agent/push/test', {
++        method: 'POST',
++        body: JSON.stringify(payload || {}),
++    });
++}
++
+ /**
+  * Get available agents / current agent roster.
+  */
+diff --git a/runtime/web/src/app.ts b/runtime/web/src/app.ts
+index 0348aa4..9aab2b1 100644
+--- a/runtime/web/src/app.ts
++++ b/runtime/web/src/app.ts
+@@ -260,6 +260,7 @@ function MainApp({ locationParams, navigate }) {
+             lastNotifiedIdRef: surface.lastNotifiedIdRef,
+             agentsRef: surface.agentsRef,
+             notify: surface.notify,
++            shouldNotifyLocallyForChat: surface.shouldNotifyLocallyForChat,
+         },
+         recovery: {
+             isAgentRunningRef,
+diff --git a/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts b/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts
+index f8ac6cf..47105a1 100644
+--- a/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts
++++ b/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts
+@@ -72,6 +72,7 @@ interface UseChatPaneRuntimeOrchestrationOptions {
+   lastNotifiedIdRef: RefBox<string | number | null>;
+   agentsRef: RefBox<Record<string, any>>;
+   notify: (title: string, body: string) => void;
++  shouldNotifyLocallyForChat: (chatJid: string) => boolean;
+ }
+ 
+ export function useChatPaneRuntimeOrchestration(options: UseChatPaneRuntimeOrchestrationOptions) {
+@@ -122,6 +123,7 @@ export function useChatPaneRuntimeOrchestration(options: UseChatPaneRuntimeOrche
+     lastNotifiedIdRef,
+     agentsRef,
+     notify,
++    shouldNotifyLocallyForChat,
+   } = options;
+ 
+   const clearQueuedSteerStateIfStale = useCallback((remainingQueueCount: number) => {
+@@ -285,14 +287,12 @@ export function useChatPaneRuntimeOrchestration(options: UseChatPaneRuntimeOrche
+   }, [currentTurnIdRef, draftBufferRef, draftExpandedRef, lastAgentResponseRef, pendingRequestRef, setAgentDraft, setAgentPlan, setAgentThought, setCurrentTurnId, setPendingRequest, setSteerQueuedTurnId, silentRecoveryRef, steerQueuedTurnIdRef, thoughtBufferRef, thoughtExpandedRef]);
+ 
+   const notifyForFinalResponse = useCallback((turnId: string | null | undefined) => {
+-    if (typeof document !== 'undefined') {
+-      const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+-      if (!document.hidden && hasFocus) return;
+-    }
+     const entry = lastAgentResponseRef.current;
+     if (!entry || !entry.post) return;
+     if (turnId && entry.turnId && entry.turnId !== turnId) return;
+     const post = entry.post;
++    const chatJid = typeof post?.chat_jid === 'string' && post.chat_jid.trim() ? post.chat_jid.trim() : '';
++    if (!chatJid || !shouldNotifyLocallyForChat(chatJid)) return;
+     if (post.id && lastNotifiedIdRef.current === post.id) return;
+     const content = String(post?.data?.content || '').trim();
+     if (!content) return;
+@@ -302,8 +302,8 @@ export function useChatPaneRuntimeOrchestration(options: UseChatPaneRuntimeOrche
+     const agentsMap = agentsRef.current || {};
+     const agent = post?.data?.agent_id ? agentsMap[post.data.agent_id] : null;
+     const title = agent?.name || 'Pi';
+-    notify(title, body);
+-  }, [agentsRef, lastAgentResponseRef, lastNotifiedIdRef, notify]);
++    notify(title, body, { sourceLabel: 'Local' });
++  }, [agentsRef, lastAgentResponseRef, lastNotifiedIdRef, notify, shouldNotifyLocallyForChat]);
+ 
+   return {
+     clearQueuedSteerStateIfStale,
+diff --git a/runtime/web/src/ui/app-main-surface-state.ts b/runtime/web/src/ui/app-main-surface-state.ts
+index 997f57d..8134a09 100644
+--- a/runtime/web/src/ui/app-main-surface-state.ts
++++ b/runtime/web/src/ui/app-main-surface-state.ts
+@@ -91,7 +91,8 @@ export function useMainAppSurfaceState(options: {
+     notificationPermission,
+     toggleNotifications: handleToggleNotifications,
+     notify,
+-  } = useNotifications();
++    shouldNotifyLocallyForChat,
++  } = useNotifications({ chatJid: currentChatJid });
+ 
+   const [removingPostIds, setRemovingPostIds] = useState(() => new Set<string | number>());
+   const [workspaceOpen, setWorkspaceOpen] = useState(() => readStoredWorkspaceOpenPreference({
+@@ -204,6 +205,7 @@ export function useMainAppSurfaceState(options: {
+     notificationPermission,
+     handleToggleNotifications,
+     notify,
++    shouldNotifyLocallyForChat,
+     removingPostIds,
+     setRemovingPostIds,
+     workspaceOpen,
+diff --git a/runtime/web/src/ui/app-shell-bootstrap.ts b/runtime/web/src/ui/app-shell-bootstrap.ts
+index 6dc4e0f..df44296 100644
+--- a/runtime/web/src/ui/app-shell-bootstrap.ts
++++ b/runtime/web/src/ui/app-shell-bootstrap.ts
+@@ -26,6 +26,7 @@ interface AppApiSurface {
+ 
+ let initialized = false;
+ let browserNoiseFilterInstalled = false;
++let serviceWorkerRegistrationStarted = false;
+ 
+ export function configureMarked(markedInstance: { setOptions?: (options: Record<string, unknown>) => void } | null | undefined): void {
+   if (!markedInstance || typeof markedInstance.setOptions !== 'function') return;
+@@ -72,6 +73,16 @@ export function registerAppPaneExtensions(): void {
+   paneRegistry.register(terminalTabPaneExtension);
+ }
+ 
++export function registerAppServiceWorker(runtimeWindow: (Window & typeof globalThis) | null = typeof window !== 'undefined' ? window : null): void {
++  if (!runtimeWindow || serviceWorkerRegistrationStarted) return;
++  if (!runtimeWindow.isSecureContext) return;
++  if (!("serviceWorker" in runtimeWindow.navigator)) return;
++  serviceWorkerRegistrationStarted = true;
++  void runtimeWindow.navigator.serviceWorker.register('/sw.js').catch((error) => {
++    console.warn('Failed to register app service worker:', error);
++  });
++}
++
+ export function initializeAppShellRuntime(): void {
+   if (initialized) return;
+   const markedInstance = typeof window !== 'undefined'
+@@ -80,6 +91,7 @@ export function initializeAppShellRuntime(): void {
+   configureMarked(markedInstance);
+   installBrowserNoiseFilters(typeof window !== 'undefined' ? window : null);
+   registerAppPaneExtensions();
++  registerAppServiceWorker(typeof window !== 'undefined' ? window : null);
+   initialized = true;
+ }
+ 
+diff --git a/target30/runtime/web/src/ui/notification-delivery-coordinator.ts b/runtime/web/src/ui/notification-delivery-coordinator.ts
+new file mode 100644
+index 0000000..3d82c64
+--- /dev/null
++++ b/runtime/web/src/ui/notification-delivery-coordinator.ts
+@@ -0,0 +1,187 @@
++const DEVICE_ID_KEY = 'piclaw.notifications.deviceId';
++const CLIENT_ID_KEY = 'piclaw.notifications.clientId';
++const PRESENCE_KEY_PREFIX = 'piclaw.notifications.presence.';
++export const LOCAL_NOTIFICATION_PRESENCE_TTL_MS = 45000;
++
++function safeStorageGet(storage, key) {
++  if (!storage || !key) return null;
++  try {
++    return storage.getItem(key);
++  } catch {
++    return null;
++  }
++}
++
++function safeStorageSet(storage, key, value) {
++  if (!storage || !key) return;
++  try {
++    storage.setItem(key, value);
++  } catch {
++    return;
++  }
++}
++
++function safeStorageRemove(storage, key) {
++  if (!storage || !key) return;
++  try {
++    storage.removeItem(key);
++  } catch {
++    return;
++  }
++}
++
++function createRandomId(prefix = 'piclaw') {
++  try {
++    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
++      return `${prefix}-${crypto.randomUUID()}`;
++    }
++  } catch {}
++  return `${prefix}-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
++}
++
++export function getOrCreateNotificationDeviceId(runtimeWindow = typeof window !== 'undefined' ? window : null) {
++  const storage = runtimeWindow?.localStorage;
++  const existing = safeStorageGet(storage, DEVICE_ID_KEY);
++  if (existing) return existing;
++  const created = createRandomId('device');
++  safeStorageSet(storage, DEVICE_ID_KEY, created);
++  return safeStorageGet(storage, DEVICE_ID_KEY) || created;
++}
++
++export function getOrCreateNotificationClientId(runtimeWindow = typeof window !== 'undefined' ? window : null) {
++  const sessionStorage = runtimeWindow?.sessionStorage;
++  const existing = safeStorageGet(sessionStorage, CLIENT_ID_KEY);
++  if (existing) return existing;
++  const fallbackExisting = runtimeWindow?.__PICLAW_NOTIFICATION_CLIENT_ID__;
++  if (typeof fallbackExisting === 'string' && fallbackExisting.trim()) return fallbackExisting.trim();
++  const created = createRandomId('client');
++  safeStorageSet(sessionStorage, CLIENT_ID_KEY, created);
++  if (runtimeWindow) {
++    runtimeWindow.__PICLAW_NOTIFICATION_CLIENT_ID__ = safeStorageGet(sessionStorage, CLIENT_ID_KEY) || created;
++  }
++  return runtimeWindow?.__PICLAW_NOTIFICATION_CLIENT_ID__ || created;
++}
++
++function getPresenceStorageKey(deviceId, clientId) {
++  return `${PRESENCE_KEY_PREFIX}${String(deviceId || '').trim()}:${String(clientId || '').trim()}`;
++}
++
++export function createLocalNotificationPresenceSnapshot(options = {}) {
++  const runtimeWindow = options.runtimeWindow ?? (typeof window !== 'undefined' ? window : null);
++  const runtimeDocument = options.runtimeDocument ?? (typeof document !== 'undefined' ? document : null);
++  const chatJid = typeof options.chatJid === 'string' && options.chatJid.trim() ? options.chatJid.trim() : '';
++  const deviceId = typeof options.deviceId === 'string' && options.deviceId.trim()
++    ? options.deviceId.trim()
++    : getOrCreateNotificationDeviceId(runtimeWindow);
++  const clientId = typeof options.clientId === 'string' && options.clientId.trim()
++    ? options.clientId.trim()
++    : getOrCreateNotificationClientId(runtimeWindow);
++  const updatedAtMs = Number.isFinite(options.updatedAtMs) ? Number(options.updatedAtMs) : Date.now();
++  const hasFocus = Boolean(typeof runtimeDocument?.hasFocus === 'function' ? runtimeDocument.hasFocus() : true);
++  const rawVisibility = String(runtimeDocument?.visibilityState || '').trim().toLowerCase();
++  const visibilityState = rawVisibility === 'hidden' ? 'hidden' : 'visible';
++
++  return {
++    deviceId,
++    clientId,
++    chatJid,
++    visibilityState,
++    hasFocus,
++    updatedAtMs,
++  };
++}
++
++export function publishLocalNotificationPresence(snapshot, runtimeWindow = typeof window !== 'undefined' ? window : null) {
++  const storage = runtimeWindow?.localStorage;
++  const deviceId = typeof snapshot?.deviceId === 'string' ? snapshot.deviceId.trim() : '';
++  const clientId = typeof snapshot?.clientId === 'string' ? snapshot.clientId.trim() : '';
++  const chatJid = typeof snapshot?.chatJid === 'string' ? snapshot.chatJid.trim() : '';
++  if (!storage || !deviceId || !clientId || !chatJid) return false;
++  safeStorageSet(storage, getPresenceStorageKey(deviceId, clientId), JSON.stringify({
++    deviceId,
++    clientId,
++    chatJid,
++    visibilityState: snapshot.visibilityState === 'hidden' ? 'hidden' : 'visible',
++    hasFocus: Boolean(snapshot.hasFocus),
++    updatedAtMs: Number.isFinite(snapshot.updatedAtMs) ? Number(snapshot.updatedAtMs) : Date.now(),
++  }));
++  return true;
++}
++
++export function withdrawLocalNotificationPresence(value, runtimeWindow = typeof window !== 'undefined' ? window : null) {
++  const storage = runtimeWindow?.localStorage;
++  const deviceId = typeof value?.deviceId === 'string' ? value.deviceId.trim() : '';
++  const clientId = typeof value?.clientId === 'string' ? value.clientId.trim() : '';
++  if (!storage || !deviceId || !clientId) return false;
++  safeStorageRemove(storage, getPresenceStorageKey(deviceId, clientId));
++  return true;
++}
++
++export function listLiveLocalNotificationPresence(options = {}) {
++  const runtimeWindow = options.runtimeWindow ?? (typeof window !== 'undefined' ? window : null);
++  const storage = runtimeWindow?.localStorage;
++  const deviceId = typeof options.deviceId === 'string' && options.deviceId.trim()
++    ? options.deviceId.trim()
++    : getOrCreateNotificationDeviceId(runtimeWindow);
++  const nowMs = Number.isFinite(options.nowMs) ? Number(options.nowMs) : Date.now();
++  const ttlMs = Number.isFinite(options.ttlMs) ? Number(options.ttlMs) : LOCAL_NOTIFICATION_PRESENCE_TTL_MS;
++  if (!storage || !deviceId) return [];
++
++  const keyPrefix = `${PRESENCE_KEY_PREFIX}${deviceId}:`;
++  const live = [];
++  const staleKeys = [];
++  for (let index = 0; index < storage.length; index += 1) {
++    const key = storage.key(index);
++    if (!key || !key.startsWith(keyPrefix)) continue;
++    const raw = safeStorageGet(storage, key);
++    if (!raw) {
++      staleKeys.push(key);
++      continue;
++    }
++    try {
++      const parsed = JSON.parse(raw);
++      const updatedAtMs = Number(parsed?.updatedAtMs);
++      if (!Number.isFinite(updatedAtMs) || nowMs - updatedAtMs > ttlMs) {
++        staleKeys.push(key);
++        continue;
++      }
++      const chatJid = typeof parsed?.chatJid === 'string' ? parsed.chatJid.trim() : '';
++      const clientId = typeof parsed?.clientId === 'string' ? parsed.clientId.trim() : '';
++      if (!chatJid || !clientId) {
++        staleKeys.push(key);
++        continue;
++      }
++      live.push({
++        deviceId,
++        clientId,
++        chatJid,
++        visibilityState: parsed?.visibilityState === 'hidden' ? 'hidden' : 'visible',
++        hasFocus: Boolean(parsed?.hasFocus),
++        updatedAtMs,
++      });
++    } catch {
++      staleKeys.push(key);
++    }
++  }
++
++  staleKeys.forEach((key) => safeStorageRemove(storage, key));
++  return live.sort((left, right) => left.clientId.localeCompare(right.clientId));
++}
++
++export function shouldNotifyLocallyForChat(options = {}) {
++  const snapshot = createLocalNotificationPresenceSnapshot(options);
++  const chatJid = snapshot.chatJid;
++  if (!chatJid) return false;
++  const entries = listLiveLocalNotificationPresence({
++    runtimeWindow: options.runtimeWindow,
++    deviceId: snapshot.deviceId,
++    nowMs: snapshot.updatedAtMs,
++    ttlMs: options.ttlMs,
++  }).filter((entry) => entry.chatJid === chatJid && entry.clientId !== snapshot.clientId);
++  const candidates = [snapshot, ...entries];
++  if (candidates.some((entry) => entry.visibilityState === 'visible')) {
++    return false;
++  }
++  const leader = [...candidates].sort((left, right) => left.clientId.localeCompare(right.clientId))[0] || null;
++  return Boolean(leader && leader.clientId === snapshot.clientId);
++}
+diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
+index 5ccaf9b..84fa3c6 100644
+--- a/runtime/web/src/ui/use-notifications.ts
++++ b/runtime/web/src/ui/use-notifications.ts
+@@ -1,18 +1,139 @@
++import { deleteWebPushSubscription, getWebPushPublicKey, saveWebPushSubscription, sendWebPushTestNotification } from '../api.js';
+ import { useCallback, useEffect, useRef, useState } from '../vendor/preact-htm.js';
+ import { getLocalStorageBoolean, setLocalStorageItem } from '../utils/storage.js';
+ import { focusWindowBestEffort } from './notification-focus.js';
++import {
++  createLocalNotificationPresenceSnapshot,
++  getOrCreateNotificationClientId,
++  getOrCreateNotificationDeviceId,
++  publishLocalNotificationPresence,
++  shouldNotifyLocallyForChat,
++  withdrawLocalNotificationPresence,
++} from './notification-delivery-coordinator.ts';
+ 
+-export function useNotifications() {
++export const LOCAL_NOTIFICATION_SOURCE_LABEL = 'Local';
++export const WEB_PUSH_NOTIFICATION_SOURCE_LABEL = 'Web Push';
++
++export function formatNotificationTitle(title, sourceLabel = '') {
++  const normalizedTitle = typeof title === 'string' && title.trim() ? title.trim() : 'PiClaw';
++  const normalizedSource = typeof sourceLabel === 'string' ? sourceLabel.trim() : '';
++  return normalizedSource ? `${normalizedTitle} [${normalizedSource}]` : normalizedTitle;
++}
++
++function decodeBase64UrlToUint8Array(value) {
++  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
++  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
++  const binary = atob(padded);
++  const bytes = new Uint8Array(binary.length);
++  for (let index = 0; index < binary.length; index += 1) {
++    bytes[index] = binary.charCodeAt(index);
++  }
++  return bytes;
++}
++
++function supportsWebPush(runtimeWindow = typeof window !== 'undefined' ? window : null) {
++  if (!runtimeWindow || !runtimeWindow.isSecureContext) return false;
++  return 'serviceWorker' in runtimeWindow.navigator && 'PushManager' in runtimeWindow;
++}
++
++async function ensureStoredWebPushSubscription(runtimeWindow) {
++  await runtimeWindow.navigator.serviceWorker.register('/sw.js');
++  const registration = await runtimeWindow.navigator.serviceWorker.ready;
++  const existing = await registration.pushManager.getSubscription();
++  if (existing) return existing;
++  const payload = await getWebPushPublicKey();
++  const publicKey = typeof payload?.publicKey === 'string' ? payload.publicKey.trim() : '';
++  if (!publicKey) {
++    throw new Error('Missing web push public key.');
++  }
++  return registration.pushManager.subscribe({
++    userVisibleOnly: true,
++    applicationServerKey: decodeBase64UrlToUint8Array(publicKey),
++  });
++}
++
++async function syncWebPushSubscription(runtimeWindow, deviceId) {
++  if (!supportsWebPush(runtimeWindow)) return false;
++  const subscription = await ensureStoredWebPushSubscription(runtimeWindow);
++  await saveWebPushSubscription(subscription.toJSON ? subscription.toJSON() : subscription, { deviceId });
++  return true;
++}
++
++async function disableWebPushSubscription(runtimeWindow, deviceId) {
++  if (!supportsWebPush(runtimeWindow)) return false;
++  await runtimeWindow.navigator.serviceWorker.register('/sw.js');
++  const registration = await runtimeWindow.navigator.serviceWorker.ready;
++  const subscription = await registration.pushManager.getSubscription();
++  if (!subscription) return false;
++  const serialized = subscription.toJSON ? subscription.toJSON() : subscription;
++  try {
++    await deleteWebPushSubscription(serialized, { deviceId });
++  } catch (error) {
++    console.warn('Failed to remove web push subscription from the server:', error);
++  }
++  try {
++    await subscription.unsubscribe();
++  } catch (error) {
++    console.warn('Failed to unsubscribe from web push notifications:', error);
++  }
++  return true;
++}
++
++function postWebPushPresence(payload, options = {}) {
++  const runtimeWindow = options.runtimeWindow ?? (typeof window !== 'undefined' ? window : null);
++  if (!runtimeWindow?.fetch) return Promise.resolve(false);
++  return runtimeWindow.fetch('/agent/push/presence', {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify(payload),
++    keepalive: Boolean(options.keepalive),
++  }).then(() => true).catch(() => false);
++}
++
++function sendWebPushPresenceBeacon(payload, runtimeWindow = typeof window !== 'undefined' ? window : null) {
++  try {
++    if (runtimeWindow?.navigator?.sendBeacon) {
++      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
++      return runtimeWindow.navigator.sendBeacon('/agent/push/presence', blob);
++    }
++  } catch {}
++  return false;
++}
++
++export function useNotifications(options = {}) {
++  const currentChatJid = typeof options?.chatJid === 'string' && options.chatJid.trim() ? options.chatJid.trim() : 'web:default';
+   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+   const [notificationPermission, setNotificationPermission] = useState('default');
+   const notificationsEnabledRef = useRef(false);
++  const deviceIdRef = useRef(null);
++  const clientIdRef = useRef(null);
+ 
+   useEffect(() => {
+     const enabled = getLocalStorageBoolean('notificationsEnabled', false);
+     notificationsEnabledRef.current = enabled;
+     setNotificationsEnabled(enabled);
+-    if (typeof Notification !== 'undefined') {
+-      setNotificationPermission(Notification.permission);
++    if (typeof window !== 'undefined') {
++      deviceIdRef.current = getOrCreateNotificationDeviceId(window);
++      clientIdRef.current = getOrCreateNotificationClientId(window);
++    }
++    if (typeof Notification === 'undefined') {
++      return;
++    }
++
++    const permission = Notification.permission;
++    setNotificationPermission(permission);
++
++    if (permission === 'denied' && enabled) {
++      notificationsEnabledRef.current = false;
++      setNotificationsEnabled(false);
++      setLocalStorageItem('notificationsEnabled', 'false');
++      return;
++    }
++
++    if (permission === 'granted' && enabled && typeof window !== 'undefined' && supportsWebPush(window)) {
++      void syncWebPushSubscription(window, deviceIdRef.current || getOrCreateNotificationDeviceId(window)).catch((error) => {
++        console.warn('Failed to refresh stored web push subscription:', error);
++      });
+     }
+   }, []);
+ 
+@@ -20,6 +141,64 @@ export function useNotifications() {
+     notificationsEnabledRef.current = notificationsEnabled;
+   }, [notificationsEnabled]);
+ 
++  useEffect(() => {
++    if (typeof window === 'undefined' || typeof document === 'undefined') return;
++    const deviceId = deviceIdRef.current || getOrCreateNotificationDeviceId(window);
++    const clientId = clientIdRef.current || getOrCreateNotificationClientId(window);
++    deviceIdRef.current = deviceId;
++    clientIdRef.current = clientId;
++
++    const publishPresence = (active = true, transport = 'fetch') => {
++      const snapshot = createLocalNotificationPresenceSnapshot({
++        chatJid: currentChatJid,
++        runtimeWindow: window,
++        runtimeDocument: document,
++        deviceId,
++        clientId,
++      });
++      if (active) {
++        publishLocalNotificationPresence(snapshot, window);
++      } else {
++        withdrawLocalNotificationPresence({ deviceId, clientId }, window);
++      }
++      const payload = {
++        device_id: deviceId,
++        client_id: clientId,
++        chat_jid: currentChatJid,
++        visibility_state: snapshot.visibilityState,
++        has_focus: snapshot.hasFocus,
++        active,
++      };
++      if (!active && transport === 'beacon' && sendWebPushPresenceBeacon(payload, window)) {
++        return;
++      }
++      void postWebPushPresence(payload, { runtimeWindow: window, keepalive: !active || transport === 'keepalive' });
++    };
++
++    const handleStateChange = () => publishPresence(true);
++    const handlePageHide = () => publishPresence(false, 'beacon');
++
++    publishPresence(true);
++    const interval = setInterval(() => publishPresence(true), 15000);
++    document.addEventListener('visibilitychange', handleStateChange);
++    window.addEventListener('focus', handleStateChange);
++    window.addEventListener('blur', handleStateChange);
++    window.addEventListener('pageshow', handleStateChange);
++    window.addEventListener('pagehide', handlePageHide);
++    window.addEventListener('beforeunload', handlePageHide);
++
++    return () => {
++      clearInterval(interval);
++      document.removeEventListener('visibilitychange', handleStateChange);
++      window.removeEventListener('focus', handleStateChange);
++      window.removeEventListener('blur', handleStateChange);
++      window.removeEventListener('pageshow', handleStateChange);
++      window.removeEventListener('pagehide', handlePageHide);
++      window.removeEventListener('beforeunload', handlePageHide);
++      publishPresence(false, 'beacon');
++    };
++  }, [currentChatJid]);
++
+   const requestNotificationPermission = useCallback(() => {
+     if (typeof Notification === 'undefined') return Promise.resolve('denied');
+     try {
+@@ -58,14 +237,43 @@ export function useNotifications() {
+     notificationsEnabledRef.current = next;
+     setNotificationsEnabled(next);
+     setLocalStorageItem('notificationsEnabled', String(next));
++
++    const deviceId = deviceIdRef.current || getOrCreateNotificationDeviceId(window);
++    deviceIdRef.current = deviceId;
++
++    if (supportsWebPush(window)) {
++      try {
++        if (next) {
++          await syncWebPushSubscription(window, deviceId);
++          try {
++            await sendWebPushTestNotification({
++              title: 'PiClaw notifications enabled',
++              body: 'Web Push is configured for this device.',
++              url: window.location.pathname + window.location.search,
++              tag: 'piclaw:test',
++              sourceLabel: WEB_PUSH_NOTIFICATION_SOURCE_LABEL,
++            });
++          } catch (error) {
++            console.warn('Failed to send a test web push notification:', error);
++          }
++        } else {
++          await disableWebPushSubscription(window, deviceId);
++        }
++      } catch (error) {
++        console.warn('Failed to sync web push notifications:', error);
++        if (next) {
++          alert('Notifications were enabled, but web push setup failed. If you are on iPhone or iPad, reopen PiClaw from the Home Screen and try again.');
++        }
++      }
++    }
+   }, [requestNotificationPermission]);
+ 
+-  const notify = useCallback((title, body) => {
++  const notify = useCallback((title, body, options = {}) => {
+     if (!notificationsEnabledRef.current) return false;
+     if (typeof Notification === 'undefined') return false;
+     if (Notification.permission !== 'granted') return false;
+     try {
+-      const notification = new Notification(title, { body });
++      const notification = new Notification(formatNotificationTitle(title, options?.sourceLabel || ''), { body });
+       notification.onclick = () => {
+         focusWindowBestEffort(window);
+       };
+@@ -75,10 +283,22 @@ export function useNotifications() {
+     }
+   }, []);
+ 
++  const shouldNotifyLocallyForChatId = useCallback((chatJid) => {
++    if (typeof window === 'undefined' || typeof document === 'undefined') return false;
++    return shouldNotifyLocallyForChat({
++      chatJid: typeof chatJid === 'string' && chatJid.trim() ? chatJid.trim() : currentChatJid,
++      runtimeWindow: window,
++      runtimeDocument: document,
++      deviceId: deviceIdRef.current || getOrCreateNotificationDeviceId(window),
++      clientId: clientIdRef.current || getOrCreateNotificationClientId(window),
++    });
++  }, [currentChatJid]);
++
+   return {
+     notificationsEnabled,
+     notificationPermission,
+     toggleNotifications,
+     notify,
++    shouldNotifyLocallyForChat: shouldNotifyLocallyForChatId,
+   };
+ }
+diff --git a/runtime/web/static/manifest.json b/runtime/web/static/manifest.json
+index 6c25751..d5e8a1c 100644
+--- a/runtime/web/static/manifest.json
++++ b/runtime/web/static/manifest.json
+@@ -1,4 +1,5 @@
+ {
++  "id": "/",
+   "name": "PiClaw",
+   "short_name": "PiClaw",
+   "description": "Slack-like interface for coding agents",
+diff --git a/target30/runtime/web/static/sw.js b/runtime/web/static/sw.js
+new file mode 100644
+index 0000000..5b96ffe
+--- /dev/null
++++ b/runtime/web/static/sw.js
+@@ -0,0 +1,77 @@
++function formatNotificationTitle(title, sourceLabel) {
++  const normalizedTitle = String(title || '').trim() || 'PiClaw';
++  const normalizedSource = String(sourceLabel || '').trim();
++  return normalizedSource ? `${normalizedTitle} [${normalizedSource}]` : normalizedTitle;
++}
++
++self.addEventListener('install', (event) => {
++  event.waitUntil(self.skipWaiting());
++});
++
++self.addEventListener('activate', (event) => {
++  event.waitUntil(self.clients.claim());
++});
++
++self.addEventListener('push', (event) => {
++  const defaultNotification = {
++    title: 'PiClaw',
++    body: 'You have a new update.',
++    tag: 'piclaw',
++    url: '/',
++    sourceLabel: '',
++  };
++
++  let payload = defaultNotification;
++  try {
++    const next = event.data?.json?.();
++    if (next && typeof next === 'object') {
++      payload = {
++        ...defaultNotification,
++        ...next,
++      };
++    }
++  } catch {
++    const text = event.data?.text?.();
++    if (text) {
++      payload = {
++        ...defaultNotification,
++        body: text,
++      };
++    }
++  }
++
++  event.waitUntil(self.registration.showNotification(formatNotificationTitle(payload.title, payload.sourceLabel), {
++    body: payload.body,
++    tag: payload.tag,
++    data: {
++      url: payload.url || '/',
++    },
++    icon: '/static/icon-192.png',
++    badge: '/static/icon-192.png',
++  }));
++});
++
++self.addEventListener('notificationclick', (event) => {
++  event.notification.close();
++  const targetUrl = event.notification?.data?.url || '/';
++
++  event.waitUntil((async () => {
++    const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
++    for (const client of clientList) {
++      const clientUrl = client.url || '';
++      if (clientUrl === targetUrl || clientUrl.startsWith(targetUrl) || targetUrl === '/') {
++        if ('focus' in client) {
++          await client.focus();
++        }
++        if ('navigate' in client && targetUrl && clientUrl !== targetUrl) {
++          await client.navigate(targetUrl).catch(() => {});
++        }
++        return;
++      }
++    }
++
++    if (self.clients.openWindow) {
++      await self.clients.openWindow(targetUrl);
++    }
++  })());
++});

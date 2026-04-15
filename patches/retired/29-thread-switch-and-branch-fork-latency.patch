@@ -1,0 +1,188 @@
+diff --git a/runtime/src/agent-pool.ts b/runtime/src/agent-pool.ts
+index efde4165..0fd3043f 100644
+--- a/runtime/src/agent-pool.ts
++++ b/runtime/src/agent-pool.ts
+@@ -90,7 +90,7 @@ export type {
+ } from "./agent-pool/contracts.js";
+ 
+ /** How long (ms) an idle session stays cached before being disposed. */
+-const DEFAULT_IDLE_TTL = 2 * 60 * 1000; // 2 minutes
++const DEFAULT_IDLE_TTL = 15 * 60 * 1000; // 15 minutes
+ const DEFAULT_CLEANUP_INTERVAL = 30 * 1000; // check every 30 seconds
+ 
+ function parsePositiveMs(value: string | undefined, fallback: number): number {
+diff --git a/runtime/src/agent-pool/runtime-facade.ts b/runtime/src/agent-pool/runtime-facade.ts
+index 4354d4f8..48ca2b1d 100644
+--- a/runtime/src/agent-pool/runtime-facade.ts
++++ b/runtime/src/agent-pool/runtime-facade.ts
+@@ -409,8 +409,13 @@ export class AgentRuntimeFacade {
+   }
+ 
+   async getAvailableModels(chatJid: string): Promise<AvailableModelsResult> {
+-    const session = (await this.options.getOrCreateRuntime(chatJid)).session;
+-    const registry = (session as AgentSession & { modelRegistry?: ModelRegistry }).modelRegistry ?? this.options.modelRegistry;
++    // Passive UI refreshes (thread switching, wake refresh, branch-picker
++    // updates) should not cold-start an AgentSession just to paint model state.
++    // When a runtime is already cached, return the full session-specific state.
++    // Otherwise, fall back to the shared registry so the UI can still render the
++    // available model list without paying multi-second runtime hydration costs.
++    const session = this.options.pool.get(chatJid)?.runtime.session ?? null;
++    const registry = (session as (AgentSession & { modelRegistry?: ModelRegistry }) | null)?.modelRegistry ?? this.options.modelRegistry;
+     registry.refresh();
+     const available = registry.getAvailable();
+     const modelOptions = available.map((model) => ({
+@@ -424,15 +429,15 @@ export class AgentRuntimeFacade {
+       reasoning: Boolean(model.reasoning),
+     }));
+     const models = modelOptions.map((model) => model.label);
+-    const currentModel = session.model ? `${session.model.provider}/${session.model.id}` : null;
+-    const thinkingLevel = session.thinkingLevel ?? null;
+-    const supportsThinking = typeof (session as AgentSession & { supportsThinking?: () => boolean }).supportsThinking === "function"
++    const currentModel = session?.model ? `${session.model.provider}/${session.model.id}` : null;
++    const thinkingLevel = session?.thinkingLevel ?? null;
++    const supportsThinking = session && typeof (session as AgentSession & { supportsThinking?: () => boolean }).supportsThinking === "function"
+       ? (session as AgentSession & { supportsThinking: () => boolean }).supportsThinking()
+-      : Boolean(session.model?.reasoning);
+-    const providerUsage = session.model?.provider
++      : Boolean(session?.model?.reasoning);
++    const providerUsage = session?.model?.provider
+       ? await getProviderUsage(this.options.authStorage, session.model.provider)
+       : null;
+-    const thinkingLevelLabel = thinkingLevel && session.model?.provider
++    const thinkingLevelLabel = thinkingLevel && session?.model?.provider
+       ? formatThinkingLevelForDisplay(thinkingLevel, session.model.provider)
+       : thinkingLevel;
+     return {
+diff --git a/runtime/test/agent-pool/agent-pool.test.ts b/runtime/test/agent-pool/agent-pool.test.ts
+index 195c1596..9d2ee8b8 100644
+--- a/runtime/test/agent-pool/agent-pool.test.ts
++++ b/runtime/test/agent-pool/agent-pool.test.ts
+@@ -264,7 +264,7 @@ test("agent pool evicts idle sessions and recreates them", async () => {
+   expect(createCalls).toBe(1);
+ 
+   const entry = (pool as any).pool.get("web:default");
+-  entry.lastUsed = Date.now() - 11 * 60 * 1000;
++  entry.lastUsed = Date.now() - 16 * 60 * 1000;
+   (pool as any).evictIdle();
+ 
+   expect(disposed).toBe(1);
+diff --git a/runtime/test/agent-pool/runtime-facade.test.ts b/runtime/test/agent-pool/runtime-facade.test.ts
+index 526195c6..3459bc63 100644
+--- a/runtime/test/agent-pool/runtime-facade.test.ts
++++ b/runtime/test/agent-pool/runtime-facade.test.ts
+@@ -96,6 +96,48 @@ test("AgentRuntimeFacade reports available models and context usage", async () =
+   });
+ });
+ 
++test("AgentRuntimeFacade returns registry-backed model options without hydrating a cold chat runtime", async () => {
++  let refreshCalls = 0;
++  let getOrCreateCalls = 0;
++
++  const fixture = createFacade({
++    getOrCreateRuntime: async () => {
++      getOrCreateCalls += 1;
++      throw new Error("cold model lookup should not hydrate a runtime");
++    },
++    modelRegistry: {
++      refresh: () => { refreshCalls += 1; },
++      getAvailable: () => [
++        { provider: "openai", id: "gpt-fast", name: "GPT Fast", contextWindow: 128000, reasoning: true },
++      ],
++      getAll: () => [],
++      registerProvider: () => {},
++    } as any,
++  });
++
++  const available = await fixture.facade.getAvailableModels("web:cold");
++  expect(getOrCreateCalls).toBe(0);
++  expect(refreshCalls).toBe(1);
++  expect(available).toEqual({
++    current: null,
++    models: ["openai/gpt-fast"],
++    model_options: [
++      {
++        label: "openai/gpt-fast",
++        provider: "openai",
++        id: "gpt-fast",
++        name: "GPT Fast",
++        context_window: 128000,
++        reasoning: true,
++      },
++    ],
++    thinking_level: null,
++    thinking_level_label: null,
++    supports_thinking: false,
++    provider_usage: null,
++  });
++});
++
+ test("AgentRuntimeFacade removes one queued follow-up and replays the remaining queue", async () => {
+   const prompts: Array<{ text: string; behavior: string }> = [];
+   const session = {
+diff --git a/runtime/test/web/app-window-actions.test.ts b/runtime/test/web/app-window-actions.test.ts
+index 87f95a64..60644f8c 100644
+--- a/runtime/test/web/app-window-actions.test.ts
++++ b/runtime/test/web/app-window-actions.test.ts
+@@ -16,15 +16,19 @@ afterEach(() => {
+   }
+ });
+ 
+-test('createSessionFromCompose refreshes branch state and navigates to the new chat', async () => {
++test('createSessionFromCompose navigates immediately to the branch-loader route', async () => {
+   const toasts: Array<[string, string, string, number]> = [];
+   const navigateCalls: string[] = [];
+   const refreshes: string[] = [];
++  let forkCalls = 0;
+ 
+   const created = await createSessionFromCompose({
+     currentChatJid: 'web:root',
+     chatOnlyMode: true,
+-    forkChatBranch: async () => ({ branch: { chat_jid: 'web:new', agent_name: 'feature' } }),
++    forkChatBranch: async () => {
++      forkCalls += 1;
++      return { branch: { chat_jid: 'web:new', agent_name: 'feature' } };
++    },
+     refreshActiveChatAgents: async () => { refreshes.push('active'); },
+     refreshCurrentChatBranches: async () => { refreshes.push('branches'); },
+     showIntentToast: (title: string, message: string, kind: string, timeout: number) => {
+@@ -35,9 +39,11 @@ test('createSessionFromCompose refreshes branch state and navigates to the new c
+   });
+ 
+   expect(created).toBe(true);
+-  expect(refreshes.sort()).toEqual(['active', 'branches']);
+-  expect(toasts).toContainEqual(['New branch created', 'Switched to @feature.', 'info', 2500]);
+-  expect(navigateCalls[0]).toContain('chat_jid=web%3Anew');
++  expect(forkCalls).toBe(0);
++  expect(refreshes).toEqual([]);
++  expect(toasts).toEqual([]);
++  expect(navigateCalls[0]).toContain('branch_loader=1');
++  expect(navigateCalls[0]).toContain('branch_source_chat_jid=web%3Aroot');
+ });
+ 
+ test('popOutPane transfers pane state and closes the source tab after navigation', async () => {
+diff --git a/runtime/web/src/ui/app-window-actions.ts b/runtime/web/src/ui/app-window-actions.ts
+index 5242d6df..d7954bef 100644
+--- a/runtime/web/src/ui/app-window-actions.ts
++++ b/runtime/web/src/ui/app-window-actions.ts
+@@ -53,6 +53,21 @@ export async function createSessionFromCompose(options: CreateSessionFromCompose
+     baseHref,
+   } = options;
+ 
++  // Fast path for the main web UI: navigate immediately to the lightweight
++  // branch-loader route so chat creation feels instant. The loader route reuses
++  // the existing async fork flow without blocking the current window on full
++  // runtime/session creation.
++  if (typeof navigate === 'function') {
++    try {
++      const loaderUrl = buildBranchLoaderUrl(baseHref, currentChatJid, { chatOnly: chatOnlyMode });
++      navigate(loaderUrl);
++      return true;
++    } catch (error) {
++      showIntentToast?.('Could not create branch', describeBranchOpenError(error), 'warning', 5000);
++      return false;
++    }
++  }
++
+   try {
+     const response = await forkChatBranch(currentChatJid);
+     const branch = response?.branch;

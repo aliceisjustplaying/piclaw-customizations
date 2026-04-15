@@ -1,0 +1,280 @@
+diff --git a/runtime/src/channels/web/messaging/agent-message-store.ts b/runtime/src/channels/web/messaging/agent-message-store.ts
+index 5df9d44..88cc1ef 100644
+--- a/runtime/src/channels/web/messaging/agent-message-store.ts
++++ b/runtime/src/channels/web/messaging/agent-message-store.ts
+@@ -12,6 +12,10 @@ import type { WebChannelLike } from "../core/web-channel-contracts.js";
+ import type { AttachmentInfo } from "../../../agent-pool/attachments.js";
+ import type { AgentEventEmitter } from "../sse/agent-events.js";
+ import { formatOutbound, type ChatChannel } from "../../../router.js";
++import { createLogger, debugSuppressedError } from "../../../utils/logger.js";
++import { sendStoredAgentReplyWebPushNotification } from "../push/web-push-service.js";
++
++const log = createLogger("web.agent-message-store");
+ 
+ function buildAttachmentBlocks(attachments: AttachmentInfo[]): {
+   mediaIds: number[];
+@@ -28,6 +32,19 @@ function buildAttachmentBlocks(attachments: AttachmentInfo[]): {
+   return { mediaIds, contentBlocks };
+ }
+ 
++function dispatchStoredReplyWebPush(
++  interaction: ReturnType<WebChannelLike["storeMessage"]>,
++  dispatchWebPushNotification?: (interaction: ReturnType<WebChannelLike["storeMessage"]>) => Promise<unknown>,
++): void {
++  if (!interaction) return;
++  void (dispatchWebPushNotification || sendStoredAgentReplyWebPushNotification)(interaction).catch((error) => {
++    debugSuppressedError(log, "Failed to dispatch Web Push for stored agent reply.", error, {
++      chatJid: interaction.chat_jid,
++      rowId: interaction.id,
++    });
++  });
++}
++
+ /** Persist the accumulated agent turn (text + attachments) to the database. */
+ export function storeAgentTurn(
+   channel: WebChannelLike,
+@@ -44,6 +61,7 @@ export function storeAgentTurn(
+     skipPlaceholder?: boolean;
+     /** True only for the terminal persisted assistant message of a run. */
+     isTerminalAgentReply?: boolean;
++    dispatchWebPushNotification?: (interaction: ReturnType<WebChannelLike["storeMessage"]>) => Promise<unknown>;
+   }
+ ): boolean {
+   const { mediaIds, contentBlocks } = buildAttachmentBlocks(params.attachments);
+@@ -71,6 +89,9 @@ export function storeAgentTurn(
+           thread_id: params.threadId ?? null,
+           row_id: placeholderId,
+         });
++        if (params.isTerminalAgentReply) {
++          dispatchStoredReplyWebPush(updated, params.dispatchWebPushNotification);
++        }
+         return true;
+       }
+     }
+@@ -83,6 +104,9 @@ export function storeAgentTurn(
+   });
+   if (interaction) {
+     emitter.response(interaction);
++    if (params.isTerminalAgentReply) {
++      dispatchStoredReplyWebPush(interaction, params.dispatchWebPushNotification);
++    }
+     return true;
+   }
+   return false;
+diff --git a/runtime/src/channels/web/push/web-push-service.ts b/runtime/src/channels/web/push/web-push-service.ts
+index 3ed6678..d1268e6 100644
+--- a/runtime/src/channels/web/push/web-push-service.ts
++++ b/runtime/src/channels/web/push/web-push-service.ts
+@@ -4,6 +4,7 @@
+ 
+ import { createPrivateKey } from "node:crypto";
+ 
++import type { InteractionRow } from "../../../db.js";
+ import { createLogger, debugSuppressedError } from "../../../utils/logger.js";
+ import {
+   ensureStoredVapidKeys,
+@@ -115,6 +116,46 @@ function isExpiredSubscriptionError(error: unknown): boolean {
+   return statusCode === 404 || statusCode === 410;
+ }
+ 
++function buildReplyNotificationBody(interaction: InteractionRow): string {
++  const content = String(interaction?.data?.content || "").trim();
++  if (content) {
++    return content.replace(/\s+/g, " ").slice(0, 200);
++  }
++  const contentBlocks = Array.isArray(interaction?.data?.content_blocks)
++    ? interaction.data.content_blocks
++    : [];
++  if (contentBlocks.length > 0) {
++    return "Sent an attachment.";
++  }
++  return "You have a new reply.";
++}
++
++export function buildStoredAgentReplyWebPushNotification(interaction: InteractionRow): WebPushNotificationPayload | null {
++  if (!interaction || typeof interaction !== "object") return null;
++  const chatJid = typeof interaction.chat_jid === "string" ? interaction.chat_jid.trim() : "";
++  if (!chatJid) return null;
++  const rowId = Number(interaction.id);
++  const suffix = rowId > 0 ? `#msg-${rowId}` : "";
++  return {
++    title: "PiClaw reply",
++    body: buildReplyNotificationBody(interaction),
++    url: `/?chat_jid=${encodeURIComponent(chatJid)}${suffix}`,
++    tag: `piclaw:reply:${chatJid}`,
++    sourceLabel: "Web Push",
++  };
++}
++
++export async function sendStoredAgentReplyWebPushNotification(
++  interaction: InteractionRow,
++  options: SendStoredWebPushNotificationOptions = {},
++): Promise<StoredWebPushSendResult> {
++  const payload = buildStoredAgentReplyWebPushNotification(interaction);
++  if (!payload) {
++    return { attempted: 0, sent: 0, removed: 0, failed: 0 };
++  }
++  return await sendStoredWebPushNotification(payload, options);
++}
++
+ export async function sendStoredWebPushNotification(
+   payload: WebPushNotificationPayload,
+   options: SendStoredWebPushNotificationOptions = {},
+diff --git a/runtime/test/channels/web/agent-message-store.test.ts b/runtime/test/channels/web/agent-message-store.test.ts
+new file mode 100644
+index 0000000..eacbc82
+--- /dev/null
++++ b/runtime/test/channels/web/agent-message-store.test.ts
+@@ -0,0 +1,79 @@
++import { describe, expect, test } from "bun:test";
++
++import { storeAgentTurn } from "../../../src/channels/web/messaging/agent-message-store.js";
++
++describe("agent message store", () => {
++  test("dispatches Web Push for terminal persisted replies", async () => {
++    const interaction = {
++      id: 101,
++      chat_jid: "web:default",
++      timestamp: "2026-04-14T22:10:00.000Z",
++      data: {
++        content: "Final reply",
++      },
++    } as any;
++
++    const deliveries: any[] = [];
++    const emitter = {
++      response(payload: any) {
++        deliveries.push({ type: "response", payload });
++      },
++    } as any;
++
++    const pushCalls: any[] = [];
++    const ok = storeAgentTurn({
++      consumeQueuedFollowupPlaceholder: () => null,
++      replaceQueuedFollowupPlaceholder: () => null,
++      broadcastEvent: () => {},
++      storeMessage: () => interaction,
++    } as any, emitter, {
++      chatJid: "web:default",
++      text: "Final reply",
++      attachments: [],
++      channelName: "web" as any,
++      isTerminalAgentReply: true,
++      dispatchWebPushNotification: async (payload) => {
++        pushCalls.push(payload);
++      },
++    });
++
++    expect(ok).toBe(true);
++    expect(deliveries).toHaveLength(1);
++    await Promise.resolve();
++    expect(pushCalls).toEqual([interaction]);
++  });
++
++  test("does not dispatch Web Push for non-terminal replies", async () => {
++    const interaction = {
++      id: 102,
++      chat_jid: "web:default",
++      timestamp: "2026-04-14T22:11:00.000Z",
++      data: {
++        content: "Intermediate reply",
++      },
++    } as any;
++
++    const pushCalls: any[] = [];
++    const ok = storeAgentTurn({
++      consumeQueuedFollowupPlaceholder: () => null,
++      replaceQueuedFollowupPlaceholder: () => null,
++      broadcastEvent: () => {},
++      storeMessage: () => interaction,
++    } as any, {
++      response: () => {},
++    } as any, {
++      chatJid: "web:default",
++      text: "Intermediate reply",
++      attachments: [],
++      channelName: "web" as any,
++      isTerminalAgentReply: false,
++      dispatchWebPushNotification: async (payload) => {
++        pushCalls.push(payload);
++      },
++    });
++
++    expect(ok).toBe(true);
++    await Promise.resolve();
++    expect(pushCalls).toEqual([]);
++  });
++});
+diff --git a/runtime/test/channels/web/web-push-service.test.ts b/runtime/test/channels/web/web-push-service.test.ts
+index b3ed211..a3d1941 100644
+--- a/runtime/test/channels/web/web-push-service.test.ts
++++ b/runtime/test/channels/web/web-push-service.test.ts
+@@ -4,7 +4,12 @@ import { join } from "node:path";
+ import { tmpdir } from "node:os";
+ 
+ import { upsertStoredWebPushSubscription, listStoredWebPushSubscriptions } from "../../../src/channels/web/push/web-push-store.js";
+-import { sendStoredWebPushNotification, sendStoredWebPushTestNotification } from "../../../src/channels/web/push/web-push-service.js";
++import {
++  buildStoredAgentReplyWebPushNotification,
++  sendStoredAgentReplyWebPushNotification,
++  sendStoredWebPushNotification,
++  sendStoredWebPushTestNotification,
++} from "../../../src/channels/web/push/web-push-service.js";
+ 
+ const tempDirs: string[] = [];
+ 
+@@ -103,6 +108,54 @@ describe("web push service", () => {
+     ]);
+   });
+ 
++  test("builds a reply notification payload from a stored interaction", () => {
++    const payload = buildStoredAgentReplyWebPushNotification({
++      id: 42,
++      chat_jid: "web:default:branch:abc",
++      timestamp: "2026-04-14T22:00:00.000Z",
++      data: {
++        content: "Hello from PiClaw\n\nwith extra whitespace.",
++      },
++    } as any);
++
++    expect(payload).toEqual({
++      title: "PiClaw reply",
++      body: "Hello from PiClaw with extra whitespace.",
++      url: "/?chat_jid=web%3Adefault%3Abranch%3Aabc#msg-42",
++      tag: "piclaw:reply:web:default:branch:abc",
++      sourceLabel: "Web Push",
++    });
++  });
++
++  test("sends a reply notification built from a stored interaction", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(7), { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    const result = await sendStoredAgentReplyWebPushNotification({
++      id: 77,
++      chat_jid: "web:default",
++      timestamp: "2026-04-14T22:01:00.000Z",
++      data: {
++        content: "Reply body",
++      },
++    } as any, {
++      baseDir,
++      sendNotification: async (_subscription, payload) => {
++        deliveries.push(JSON.parse(payload));
++      },
++    });
++
++    expect(result).toEqual({ attempted: 1, sent: 1, removed: 0, failed: 0 });
++    expect(deliveries).toEqual([{
++      title: "PiClaw reply",
++      body: "Reply body",
++      url: "/?chat_jid=web%3Adefault#msg-77",
++      tag: "piclaw:reply:web:default",
++      sourceLabel: "Web Push",
++    }]);
++  });
++
+   test("adds a default source marker to test notifications", async () => {
+     const baseDir = createTempPushDir();
+     upsertStoredWebPushSubscription(createSubscription(9), { baseDir });

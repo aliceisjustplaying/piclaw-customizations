@@ -1,0 +1,622 @@
+diff --git a/bun.lock b/bun.lock
+index 9f9afd5..911c28d 100644
+--- a/bun.lock
++++ b/bun.lock
+@@ -26,6 +26,7 @@
+         "pptxviewjs": "^1.1.8",
+         "preact": "10.29.0",
+         "qrcode-terminal": "0.12.0",
++        "web-push": "3.6.7",
+         "xlsx": "^0.18.5",
+       },
+       "devDependencies": {
+@@ -585,6 +586,8 @@
+ 
+     "argparse": ["argparse@2.0.1", "", {}, "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="],
+ 
++    "asn1.js": ["asn1.js@5.4.1", "", { "dependencies": { "bn.js": "^4.0.0", "inherits": "^2.0.1", "minimalistic-assert": "^1.0.0", "safer-buffer": "^2.1.0" } }, "sha512-+I//4cYPccV8LdmBLiX8CYvf9Sp3vQsrqu2QNXRcrbiWvcx/UdlFiqUJJzxRQxgsZmvhXhn4cSKeSmoFjVdupA=="],
++
+     "asn1js": ["asn1js@3.0.7", "", { "dependencies": { "pvtsutils": "^1.3.6", "pvutils": "^1.1.3", "tslib": "^2.8.1" } }, "sha512-uLvq6KJu04qoQM6gvBfKFjlh6Gl0vOKQuR5cJMDHQkmwfMOQeN3F3SHCv9SNYSL+CRoHvOGFfllDlVz03GQjvQ=="],
+ 
+     "assemblyscript": ["assemblyscript@0.28.10", "", { "dependencies": { "binaryen": "123.0.0-nightly.20250530", "long": "^5.2.4" }, "bin": { "asc": "bin/asc.js", "asinit": "bin/asinit.js" } }, "sha512-MGqjjNlPMmcWjfnme3cGFKmbBY/rj0bmE4M1Wg8tNqmHusA1PAjOMgWK67KWBK63lmvotFDoP8e5N0URxKlR/Q=="],
+@@ -607,6 +610,8 @@
+ 
+     "binaryen": ["binaryen@123.0.0-nightly.20250530", "", { "bin": { "wasm-as": "bin/wasm-as", "wasm2js": "bin/wasm2js", "wasm-dis": "bin/wasm-dis", "wasm-opt": "bin/wasm-opt", "wasm-merge": "bin/wasm-merge", "wasm-shell": "bin/wasm-shell", "wasm-reduce": "bin/wasm-reduce", "wasm-metadce": "bin/wasm-metadce", "wasm-ctor-eval": "bin/wasm-ctor-eval" } }, "sha512-d1zPHBN5YlOd3Ff+OUxvVExuFeh8heSnqe+X3bjItFxGLvn4VGBKmrvv7pgy/cRhrIUGuPW138iaWfDhwjyDqg=="],
+ 
++    "bn.js": ["bn.js@4.12.3", "", {}, "sha512-fGTi3gxV/23FTYdAoUtLYp6qySe2KE3teyZitipKNRuVYcBkoP/bB3guXN/XVKUe9mxCHXnc9C4ocyz8OmgN0g=="],
++
+     "body-parser": ["body-parser@2.2.2", "", { "dependencies": { "bytes": "^3.1.2", "content-type": "^1.0.5", "debug": "^4.4.3", "http-errors": "^2.0.0", "iconv-lite": "^0.7.0", "on-finished": "^2.4.1", "qs": "^6.14.1", "raw-body": "^3.0.1", "type-is": "^2.0.1" } }, "sha512-oP5VkATKlNwcgvxi0vM0p/D3n2C3EReYVX+DNYs5TjZFn/oQt2j+4sVJtSMr18pdRr8wjTcBl6LoV+FUwzPmNA=="],
+ 
+     "bowser": ["bowser@2.14.1", "", {}, "sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg=="],
+@@ -929,6 +934,8 @@
+ 
+     "http-proxy-agent": ["http-proxy-agent@7.0.2", "", { "dependencies": { "agent-base": "^7.1.0", "debug": "^4.3.4" } }, "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig=="],
+ 
++    "http_ece": ["http_ece@1.2.0", "", {}, "sha512-JrF8SSLVmcvc5NducxgyOrKXe3EsyHMgBFgSaIUGmArKe+rwr0uphRkRXvwiom3I+fpIfoItveHrfudL8/rxuA=="],
++
+     "https-proxy-agent": ["https-proxy-agent@7.0.6", "", { "dependencies": { "agent-base": "^7.1.2", "debug": "4" } }, "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw=="],
+ 
+     "iconv-lite": ["iconv-lite@0.6.3", "", { "dependencies": { "safer-buffer": ">= 2.1.2 < 3.0.0" } }, "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw=="],
+@@ -1035,8 +1042,12 @@
+ 
+     "mime-types": ["mime-types@3.0.2", "", { "dependencies": { "mime-db": "^1.54.0" } }, "sha512-Lbgzdk0h4juoQ9fCKXW4by0UJqj+nOOrI9MJ1sSj4nI8aI2eo1qmvQEie4VD1glsS250n15LsWsYtCugiStS5A=="],
+ 
++    "minimalistic-assert": ["minimalistic-assert@1.0.1", "", {}, "sha512-UtJcAD4yEaGtjPezWuO9wC4nwUnVH/8/Im3yEHQP4b67cXlD/Qr9hdITCU1xDbSEXg2XKNaP8jsReV7vQd00/A=="],
++
+     "minimatch": ["minimatch@10.2.4", "", { "dependencies": { "brace-expansion": "^5.0.2" } }, "sha512-oRjTw/97aTBN0RHbYCdtF1MQfvusSIBQM0IZEgzl6426+8jSC0nF1a/GmnVLpfB9yyr6g6FTqWqiZVbxrtaCIg=="],
+ 
++    "minimist": ["minimist@1.2.8", "", {}, "sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA=="],
++
+     "minipass": ["minipass@7.1.3", "", {}, "sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A=="],
+ 
+     "mkdirp": ["mkdirp@1.0.4", "", { "bin": { "mkdirp": "bin/cmd.js" } }, "sha512-vVqVZQyf3WLx2Shd0qJ9xuvqgAyKPLAiqITEtqW0oIUjzo3PePDd6fW9iFz30ef7Ysp/oiWqbhszeGWW2T6Gzw=="],
+@@ -1315,6 +1326,8 @@
+ 
+     "w3c-keyname": ["w3c-keyname@2.2.8", "", {}, "sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ=="],
+ 
++    "web-push": ["web-push@3.6.7", "", { "dependencies": { "asn1.js": "^5.3.0", "http_ece": "1.2.0", "https-proxy-agent": "^7.0.0", "jws": "^4.0.0", "minimist": "^1.2.5" }, "bin": { "web-push": "src/cli.js" } }, "sha512-OpiIUe8cuGjrj3mMBFWY+e4MMIkW3SVT+7vEIjvD9kejGUypv8GPDf84JdPWskK8zMRIJ6xYGm+Kxr8YkPyA0A=="],
++
+     "web-streams-polyfill": ["web-streams-polyfill@3.3.3", "", {}, "sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw=="],
+ 
+     "which": ["which@2.0.2", "", { "dependencies": { "isexe": "^2.0.0" }, "bin": { "node-which": "./bin/node-which" } }, "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA=="],
+diff --git a/package.json b/package.json
+index 55ca110..0980cb1 100644
+--- a/package.json
++++ b/package.json
+@@ -100,6 +100,7 @@
+     "pptxviewjs": "^1.1.8",
+     "preact": "10.29.0",
+     "qrcode-terminal": "0.12.0",
++    "web-push": "3.6.7",
+     "xlsx": "^0.18.5"
+   },
+   "devDependencies": {
+diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
+index 9e56c22..79fbfe5 100644
+--- a/runtime/src/channels/web/http/dispatch-agent.ts
++++ b/runtime/src/channels/web/http/dispatch-agent.ts
+@@ -6,6 +6,7 @@ import type { WebChannelLike } from "../core/web-channel-contracts.js";
+ import {
+   handleWebPushSubscriptionDelete,
+   handleWebPushSubscriptionUpsert,
++  handleWebPushTest,
+   handleWebPushVapidPublicKey,
+ } from "../push/web-push-routes.js";
+ 
+@@ -242,6 +243,11 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+     path: "/agent/push/subscription",
+     handle: (_channel, req) => handleWebPushSubscriptionDelete(req),
+   },
++  {
++    method: "POST",
++    path: "/agent/push/test",
++    handle: (_channel, req) => handleWebPushTest(req),
++  },
+   {
+     method: "POST",
+     path: "/agent/side-prompt",
+diff --git a/runtime/src/channels/web/push/web-push-routes.ts b/runtime/src/channels/web/push/web-push-routes.ts
+index 754d60f..87b473b 100644
+--- a/runtime/src/channels/web/push/web-push-routes.ts
++++ b/runtime/src/channels/web/push/web-push-routes.ts
+@@ -7,6 +7,10 @@ import {
+   removeStoredWebPushSubscription,
+   upsertStoredWebPushSubscription,
+ } from "./web-push-store.js";
++import {
++  sendStoredWebPushTestNotification,
++  type SendStoredWebPushNotificationOptions,
++} from "./web-push-service.js";
+ 
+ function resolveUserAgent(req: Request): string | null {
+   const value = req.headers.get("user-agent");
+@@ -46,3 +50,25 @@ export async function handleWebPushSubscriptionDelete(req: Request): Promise<Res
+   const removed = removeStoredWebPushSubscription(endpoint);
+   return Response.json({ ok: true, removed });
+ }
++
++export async function handleWebPushTest(
++  req: Request,
++  options: SendStoredWebPushNotificationOptions = {},
++): Promise<Response> {
++  try {
++    const body = await req.json().catch(() => null);
++    const payload = body && typeof body === "object" ? body : {};
++    const result = await sendStoredWebPushTestNotification({
++      ...options,
++      title: typeof payload.title === "string" ? payload.title : undefined,
++      body: typeof payload.body === "string" ? payload.body : undefined,
++      url: typeof payload.url === "string" ? payload.url : undefined,
++      tag: typeof payload.tag === "string" ? payload.tag : undefined,
++      urgency: options.urgency || "high",
++      ttl: options.ttl ?? 120,
++    });
++    return Response.json({ ok: true, ...result });
++  } catch (error) {
++    return Response.json({ error: error instanceof Error ? error.message : "Failed to send test push notification." }, { status: 500 });
++  }
++}
+diff --git a/runtime/src/channels/web/push/web-push-service.ts b/runtime/src/channels/web/push/web-push-service.ts
+new file mode 100644
+index 0000000..ca8a781
+--- /dev/null
++++ b/runtime/src/channels/web/push/web-push-service.ts
+@@ -0,0 +1,175 @@
++/**
++ * web/push/web-push-service.ts – outbound Web Push delivery helpers.
++ */
++
++import { createPrivateKey } from "node:crypto";
++
++import { createLogger, debugSuppressedError } from "../../../utils/logger.js";
++import {
++  ensureStoredVapidKeys,
++  listStoredWebPushSubscriptions,
++  removeStoredWebPushSubscription,
++  type StoredWebPushSubscription,
++} from "./web-push-store.js";
++
++const log = createLogger("web.push.service");
++const DEFAULT_VAPID_SUBJECT = "mailto:piclaw@localhost.invalid";
++
++export interface WebPushNotificationPayload {
++  title: string;
++  body: string;
++  url?: string;
++  tag?: string;
++}
++
++export interface StoredWebPushSendResult {
++  attempted: number;
++  sent: number;
++  removed: number;
++  failed: number;
++}
++
++export interface SendStoredWebPushNotificationOptions {
++  baseDir?: string;
++  vapidSubject?: string;
++  ttl?: number;
++  urgency?: "very-low" | "low" | "normal" | "high";
++  sendNotification?: (
++    subscription: StoredWebPushSubscription,
++    payload: string,
++    options: {
++      TTL: number;
++      urgency: "very-low" | "low" | "normal" | "high";
++      vapidDetails: {
++        subject: string;
++        publicKey: string;
++        privateKey: string;
++      };
++    },
++  ) => Promise<unknown>;
++}
++
++function resolvePushPath(url: string | undefined): string {
++  const value = typeof url === "string" ? url.trim() : "";
++  if (!value) return "/";
++  if (value.startsWith("/")) return value;
++  return `/${value}`;
++}
++
++function normalizePayload(payload: WebPushNotificationPayload): WebPushNotificationPayload {
++  const title = typeof payload?.title === "string" && payload.title.trim()
++    ? payload.title.trim()
++    : "PiClaw";
++  const body = typeof payload?.body === "string" && payload.body.trim()
++    ? payload.body.trim()
++    : "You have a new update.";
++  const tag = typeof payload?.tag === "string" && payload.tag.trim()
++    ? payload.tag.trim()
++    : "piclaw";
++  return {
++    title,
++    body,
++    tag,
++    url: resolvePushPath(payload?.url),
++  };
++}
++
++function getStoredVapidDetails(baseDir?: string, vapidSubject?: string): {
++  subject: string;
++  publicKey: string;
++  privateKey: string;
++} {
++  const keys = ensureStoredVapidKeys(baseDir);
++  const privateJwk = createPrivateKey(keys.privateKeyPem).export({ format: "jwk" }) as JsonWebKey;
++  const privateKey = typeof privateJwk.d === "string" ? privateJwk.d : "";
++  if (!privateKey) {
++    throw new Error("Stored VAPID key is missing the private key scalar.");
++  }
++
++  return {
++    subject: typeof vapidSubject === "string" && vapidSubject.trim() ? vapidSubject.trim() : DEFAULT_VAPID_SUBJECT,
++    publicKey: keys.publicKey,
++    privateKey,
++  };
++}
++
++async function loadSendNotificationImpl(): Promise<NonNullable<SendStoredWebPushNotificationOptions["sendNotification"]>> {
++  const mod = await import("web-push");
++  const api = (mod as Record<string, any>).default && typeof (mod as Record<string, any>).default === "object"
++    ? (mod as Record<string, any>).default
++    : mod;
++  const sendNotification = api?.sendNotification;
++  if (typeof sendNotification !== "function") {
++    throw new Error("web-push sendNotification is unavailable.");
++  }
++  return sendNotification.bind(api);
++}
++
++function isExpiredSubscriptionError(error: unknown): boolean {
++  const statusCode = Number((error as { statusCode?: unknown } | null)?.statusCode);
++  return statusCode === 404 || statusCode === 410;
++}
++
++export async function sendStoredWebPushNotification(
++  payload: WebPushNotificationPayload,
++  options: SendStoredWebPushNotificationOptions = {},
++): Promise<StoredWebPushSendResult> {
++  const subscriptions = listStoredWebPushSubscriptions(options.baseDir);
++  if (subscriptions.length === 0) {
++    return { attempted: 0, sent: 0, removed: 0, failed: 0 };
++  }
++
++  const normalizedPayload = normalizePayload(payload);
++  const serializedPayload = JSON.stringify(normalizedPayload);
++  const vapidDetails = getStoredVapidDetails(options.baseDir, options.vapidSubject);
++  const sendNotification = options.sendNotification || await loadSendNotificationImpl();
++
++  let sent = 0;
++  let removed = 0;
++  let failed = 0;
++
++  for (const subscription of subscriptions) {
++    try {
++      await sendNotification(subscription, serializedPayload, {
++        TTL: Number.isFinite(options.ttl) ? Number(options.ttl) : 60,
++        urgency: options.urgency || "normal",
++        vapidDetails,
++      });
++      sent += 1;
++    } catch (error) {
++      if (isExpiredSubscriptionError(error)) {
++        if (removeStoredWebPushSubscription(subscription.endpoint, options.baseDir)) {
++          removed += 1;
++        }
++        log.info("Removed expired web push subscription after delivery failure.", {
++          endpoint: subscription.endpoint,
++          statusCode: (error as { statusCode?: unknown } | null)?.statusCode,
++        });
++        continue;
++      }
++
++      failed += 1;
++      debugSuppressedError(log, "Web push delivery failed for a stored subscription.", error, {
++        endpoint: subscription.endpoint,
++      });
++    }
++  }
++
++  return {
++    attempted: subscriptions.length,
++    sent,
++    removed,
++    failed,
++  };
++}
++
++export async function sendStoredWebPushTestNotification(
++  options: SendStoredWebPushNotificationOptions & { title?: string; body?: string; url?: string; tag?: string } = {},
++): Promise<StoredWebPushSendResult> {
++  return await sendStoredWebPushNotification({
++    title: options.title || "PiClaw notifications enabled",
++    body: options.body || "Web Push is configured for this device.",
++    url: options.url || "/",
++    tag: options.tag || "piclaw:test",
++  }, options);
++}
+diff --git a/runtime/src/types/web-push.d.ts b/runtime/src/types/web-push.d.ts
+new file mode 100644
+index 0000000..d6dce51
+--- /dev/null
++++ b/runtime/src/types/web-push.d.ts
+@@ -0,0 +1,26 @@
++declare module "web-push" {
++  export interface WebPushVapidDetails {
++    subject: string;
++    publicKey: string;
++    privateKey: string;
++  }
++
++  export interface WebPushRequestOptions {
++    TTL?: number;
++    urgency?: "very-low" | "low" | "normal" | "high";
++    vapidDetails?: WebPushVapidDetails;
++    [key: string]: unknown;
++  }
++
++  export function sendNotification(
++    subscription: unknown,
++    payload?: string | Buffer | null,
++    options?: WebPushRequestOptions,
++  ): Promise<unknown>;
++
++  const api: {
++    sendNotification: typeof sendNotification;
++  };
++
++  export default api;
++}
+diff --git a/runtime/test/channels/web/web-push-routes.test.ts b/runtime/test/channels/web/web-push-routes.test.ts
+new file mode 100644
+index 0000000..3d3e92d
+--- /dev/null
++++ b/runtime/test/channels/web/web-push-routes.test.ts
+@@ -0,0 +1,72 @@
++import { afterEach, describe, expect, test } from "bun:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
++
++import { upsertStoredWebPushSubscription } from "../../../src/channels/web/push/web-push-store.js";
++import { handleWebPushTest } from "../../../src/channels/web/push/web-push-routes.js";
++
++const tempDirs: string[] = [];
++
++function createTempPushDir(): string {
++  const dir = mkdtempSync(join(tmpdir(), "piclaw-web-push-routes-"));
++  tempDirs.push(dir);
++  return dir;
++}
++
++afterEach(() => {
++  while (tempDirs.length > 0) {
++    const dir = tempDirs.pop();
++    if (!dir) continue;
++    rmSync(dir, { recursive: true, force: true });
++  }
++});
++
++describe("web push routes", () => {
++  test("sends a test notification using stored subscriptions", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription({
++      endpoint: "https://push.example.test/device/1",
++      expirationTime: null,
++      keys: {
++        auth: "auth-token",
++        p256dh: "p256dh-token",
++      },
++    }, { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    const req = new Request("https://example.com/agent/push/test", {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({
++        title: "Custom title",
++        body: "Custom body",
++        url: "/?chat_jid=web%3Atest",
++        tag: "piclaw:custom",
++      }),
++    });
++
++    const response = await handleWebPushTest(req, {
++      baseDir,
++      sendNotification: async (subscription, payload, options) => {
++        deliveries.push({
++          endpoint: subscription.endpoint,
++          payload: JSON.parse(payload),
++          options,
++        });
++      },
++    });
++
++    expect(response.status).toBe(200);
++    expect(await response.json()).toEqual({ ok: true, attempted: 1, sent: 1, removed: 0, failed: 0 });
++    expect(deliveries).toHaveLength(1);
++    expect(deliveries[0]?.payload).toEqual({
++      title: "Custom title",
++      body: "Custom body",
++      url: "/?chat_jid=web%3Atest",
++      tag: "piclaw:custom",
++    });
++    expect(((deliveries[0]?.options as any)?.TTL)).toBe(120);
++    expect(((deliveries[0]?.options as any)?.urgency)).toBe("high");
++  });
++});
+diff --git a/runtime/test/channels/web/web-push-service.test.ts b/runtime/test/channels/web/web-push-service.test.ts
+new file mode 100644
+index 0000000..33f532d
+--- /dev/null
++++ b/runtime/test/channels/web/web-push-service.test.ts
+@@ -0,0 +1,105 @@
++import { afterEach, describe, expect, test } from "bun:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
++
++import { upsertStoredWebPushSubscription, listStoredWebPushSubscriptions } from "../../../src/channels/web/push/web-push-store.js";
++import { sendStoredWebPushNotification } from "../../../src/channels/web/push/web-push-service.js";
++
++const tempDirs: string[] = [];
++
++function createTempPushDir(): string {
++  const dir = mkdtempSync(join(tmpdir(), "piclaw-web-push-service-"));
++  tempDirs.push(dir);
++  return dir;
++}
++
++afterEach(() => {
++  while (tempDirs.length > 0) {
++    const dir = tempDirs.pop();
++    if (!dir) continue;
++    rmSync(dir, { recursive: true, force: true });
++  }
++});
++
++function createSubscription(id: number) {
++  return {
++    endpoint: `https://push.example.test/device/${id}`,
++    expirationTime: null,
++    keys: {
++      auth: `auth-${id}`,
++      p256dh: `p256dh-${id}`,
++    },
++  };
++}
++
++describe("web push service", () => {
++  test("sends payloads with derived VAPID details", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(1), { baseDir });
++
++    const deliveries: Array<{ endpoint: string; payload: Record<string, unknown>; options: Record<string, unknown> }> = [];
++    const result = await sendStoredWebPushNotification({
++      title: "Hello",
++      body: "World",
++      url: "/?chat_jid=web%3Adefault",
++      tag: "piclaw:test",
++    }, {
++      baseDir,
++      vapidSubject: "mailto:test@example.com",
++      ttl: 30,
++      urgency: "high",
++      sendNotification: async (subscription, payload, options) => {
++        deliveries.push({
++          endpoint: subscription.endpoint,
++          payload: JSON.parse(payload),
++          options,
++        });
++      },
++    });
++
++    expect(result).toEqual({ attempted: 1, sent: 1, removed: 0, failed: 0 });
++    expect(deliveries).toHaveLength(1);
++    expect(deliveries[0]?.endpoint).toBe("https://push.example.test/device/1");
++    expect(deliveries[0]?.payload).toEqual({
++      title: "Hello",
++      body: "World",
++      url: "/?chat_jid=web%3Adefault",
++      tag: "piclaw:test",
++    });
++    expect(deliveries[0]?.options.TTL).toBe(30);
++    expect(deliveries[0]?.options.urgency).toBe("high");
++    expect((deliveries[0]?.options.vapidDetails as any)?.subject).toBe("mailto:test@example.com");
++    expect((deliveries[0]?.options.vapidDetails as any)?.publicKey).toBeTruthy();
++    expect((deliveries[0]?.options.vapidDetails as any)?.privateKey).toBeTruthy();
++    expect(String((deliveries[0]?.options.vapidDetails as any)?.privateKey)).not.toContain("BEGIN");
++  });
++
++  test("removes expired subscriptions and keeps non-expired failures", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(1), { baseDir });
++    upsertStoredWebPushSubscription(createSubscription(2), { baseDir });
++    upsertStoredWebPushSubscription(createSubscription(3), { baseDir });
++
++    const result = await sendStoredWebPushNotification({
++      title: "Hello again",
++      body: "Testing cleanup",
++    }, {
++      baseDir,
++      sendNotification: async (subscription) => {
++        if (subscription.endpoint.endsWith("/1")) {
++          throw { statusCode: 410 };
++        }
++        if (subscription.endpoint.endsWith("/2")) {
++          throw new Error("temporary failure");
++        }
++      },
++    });
++
++    expect(result).toEqual({ attempted: 3, sent: 1, removed: 1, failed: 1 });
++    expect(listStoredWebPushSubscriptions(baseDir).map((entry) => entry.endpoint)).toEqual([
++      "https://push.example.test/device/2",
++      "https://push.example.test/device/3",
++    ]);
++  });
++});
+diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
+index e4b6a52..0d9acc0 100644
+--- a/runtime/web/src/api.ts
++++ b/runtime/web/src/api.ts
+@@ -172,6 +172,9 @@ export async function getChatBranches(rootChatJid = null, options = {}) {
+     const params = new URLSearchParams();
+     if (rootChatJid) params.set('root_chat_jid', String(rootChatJid));
+     if (options?.includeArchived) params.set('include_archived', '1');
++    if (options?.prewarmRecent) params.set('prewarm_recent', '1');
++    if (Number.isFinite(options?.prewarmLimit)) params.set('prewarm_limit', String(options.prewarmLimit));
++    if (options?.excludeChatJid) params.set('exclude_chat_jid', String(options.excludeChatJid));
+     const query = params.toString() ? `?${params.toString()}` : '';
+     return request(`/agent/branches${query}`);
+ }
+@@ -262,6 +265,13 @@ export async function deleteWebPushSubscription(subscription) {
+     });
+ }
+ 
++export async function sendWebPushTestNotification(payload = {}) {
++    return request('/agent/push/test', {
++        method: 'POST',
++        body: JSON.stringify(payload || {}),
++    });
++}
++
+ /**
+  * Get available agents / current agent roster.
+  */
+diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
+index 522d9c6..f5dc384 100644
+--- a/runtime/web/src/ui/use-notifications.ts
++++ b/runtime/web/src/ui/use-notifications.ts
+@@ -1,4 +1,4 @@
+-import { deleteWebPushSubscription, getWebPushPublicKey, saveWebPushSubscription } from '../api.js';
++import { deleteWebPushSubscription, getWebPushPublicKey, saveWebPushSubscription, sendWebPushTestNotification } from '../api.js';
+ import { useCallback, useEffect, useRef, useState } from '../vendor/preact-htm.js';
+ import { getLocalStorageBoolean, setLocalStorageItem } from '../utils/storage.js';
+ import { focusWindowBestEffort } from './notification-focus.js';
+@@ -71,8 +71,24 @@ export function useNotifications() {
+     const enabled = getLocalStorageBoolean('notificationsEnabled', false);
+     notificationsEnabledRef.current = enabled;
+     setNotificationsEnabled(enabled);
+-    if (typeof Notification !== 'undefined') {
+-      setNotificationPermission(Notification.permission);
++    if (typeof Notification === 'undefined') {
++      return;
++    }
++
++    const permission = Notification.permission;
++    setNotificationPermission(permission);
++
++    if (permission === 'denied' && enabled) {
++      notificationsEnabledRef.current = false;
++      setNotificationsEnabled(false);
++      setLocalStorageItem('notificationsEnabled', 'false');
++      return;
++    }
++
++    if (permission === 'granted' && enabled && typeof window !== 'undefined' && supportsWebPush(window)) {
++      void syncWebPushSubscription(window).catch((error) => {
++        console.warn('Failed to refresh stored web push subscription:', error);
++      });
+     }
+   }, []);
+ 
+@@ -123,6 +139,16 @@ export function useNotifications() {
+       try {
+         if (next) {
+           await syncWebPushSubscription(window);
++          try {
++            await sendWebPushTestNotification({
++              title: 'PiClaw notifications enabled',
++              body: 'Web Push is configured for this device.',
++              url: window.location.pathname + window.location.search,
++              tag: 'piclaw:test',
++            });
++          } catch (error) {
++            console.warn('Failed to send a test web push notification:', error);
++          }
+         } else {
+           await disableWebPushSubscription(window);
+         }
