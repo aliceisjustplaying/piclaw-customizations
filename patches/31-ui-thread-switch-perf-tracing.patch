@@ -374,6 +374,73 @@ index 674ee8fd..e8c31d45 100644
  });
  
  test('invokePaneBeforeDetachFromHost calls the pane detach lifecycle hook when present', async () => {
+diff --git a/runtime/test/web/app-chat-refresh-lifecycle.test.ts b/runtime/test/web/app-chat-refresh-lifecycle.test.ts
+index dc80866e..ef585efc 100644
+--- a/runtime/test/web/app-chat-refresh-lifecycle.test.ts
++++ b/runtime/test/web/app-chat-refresh-lifecycle.test.ts
+@@ -1,6 +1,9 @@
+ import { expect, test } from 'bun:test';
+ 
+-import { startModelAndQueueRefreshEffect } from '../../web/src/ui/app-chat-refresh-lifecycle.js';
++import {
++  refreshPostPaintThreadHydration,
++  startModelAndQueueRefreshEffect,
++} from '../../web/src/ui/app-chat-refresh-lifecycle.js';
+ 
+ test('startModelAndQueueRefreshEffect runs hydrate immediately and schedules periodic refresh bundle', () => {
+   const calls: string[] = [];
+@@ -30,3 +33,51 @@ test('startModelAndQueueRefreshEffect runs hydrate immediately and schedules per
+   cleanup();
+   expect(clearedHandle).toEqual({ token: 'poll' });
+ });
++
++test('startModelAndQueueRefreshEffect can skip the immediate hydrate pass', () => {
++  const calls: string[] = [];
++  let intervalHandler: (() => void) | null = null;
++
++  const cleanup = startModelAndQueueRefreshEffect({
++    refreshModelAndQueueState: () => calls.push('initial'),
++    refreshModelState: () => calls.push('model'),
++    refreshActiveChatAgents: () => calls.push('agents'),
++    refreshCurrentChatBranches: () => calls.push('branches'),
++    refreshQueueState: () => calls.push('queue'),
++    runImmediately: false,
++    scheduleInterval: (handler) => {
++      intervalHandler = handler;
++      return { token: 'poll' };
++    },
++  });
++
++  expect(calls).toEqual([]);
++  intervalHandler?.();
++  expect(calls).toEqual(['model', 'agents', 'branches', 'queue']);
++
++  cleanup();
++});
++
++test('refreshPostPaintThreadHydration refreshes the current chat and prewarms recent threads', async () => {
++  const calls: string[] = [];
++
++  refreshPostPaintThreadHydration({
++    refreshModelState: () => calls.push('model'),
++    refreshActiveChatAgents: (options) => calls.push(`agents:${options?.prewarmRecent ? 'warm' : 'plain'}:${options?.prewarmLimit ?? 0}`),
++    refreshCurrentChatBranches: () => calls.push('branches'),
++    refreshQueueState: () => calls.push('queue'),
++    refreshContextUsage: async () => { calls.push('context'); },
++    refreshAutoresearchStatus: async () => { calls.push('autoresearch'); },
++    prewarmLimit: 7,
++  });
++
++  await Promise.resolve();
++  expect(calls).toEqual([
++    'model',
++    'agents:warm:7',
++    'branches',
++    'queue',
++    'context',
++    'autoresearch',
++  ]);
++});
 diff --git a/runtime/test/web/app-connection-lifecycle.test.ts b/runtime/test/web/app-connection-lifecycle.test.ts
 index 883b6313..84206cf9 100644
 --- a/runtime/test/web/app-connection-lifecycle.test.ts
@@ -778,6 +845,42 @@ index 7b03c604..90670b97 100644
  test('handleAppSseEvent refreshes compaction status metadata even when title stays the same', () => {
    const state = createDeps();
  
+diff --git a/runtime/test/web/app-view-refresh-lifecycle.test.ts b/runtime/test/web/app-view-refresh-lifecycle.test.ts
+index 95b132a9..678a4d7f 100644
+--- a/runtime/test/web/app-view-refresh-lifecycle.test.ts
++++ b/runtime/test/web/app-view-refresh-lifecycle.test.ts
+@@ -1,6 +1,9 @@
+ import { expect, test } from 'bun:test';
+ 
+-import { resetExtensionPanelStateForChat } from '../../web/src/ui/app-view-refresh-lifecycle.js';
++import {
++  hydrateThreadStateAfterTimelineFirstPaint,
++  resetExtensionPanelStateForChat,
++} from '../../web/src/ui/app-view-refresh-lifecycle.js';
+ 
+ test('resetExtensionPanelStateForChat clears extension panels and pending action keys', () => {
+   let panels = new Map<string, unknown>([['autoresearch', { status: 'running' }]]);
+@@ -20,3 +23,20 @@ test('resetExtensionPanelStateForChat clears extension panels and pending action
+   expect(panels.size).toBe(0);
+   expect(pending.size).toBe(0);
+ });
++
++test('hydrateThreadStateAfterTimelineFirstPaint starts post-paint hydration and agent status refresh', async () => {
++  const calls: string[] = [];
++
++  hydrateThreadStateAfterTimelineFirstPaint({
++    refreshPostPaintThreadState: () => {
++      calls.push('post-paint');
++    },
++    refreshAgentStatus: async () => {
++      calls.push('agent-status');
++      return null;
++    },
++  });
++
++  await Promise.resolve();
++  expect(calls).toEqual(['post-paint', 'agent-status']);
++});
 diff --git a/runtime/test/web/app-window-actions.test.ts b/runtime/test/web/app-window-actions.test.ts
 index 60644f8c..d83a8b99 100644
 --- a/runtime/test/web/app-window-actions.test.ts
@@ -1261,7 +1364,7 @@ index df0051fd..56e7bfb7 100644
  }
  
 diff --git a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
-index ac9fffd4..c92adbe7 100644
+index ac9fffd4..45f6e7b5 100644
 --- a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
 +++ b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
 @@ -10,6 +10,15 @@ import {
@@ -1280,7 +1383,68 @@ index ac9fffd4..c92adbe7 100644
  
  type StateSetter<T> = (next: T | ((prev: T) => T)) => void;
  
-@@ -118,22 +127,8 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -45,12 +54,43 @@ interface UseChatRefreshLifecycleOptions {
+   refreshAutoresearchStatus: () => Promise<void>;
+ }
+ 
++export function refreshPostPaintThreadHydration(options: {
++  refreshModelState: () => void;
++  refreshActiveChatAgents: (options?: { prewarmRecent?: boolean; prewarmLimit?: number }) => void;
++  refreshCurrentChatBranches: () => void;
++  refreshQueueState: () => void;
++  refreshContextUsage: () => Promise<void>;
++  refreshAutoresearchStatus: () => Promise<void>;
++  prewarmLimit?: number;
++}): void {
++  const {
++    refreshModelState,
++    refreshActiveChatAgents,
++    refreshCurrentChatBranches,
++    refreshQueueState,
++    refreshContextUsage,
++    refreshAutoresearchStatus,
++    prewarmLimit = 5,
++  } = options;
++
++  refreshModelState();
++  refreshActiveChatAgents({
++    prewarmRecent: true,
++    prewarmLimit,
++  });
++  refreshCurrentChatBranches();
++  refreshQueueState();
++  void refreshContextUsage();
++  void refreshAutoresearchStatus();
++}
++
+ export function startModelAndQueueRefreshEffect(options: {
+   refreshModelAndQueueState: () => void;
+   refreshModelState: () => void;
+   refreshActiveChatAgents: () => void;
+   refreshCurrentChatBranches: () => void;
+   refreshQueueState: () => void;
++  runImmediately?: boolean;
+   intervalMs?: number;
+   scheduleInterval?: (handler: () => void, intervalMs: number) => unknown;
+   clearScheduledInterval?: (handle: unknown) => void;
+@@ -61,12 +101,15 @@ export function startModelAndQueueRefreshEffect(options: {
+     refreshActiveChatAgents,
+     refreshCurrentChatBranches,
+     refreshQueueState,
++    runImmediately = true,
+     intervalMs = 60_000,
+     scheduleInterval = (handler, delay) => setInterval(handler, delay),
+     clearScheduledInterval = (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
+   } = options;
+ 
+-  refreshModelAndQueueState();
++  if (runImmediately) {
++    refreshModelAndQueueState();
++  }
+   const intervalHandle = scheduleInterval(() => {
+     refreshModelState();
+     refreshActiveChatAgents();
+@@ -118,22 +161,8 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
    }, [applyBranding, getAgents, setAgents, setUserProfile]);
  
    useEffect(() => {
@@ -1305,7 +1469,7 @@ index ac9fffd4..c92adbe7 100644
  
    const updateAgentProfile = useCallback((payload: any) => {
      updateAgentProfileFromEvent({
-@@ -163,32 +158,149 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+@@ -163,32 +192,145 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
      });
    }, [setActiveModel, setActiveModelUsage, setActiveThinkingLevel, setAgentModelsPayload, setHasLoadedAgentModels, setSupportsThinking]);
  
@@ -1456,7 +1620,8 @@ index ac9fffd4..c92adbe7 100644
 +        });
 +        return null;
 +      },
-+    });
+     });
+-  }, [currentRootChatJid, getChatBranches, setCurrentChatBranches]);
 +  }, [currentChatJid, currentRootChatJid, getChatBranches, getThreadSwitchTraceId, setCurrentChatBranches]);
 +
 +  useEffect(() => {
@@ -1466,15 +1631,43 @@ index ac9fffd4..c92adbe7 100644
 +      sidebarWidthRef,
 +      shellElement: appShellRef.current,
 +    });
-+    void refreshActiveChatAgents({
-+      prewarmRecent: true,
-+      prewarmLimit: 5,
-     });
--  }, [currentRootChatJid, getChatBranches, setCurrentChatBranches]);
-+  }, [appShellRef, loadAgents, readStoredNumber, refreshActiveChatAgents, sidebarWidthRef]);
++  }, [appShellRef, loadAgents, readStoredNumber, sidebarWidthRef]);
  
    const refreshModelAndQueueState = useCallback(() => {
      refreshModelAndQueueStateBundle({
+@@ -201,12 +343,25 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+     });
+   }, [refreshActiveChatAgents, refreshAutoresearchStatus, refreshContextUsage, refreshCurrentChatBranches, refreshModelState, refreshQueueState]);
+ 
++  const refreshPostPaintThreadState = useCallback(() => {
++    refreshPostPaintThreadHydration({
++      refreshModelState,
++      refreshActiveChatAgents,
++      refreshCurrentChatBranches,
++      refreshQueueState,
++      refreshContextUsage,
++      refreshAutoresearchStatus,
++      prewarmLimit: 5,
++    });
++  }, [refreshActiveChatAgents, refreshAutoresearchStatus, refreshContextUsage, refreshCurrentChatBranches, refreshModelState, refreshQueueState]);
++
+   useEffect(() => startModelAndQueueRefreshEffect({
+     refreshModelAndQueueState,
+     refreshModelState,
+     refreshActiveChatAgents,
+     refreshCurrentChatBranches,
+     refreshQueueState,
++    runImmediately: false,
+   }), [refreshActiveChatAgents, refreshCurrentChatBranches, refreshModelAndQueueState, refreshModelState, refreshQueueState]);
+ 
+   return {
+@@ -217,5 +372,6 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+     refreshActiveChatAgents,
+     refreshCurrentChatBranches,
+     refreshModelAndQueueState,
++    refreshPostPaintThreadState,
+   };
+ }
 diff --git a/runtime/web/src/ui/app-connection-lifecycle.ts b/runtime/web/src/ui/app-connection-lifecycle.ts
 index 2c7be49b..29fbbb97 100644
 --- a/runtime/web/src/ui/app-connection-lifecycle.ts
@@ -1511,6 +1704,34 @@ index 2c7be49b..29fbbb97 100644
      if (shouldRefreshMainTimeline(viewStateRef.current)) {
        refreshTimeline();
      }
+diff --git a/runtime/web/src/ui/app-main-lifecycle-composition.ts b/runtime/web/src/ui/app-main-lifecycle-composition.ts
+index f4f84775..00ecd5b1 100644
+--- a/runtime/web/src/ui/app-main-lifecycle-composition.ts
++++ b/runtime/web/src/ui/app-main-lifecycle-composition.ts
+@@ -202,6 +202,7 @@ interface ComposeViewRefreshLifecycleOptionsInput {
+   viewStateRef: RefBox<Record<string, unknown> | null | undefined>;
+   refreshTimeline: () => Promise<void>;
+   refreshModelAndQueueState: () => void;
++  refreshPostPaintThreadState: () => void;
+   setFloatingWidget: StateSetter<any>;
+   dismissedLiveWidgetKeysRef: RefBox<Set<string>>;
+ }
+@@ -231,6 +232,7 @@ export function composeViewRefreshLifecycleOptions(input: ComposeViewRefreshLife
+     viewStateRef: input.viewStateRef,
+     refreshTimeline: input.refreshTimeline,
+     refreshModelAndQueueState: input.refreshModelAndQueueState,
++    refreshPostPaintThreadState: input.refreshPostPaintThreadState,
+     setFloatingWidget: input.setFloatingWidget,
+     dismissedLiveWidgetKeysRef: input.dismissedLiveWidgetKeysRef,
+   };
+@@ -404,6 +406,7 @@ export function useMainAppLifecycleComposition(options: UseMainAppLifecycleCompo
+     refreshAgentStatus: agentStatusLifecycle.refreshAgentStatus,
+     refreshContextUsage: agentStatusLifecycle.refreshContextUsage,
+     refreshModelAndQueueState: chatRefreshLifecycle.refreshModelAndQueueState,
++    refreshPostPaintThreadState: chatRefreshLifecycle.refreshPostPaintThreadState,
+   }));
+ 
+   useRealtimeLifecycleOrchestration(composeRealtimeLifecycleOptions({
 diff --git a/runtime/web/src/ui/app-main-surface-state.ts b/runtime/web/src/ui/app-main-surface-state.ts
 index 8134a092..84f9831b 100644
 --- a/runtime/web/src/ui/app-main-surface-state.ts
@@ -2064,7 +2285,7 @@ index d508aee2..49b4aceb 100644
  
  export interface RefreshContextUsageForChatOptions {
 diff --git a/runtime/web/src/ui/app-view-refresh-lifecycle.ts b/runtime/web/src/ui/app-view-refresh-lifecycle.ts
-index b58a0f94..4e36a061 100644
+index b58a0f94..ffca351a 100644
 --- a/runtime/web/src/ui/app-view-refresh-lifecycle.ts
 +++ b/runtime/web/src/ui/app-view-refresh-lifecycle.ts
 @@ -2,6 +2,13 @@ import { useCallback, useEffect } from '../vendor/preact-htm.js';
@@ -2081,7 +2302,49 @@ index b58a0f94..4e36a061 100644
  
  type StateSetter<T> = (next: T | ((prev: T) => T)) => void;
  
-@@ -95,6 +102,16 @@ export function useViewRefreshLifecycle(options: UseViewRefreshLifecycleOptions)
+@@ -22,6 +29,19 @@ export function resetExtensionPanelStateForChat(options: {
+   setPendingExtensionPanelActions(new Set());
+ }
+ 
++export function hydrateThreadStateAfterTimelineFirstPaint(options: {
++  refreshAgentStatus: () => Promise<any>;
++  refreshPostPaintThreadState: () => void;
++}): void {
++  const {
++    refreshAgentStatus,
++    refreshPostPaintThreadState,
++  } = options;
++
++  refreshPostPaintThreadState();
++  void refreshAgentStatus();
++}
++
+ interface UseViewRefreshLifecycleOptions {
+   currentChatJid: string;
+   currentRootChatJid: string;
+@@ -53,6 +73,7 @@ interface UseViewRefreshLifecycleOptions {
+   viewStateRef: RefBox<Record<string, unknown> | null | undefined>;
+   refreshTimeline: () => Promise<void>;
+   refreshModelAndQueueState: () => void;
++  refreshPostPaintThreadState: () => void;
+   setFloatingWidget: StateSetter<any>;
+   dismissedLiveWidgetKeysRef: RefBox<Set<string>>;
+ }
+@@ -76,12 +97,11 @@ export function useViewRefreshLifecycle(options: UseViewRefreshLifecycleOptions)
+     snapshotCurrentChatPaneState,
+     restoreChatPaneState,
+     dismissedQueueRowIdsRef,
+-    refreshQueueState,
+     refreshAgentStatus,
+-    refreshContextUsage,
+     viewStateRef,
+     refreshTimeline,
+     refreshModelAndQueueState,
++    refreshPostPaintThreadState,
+     setFloatingWidget,
+     dismissedLiveWidgetKeysRef,
+   } = options;
+@@ -95,6 +115,16 @@ export function useViewRefreshLifecycle(options: UseViewRefreshLifecycleOptions)
  
    useEffect(() => {
      let cancelled = false;
@@ -2098,7 +2361,7 @@ index b58a0f94..4e36a061 100644
  
      void runTimelineLoadFlow({
        currentHashtag,
-@@ -108,10 +125,26 @@ export function useViewRefreshLifecycle(options: UseViewRefreshLifecycleOptions)
+@@ -108,10 +138,30 @@ export function useViewRefreshLifecycle(options: UseViewRefreshLifecycleOptions)
        setHasMore,
        scrollToBottom,
        isCancelled: () => cancelled,
@@ -2111,6 +2374,10 @@ index b58a0f94..4e36a061 100644
 +      onTimelineFirstPaint: (detail) => {
 +        markAppPerfTrace(traceId, 'timeline-first-paint', detail || null);
 +        completeAppPerfTraceIfReady(traceId, ['runtime-hydration-ready', 'timeline-first-paint'], 'settled', detail || null);
++        hydrateThreadStateAfterTimelineFirstPaint({
++          refreshAgentStatus,
++          refreshPostPaintThreadState,
++        });
 +      },
 +      onTimelineError: (error, detail) => {
 +        failAppPerfTrace(traceId, error, 'timeline-load-failed', detail || null);
@@ -2125,6 +2392,33 @@ index b58a0f94..4e36a061 100644
      };
    }, [
      currentChatJid,
+@@ -124,6 +174,8 @@ export function useViewRefreshLifecycle(options: UseViewRefreshLifecycleOptions)
+     searchPosts,
+     setHasMore,
+     setPosts,
++    refreshAgentStatus,
++    refreshPostPaintThreadState,
+   ]);
+ 
+   useEffect(() => {
+@@ -139,17 +191,11 @@ export function useViewRefreshLifecycle(options: UseViewRefreshLifecycleOptions)
+     paneStateOwnerChatJidRef.current = currentChatJid;
+     dismissedQueueRowIdsRef.current.clear();
+     restoreChatPaneState(chatPaneStateByChatRef.current.get(currentChatJid) || null);
+-    void refreshQueueState();
+-    void refreshAgentStatus();
+-    void refreshContextUsage();
+   }, [
+     chatPaneStateByChatRef,
+     currentChatJid,
+     dismissedQueueRowIdsRef,
+     paneStateOwnerChatJidRef,
+-    refreshAgentStatus,
+-    refreshContextUsage,
+-    refreshQueueState,
+     restoreChatPaneState,
+     snapshotCurrentChatPaneState,
+   ]);
 diff --git a/runtime/web/src/ui/app-window-actions.ts b/runtime/web/src/ui/app-window-actions.ts
 index d7954bef..8eac9b84 100644
 --- a/runtime/web/src/ui/app-window-actions.ts
