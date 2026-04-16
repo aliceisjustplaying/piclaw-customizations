@@ -60,7 +60,7 @@
     "48": {
       "name": "web-ui-tracing-hooks",
       "track_upstream": true,
-      "upstream_prs": []
+      "upstream_prs": [53]
     },
     "49": {
       "name": "thread-state-hydration-after-timeline-load",
