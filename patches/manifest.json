@@ -75,7 +75,7 @@
     "51": {
       "name": "recent-thread-timeline-cache",
       "track_upstream": true,
-      "upstream_prs": []
+      "upstream_prs": [57]
     },
     "52": {
       "name": "deferred-branch-session-seeding",
@@ -85,17 +85,17 @@
     "53": {
       "name": "recent-branch-warmup",
       "track_upstream": true,
-      "upstream_prs": []
+      "upstream_prs": [54]
     },
     "54": {
       "name": "priority-session-warmup",
       "track_upstream": true,
-      "upstream_prs": []
+      "upstream_prs": [56]
     },
     "55": {
       "name": "compose-branch-loader-fast-path",
       "track_upstream": true,
-      "upstream_prs": []
+      "upstream_prs": [55]
     },
     "56": {
       "name": "longer-idle-session-ttl",
