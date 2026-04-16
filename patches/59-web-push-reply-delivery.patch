@@ -1,24 +1,5 @@
-From ac579f44c1dbcf870bcc6dced91fa784d37a3974 Mon Sep 17 00:00:00 2001
-From: alice <aliceisjustplaying@gmail.com>
-Date: Thu, 16 Apr 2026 10:07:23 +0000
-Subject: [PATCH] web: send stored reply notifications via web push
-
----
- bun.lock                                      |  13 +
- package.json                                  |   1 +
- .../web/messaging/agent-message-store.ts      |  24 ++
- .../src/channels/web/push/web-push-service.ts | 302 ++++++++++++++++++
- runtime/src/types/web-push.d.ts               |  41 +++
- .../channels/web/agent-message-store.test.ts  |  79 +++++
- .../channels/web/web-push-service.test.ts     | 241 ++++++++++++++
- 7 files changed, 701 insertions(+)
- create mode 100644 runtime/src/channels/web/push/web-push-service.ts
- create mode 100644 runtime/src/types/web-push.d.ts
- create mode 100644 runtime/test/channels/web/agent-message-store.test.ts
- create mode 100644 runtime/test/channels/web/web-push-service.test.ts
-
 diff --git a/bun.lock b/bun.lock
-index d8d59be..174b349 100644
+index d8d59bee..174b3497 100644
 --- a/bun.lock
 +++ b/bun.lock
 @@ -27,6 +27,7 @@
@@ -79,7 +60,7 @@ index d8d59be..174b349 100644
  
      "which": ["which@2.0.2", "", { "dependencies": { "isexe": "^2.0.0" }, "bin": { "node-which": "./bin/node-which" } }, "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA=="],
 diff --git a/package.json b/package.json
-index fe573e5..faac849 100644
+index fe573e53..faac849e 100644
 --- a/package.json
 +++ b/package.json
 @@ -108,6 +108,7 @@
@@ -91,7 +72,7 @@ index fe573e5..faac849 100644
    },
    "devDependencies": {
 diff --git a/runtime/src/channels/web/messaging/agent-message-store.ts b/runtime/src/channels/web/messaging/agent-message-store.ts
-index 5df9d44..88cc1ef 100644
+index 5df9d44a..88cc1ef2 100644
 --- a/runtime/src/channels/web/messaging/agent-message-store.ts
 +++ b/runtime/src/channels/web/messaging/agent-message-store.ts
 @@ -12,6 +12,10 @@ import type { WebChannelLike } from "../core/web-channel-contracts.js";
@@ -155,10 +136,10 @@ index 5df9d44..88cc1ef 100644
    return false;
 diff --git a/runtime/src/channels/web/push/web-push-service.ts b/runtime/src/channels/web/push/web-push-service.ts
 new file mode 100644
-index 0000000..22d1b29
+index 00000000..b12c2170
 --- /dev/null
 +++ b/runtime/src/channels/web/push/web-push-service.ts
-@@ -0,0 +1,302 @@
+@@ -0,0 +1,419 @@
 +/**
 + * web/push/web-push-service.ts – outbound Web Push delivery helpers.
 + */
@@ -182,7 +163,19 @@ index 0000000..22d1b29
 +const DEFAULT_VAPID_SUBJECT = typeof process.env.PICLAW_WEB_PUSH_VAPID_SUBJECT === "string" && process.env.PICLAW_WEB_PUSH_VAPID_SUBJECT.trim()
 +  ? process.env.PICLAW_WEB_PUSH_VAPID_SUBJECT.trim()
 +  : "mailto:notifications@localhost.invalid";
-+let disabledStoredWebPushReason: Error | null = null;
++const DEFAULT_WEB_PUSH_REQUEST_TIMEOUT_MS = 15_000;
++const AUTH_FAILURE_PRUNE_THRESHOLD = 3;
++const SETUP_BREAKER_COOLDOWN_MS = 5 * 60 * 1000;
++const DELIVERY_BREAKER_COOLDOWN_MS = 2 * 60 * 1000;
++
++type WebPushBreakerState = {
++  reason: Error;
++  untilMs: number;
++};
++
++let disabledStoredWebPushSetupState: WebPushBreakerState | null = null;
++let disabledStoredWebPushDeliveryState: WebPushBreakerState | null = null;
++const authFailureCountsByEndpoint = new Map<string, number>();
 +
 +export interface WebPushNotificationPayload {
 +  title: string;
@@ -291,13 +284,37 @@ index 0000000..22d1b29
 +  };
 +}
 +
-+function disableStoredWebPushDelivery(error: unknown): void {
++function getActiveBreaker(state: WebPushBreakerState | null): WebPushBreakerState | null {
++  if (!state) return null;
++  if (Date.now() < state.untilMs) return state;
++  return null;
++}
++
++function tripStoredWebPushSetupBreaker(error: unknown): void {
 +  const reason = error instanceof Error ? error : new Error(String(error || "Unknown web push setup failure"));
-+  if (disabledStoredWebPushReason) return;
-+  disabledStoredWebPushReason = reason;
++  if (getActiveBreaker(disabledStoredWebPushSetupState)) return;
++  disabledStoredWebPushSetupState = {
++    reason,
++    untilMs: Date.now() + SETUP_BREAKER_COOLDOWN_MS,
++  };
 +  log.warn("Disabled stored web push delivery after a fatal setup failure.", {
 +    errorMessage: reason.message,
 +    err: reason,
++    cooldownMs: SETUP_BREAKER_COOLDOWN_MS,
++  });
++}
++
++function tripStoredWebPushDeliveryBreaker(error: unknown): void {
++  const reason = error instanceof Error ? error : new Error(String(error || "Unknown web push delivery failure"));
++  if (getActiveBreaker(disabledStoredWebPushDeliveryState)) return;
++  disabledStoredWebPushDeliveryState = {
++    reason,
++    untilMs: Date.now() + DELIVERY_BREAKER_COOLDOWN_MS,
++  };
++  log.warn("Temporarily disabled stored web push delivery after repeated delivery failures.", {
++    errorMessage: reason.message,
++    err: reason,
++    cooldownMs: DELIVERY_BREAKER_COOLDOWN_MS,
 +  });
 +}
 +
@@ -331,8 +348,11 @@ index 0000000..22d1b29
 +  const controller = typeof AbortController !== "undefined" && Number.isFinite(requestDetails.timeout) && Number(requestDetails.timeout) > 0
 +    ? new AbortController()
 +    : null;
++  const timeoutMs = Number.isFinite(requestDetails.timeout) && Number(requestDetails.timeout) > 0
++    ? Number(requestDetails.timeout)
++    : DEFAULT_WEB_PUSH_REQUEST_TIMEOUT_MS;
 +  const timeoutId = controller
-+    ? setTimeout(() => controller.abort(), Number(requestDetails.timeout))
++    ? setTimeout(() => controller.abort(), timeoutMs)
 +    : null;
 +
 +  try {
@@ -360,6 +380,25 @@ index 0000000..22d1b29
 +function isExpiredSubscriptionError(error: unknown): boolean {
 +  const statusCode = Number((error as { statusCode?: unknown } | null)?.statusCode);
 +  return statusCode === 404 || statusCode === 410;
++}
++
++function isAuthRejectedSubscriptionError(error: unknown): boolean {
++  const statusCode = Number((error as { statusCode?: unknown } | null)?.statusCode);
++  return statusCode === 401 || statusCode === 403;
++}
++
++function isPotentialSystemicDeliveryError(error: unknown): boolean {
++  return !isExpiredSubscriptionError(error) && !isAuthRejectedSubscriptionError(error);
++}
++
++function clearSubscriptionFailureState(subscription: StoredWebPushSubscription): void {
++  authFailureCountsByEndpoint.delete(subscription.endpoint);
++}
++
++function shouldPruneSubscriptionAfterAuthFailure(subscription: StoredWebPushSubscription): boolean {
++  const nextCount = (authFailureCountsByEndpoint.get(subscription.endpoint) ?? 0) + 1;
++  authFailureCountsByEndpoint.set(subscription.endpoint, nextCount);
++  return nextCount >= AUTH_FAILURE_PRUNE_THRESHOLD;
 +}
 +
 +function buildReplyNotificationBody(interaction: InteractionRow): string {
@@ -413,7 +452,7 @@ index 0000000..22d1b29
 +  if (subscriptions.length === 0) {
 +    return { attempted: 0, sent: 0, removed: 0, failed: 0 };
 +  }
-+  if (disabledStoredWebPushReason) {
++  if (getActiveBreaker(disabledStoredWebPushSetupState) || getActiveBreaker(disabledStoredWebPushDeliveryState)) {
 +    return { attempted: 0, sent: 0, removed: 0, failed: subscriptions.length };
 +  }
 +
@@ -440,22 +479,19 @@ index 0000000..22d1b29
 +      ? null
 +      : (options.generateRequestDetails || await loadGenerateRequestDetailsImpl());
 +  } catch (error) {
-+    disableStoredWebPushDelivery(error);
++    tripStoredWebPushSetupBreaker(error);
 +    return { attempted: 0, sent: 0, removed: 0, failed: subscriptions.length };
 +  }
 +  const presenceService = options.presenceService || webNotificationPresenceService;
 +
-+  let attempted = 0;
-+  let sent = 0;
-+  let removed = 0;
-+  let failed = 0;
-+
-+  for (const subscription of subscriptions) {
-+    if (!presenceService.shouldSendWebPush(subscription.deviceId, options.chatJid)) {
-+      continue;
++  const eligibleSubscriptions = subscriptions.filter((subscription) => {
++    if (typeof options.targetDeviceId === "string" && options.targetDeviceId.trim() && subscription.deviceId !== options.targetDeviceId.trim()) {
++      return false;
 +    }
++    return presenceService.shouldSendWebPush(subscription.deviceId, options.chatJid);
++  });
 +
-+    attempted += 1;
++  const outcomes = await Promise.all(eligibleSubscriptions.map(async (subscription) => {
 +    try {
 +      if (options.sendNotification) {
 +        await options.sendNotification(subscription, serializedPayload, requestOptions);
@@ -463,24 +499,56 @@ index 0000000..22d1b29
 +        const requestDetails = generateRequestDetails(subscription, serializedPayload, requestOptions);
 +        await dispatchGeneratedWebPushRequest(requestDetails, options.fetchImpl || fetch);
 +      }
-+      sent += 1;
++      clearSubscriptionFailureState(subscription);
++      return { attempted: 1, sent: 1, removed: 0, failed: 0, systemicError: null as Error | null };
 +    } catch (error) {
 +      if (isExpiredSubscriptionError(error)) {
++        clearSubscriptionFailureState(subscription);
 +        if (removeStoredWebPushSubscription(subscription.endpoint, options.baseDir)) {
-+          removed += 1;
++          log.info("Removed expired web push subscription after delivery failure.", {
++            endpoint: subscription.endpoint,
++            statusCode: (error as { statusCode?: unknown } | null)?.statusCode,
++          });
++          return { attempted: 1, sent: 0, removed: 1, failed: 0, systemicError: null as Error | null };
 +        }
-+        log.info("Removed expired web push subscription after delivery failure.", {
-+          endpoint: subscription.endpoint,
-+          statusCode: (error as { statusCode?: unknown } | null)?.statusCode,
-+        });
-+        continue;
++      } else if (isAuthRejectedSubscriptionError(error) && shouldPruneSubscriptionAfterAuthFailure(subscription)) {
++        if (removeStoredWebPushSubscription(subscription.endpoint, options.baseDir)) {
++          log.info("Removed rejected web push subscription after repeated auth failures.", {
++            endpoint: subscription.endpoint,
++            statusCode: (error as { statusCode?: unknown } | null)?.statusCode,
++            threshold: AUTH_FAILURE_PRUNE_THRESHOLD,
++          });
++          authFailureCountsByEndpoint.delete(subscription.endpoint);
++          return { attempted: 1, sent: 0, removed: 1, failed: 0, systemicError: null as Error | null };
++        }
 +      }
 +
-+      failed += 1;
++      const normalizedError = error instanceof Error
++        ? error
++        : new Error(typeof (error as { message?: unknown } | null)?.message === "string"
++            ? String((error as { message: string }).message)
++            : "Web push delivery failed.");
 +      debugSuppressedError(log, "Web push delivery failed for a stored subscription.", error, {
 +        endpoint: subscription.endpoint,
 +      });
++      return {
++        attempted: 1,
++        sent: 0,
++        removed: 0,
++        failed: 1,
++        systemicError: isPotentialSystemicDeliveryError(error) ? normalizedError : null,
++      };
 +    }
++  }));
++
++  const attempted = outcomes.reduce((total, entry) => total + entry.attempted, 0);
++  const sent = outcomes.reduce((total, entry) => total + entry.sent, 0);
++  const removed = outcomes.reduce((total, entry) => total + entry.removed, 0);
++  const failed = outcomes.reduce((total, entry) => total + entry.failed, 0);
++  const firstSystemicError = outcomes.find((entry) => entry.systemicError)?.systemicError || null;
++
++  if (attempted > 0 && sent === 0 && removed === 0 && failed === attempted && firstSystemicError) {
++    tripStoredWebPushDeliveryBreaker(firstSystemicError);
 +  }
 +
 +  return {
@@ -492,7 +560,7 @@ index 0000000..22d1b29
 +}
 diff --git a/runtime/src/types/web-push.d.ts b/runtime/src/types/web-push.d.ts
 new file mode 100644
-index 0000000..60182f0
+index 00000000..60182f01
 --- /dev/null
 +++ b/runtime/src/types/web-push.d.ts
 @@ -0,0 +1,41 @@
@@ -539,7 +607,7 @@ index 0000000..60182f0
 +}
 diff --git a/runtime/test/channels/web/agent-message-store.test.ts b/runtime/test/channels/web/agent-message-store.test.ts
 new file mode 100644
-index 0000000..eacbc82
+index 00000000..eacbc82f
 --- /dev/null
 +++ b/runtime/test/channels/web/agent-message-store.test.ts
 @@ -0,0 +1,79 @@
@@ -624,10 +692,10 @@ index 0000000..eacbc82
 +});
 diff --git a/runtime/test/channels/web/web-push-service.test.ts b/runtime/test/channels/web/web-push-service.test.ts
 new file mode 100644
-index 0000000..c1e90f0
+index 00000000..e0094b06
 --- /dev/null
 +++ b/runtime/test/channels/web/web-push-service.test.ts
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,262 @@
 +import { afterEach, describe, expect, test } from "bun:test";
 +import { mkdtempSync, rmSync } from "node:fs";
 +import { join } from "node:path";
@@ -637,7 +705,7 @@ index 0000000..c1e90f0
 +import {
 +  buildStoredAgentReplyWebPushNotification,
 +  sendStoredAgentReplyWebPushNotification,
-+  sendStoredWebPushNotification,
++  sendStoredWebPushNotification
 +} from "../../../src/channels/web/push/web-push-service.js";
 +import { WebNotificationPresenceService } from "../../../src/channels/web/push/web-notification-presence-service.js";
 +
@@ -757,6 +825,27 @@ index 0000000..c1e90f0
 +      "https://push.example.test/device/2",
 +      "https://push.example.test/device/3",
 +    ]);
++  });
++
++  test("prunes rejected subscriptions after repeated auth failures", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(21), { baseDir });
++
++    for (let attempt = 1; attempt <= 3; attempt += 1) {
++      const result = await sendStoredWebPushNotification({
++        title: "Auth rejected",
++        body: "Testing bounded auth pruning",
++      }, {
++        baseDir,
++        sendNotification: async () => {
++          throw { statusCode: 403, message: "forbidden" };
++        },
++      });
++
++      expect(result.attempted).toBe(1);
++    }
++
++    expect(listStoredWebPushSubscriptions(baseDir)).toEqual([]);
 +  });
 +
 +  test("uses generated request details with fetch and cleans up 410 responses", async () => {

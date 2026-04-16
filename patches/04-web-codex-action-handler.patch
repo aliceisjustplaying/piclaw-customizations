@@ -50,7 +50,6 @@ index b6fb365..95ff947 100644
 +    handle: async (_channel: any, req: Request) => {
 +      try {
 +        let taskId = "";
-+        let chatJid = "web:default";
 +        const validTaskId = (value: string) => /^[a-zA-Z0-9_-]+$/.test(value);
 +        try {
 +          const body = await req.json();
@@ -58,11 +57,9 @@ index b6fb365..95ff947 100644
 +            const candidateTaskId = body.key.replace("codex.stop.", "").trim();
 +            taskId = validTaskId(candidateTaskId) ? candidateTaskId : "";
 +          }
-+          if (typeof body?.chat_jid === "string" && body.chat_jid.trim()) chatJid = body.chat_jid.trim();
 +        } catch {}
 +        const { spawnSync } = await import("node:child_process");
-+        const { accessSync, constants, existsSync, readFileSync } = await import("node:fs");
-+        const { join } = await import("node:path");
++        const { accessSync, constants } = await import("node:fs");
 +        const searchPath = [
 +          ...(process.env.PATH || "").split(":"),
 +          "/run/current-system/sw/bin",
@@ -81,20 +78,6 @@ index b6fb365..95ff947 100644
 +        const tmuxSession = taskId ? `codex-${taskId}` : "codex-delegate";
 +        spawnSync(tmuxBin, ["send-keys", "-t", tmuxSession, "C-c", ""], { stdio: "ignore", env });
 +        setTimeout(() => spawnSync(tmuxBin, ["kill-session", "-t", tmuxSession], { stdio: "ignore", env }), 2000);
-+        if (taskId) {
-+          try {
-+            const metaPath = join("/workspace/.piclaw/data/extensions/codex-delegate/tasks", taskId, "task.json");
-+            if (existsSync(metaPath)) {
-+              const meta = JSON.parse(readFileSync(metaPath, "utf8"));
-+              if (typeof meta?.chat_jid === "string" && meta.chat_jid.trim()) chatJid = meta.chat_jid.trim();
-+            }
-+          } catch {}
-+        }
-+        const broadcast = (globalThis as any).__PICLAW_BROADCAST_EVENT__;
-+        if (typeof broadcast === "function") {
-+          const wkey = taskId ? `codex-${taskId}` : "codex-delegate";
-+          broadcast("extension_ui_widget", { chat_jid: chatJid, key: wkey, content: [], options: { surface: "status-panel", remove: true } });
-+        }
 +        return Response.json({ ok: true });
 +      } catch (err) {
 +        return Response.json({ error: String(err) }, { status: 500 });

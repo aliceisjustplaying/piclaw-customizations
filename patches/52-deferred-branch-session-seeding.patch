@@ -1,20 +1,3 @@
-From 7d4f041158dac6d115419a50d1ad7498b2f462c8 Mon Sep 17 00:00:00 2001
-From: Codex <codex@example.com>
-Date: Thu, 16 Apr 2026 12:32:21 +0000
-Subject: [PATCH] perf: defer branch session seeding
-
----
- runtime/src/agent-pool/branch-manager.ts      | 209 +-------------
- runtime/src/agent-pool/branch-seeding.ts      | 269 ++++++++++++++++++
- runtime/src/agent-pool/service-factory.ts     |   1 +
- runtime/src/agent-pool/session-manager.ts     | 122 +++++++-
- runtime/test/agent-pool/agent-pool.test.ts    |   1 +
- .../agent-pool/branch-lifecycle-audit.test.ts |   1 +
- .../test/agent-pool/branch-manager.test.ts    |  83 ++++++
- .../test/agent-pool/session-manager.test.ts   |  80 +++++-
- 8 files changed, 557 insertions(+), 209 deletions(-)
- create mode 100644 runtime/src/agent-pool/branch-seeding.ts
-
 diff --git a/runtime/src/agent-pool/branch-manager.ts b/runtime/src/agent-pool/branch-manager.ts
 index 1b048589..b0d630a6 100644
 --- a/runtime/src/agent-pool/branch-manager.ts
@@ -272,10 +255,10 @@ index 1b048589..b0d630a6 100644
        chat_jid: nextChatJid,
 diff --git a/runtime/src/agent-pool/branch-seeding.ts b/runtime/src/agent-pool/branch-seeding.ts
 new file mode 100644
-index 00000000..1a9e9890
+index 00000000..bd054871
 --- /dev/null
 +++ b/runtime/src/agent-pool/branch-seeding.ts
-@@ -0,0 +1,269 @@
+@@ -0,0 +1,321 @@
 +/**
 + * agent-pool/branch-seeding.ts – Deferred branch seed persistence and replay.
 + *
@@ -284,7 +267,7 @@ index 00000000..1a9e9890
 + * prewarm.
 + */
 +
-+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
++import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 +import { join } from "path";
 +import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 +import type { ImageContent, Message, TextContent } from "@mariozechner/pi-ai";
@@ -344,6 +327,7 @@ index 00000000..1a9e9890
 +>;
 +
 +const DEFERRED_BRANCH_SEED_FILE = ".branch-seed.json";
++const CLAIMED_DEFERRED_BRANCH_SEED_FILE = ".branch-seed.claimed.json";
 +
 +function createInvalidDeferredBranchSeedError(chatJid: string, reason: string, cause?: unknown): Error {
 +  return new Error(`Invalid deferred branch seed for ${chatJid}: ${reason}`, cause ? { cause } : undefined);
@@ -501,24 +485,11 @@ index 00000000..1a9e9890
 +  return join(ensureSessionDir(chatJid), DEFERRED_BRANCH_SEED_FILE);
 +}
 +
-+export function hasDeferredBranchSeed(chatJid: string): boolean {
-+  return existsSync(getDeferredBranchSeedPath(chatJid));
++function getClaimedDeferredBranchSeedPath(chatJid: string): string {
++  return join(ensureSessionDir(chatJid), CLAIMED_DEFERRED_BRANCH_SEED_FILE);
 +}
 +
-+export function writeDeferredBranchSeed(chatJid: string, seed: DeferredBranchSeed): void {
-+  const targetPath = getDeferredBranchSeedPath(chatJid);
-+  const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
-+  try {
-+    writeFileSync(tempPath, JSON.stringify(seed), "utf8");
-+    renameSync(tempPath, targetPath);
-+  } catch (error) {
-+    rmSync(tempPath, { force: true });
-+    throw error;
-+  }
-+}
-+
-+export function readDeferredBranchSeed(chatJid: string): DeferredBranchSeed | null {
-+  const path = getDeferredBranchSeedPath(chatJid);
++function readDeferredBranchSeedFromPath(chatJid: string, path: string): DeferredBranchSeed | null {
 +  if (!existsSync(path)) return null;
 +
 +  let parsed: unknown;
@@ -542,8 +513,72 @@ index 00000000..1a9e9890
 +  return seed as DeferredBranchSeed;
 +}
 +
++function getExistingDeferredBranchSeedPath(chatJid: string): string | null {
++  const primaryPath = getDeferredBranchSeedPath(chatJid);
++  if (existsSync(primaryPath)) return primaryPath;
++  const claimedPath = getClaimedDeferredBranchSeedPath(chatJid);
++  return existsSync(claimedPath) ? claimedPath : null;
++}
++
++export function hasDeferredBranchSeed(chatJid: string): boolean {
++  return getExistingDeferredBranchSeedPath(chatJid) !== null;
++}
++
++export function getDeferredBranchSeedFingerprint(chatJid: string): string | null {
++  const path = getExistingDeferredBranchSeedPath(chatJid);
++  if (!path) return null;
++  try {
++    const stat = statSync(path);
++    return `${path}:${stat.size}:${stat.mtimeMs}`;
++  } catch {
++    return null;
++  }
++}
++
++export function writeDeferredBranchSeed(chatJid: string, seed: DeferredBranchSeed): void {
++  const targetPath = getDeferredBranchSeedPath(chatJid);
++  const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
++  try {
++    writeFileSync(tempPath, JSON.stringify(seed), "utf8");
++    renameSync(tempPath, targetPath);
++    rmSync(getClaimedDeferredBranchSeedPath(chatJid), { force: true });
++  } catch (error) {
++    rmSync(tempPath, { force: true });
++    throw error;
++  }
++}
++
++export function readDeferredBranchSeed(chatJid: string): DeferredBranchSeed | null {
++  const path = getExistingDeferredBranchSeedPath(chatJid);
++  if (!path) return null;
++  return readDeferredBranchSeedFromPath(chatJid, path);
++}
++
++export function claimDeferredBranchSeed(chatJid: string): DeferredBranchSeed | null {
++  const primaryPath = getDeferredBranchSeedPath(chatJid);
++  const claimedPath = getClaimedDeferredBranchSeedPath(chatJid);
++  if (existsSync(primaryPath)) {
++    renameSync(primaryPath, claimedPath);
++  }
++  if (!existsSync(claimedPath)) return null;
++  return readDeferredBranchSeedFromPath(chatJid, claimedPath);
++}
++
++export function restoreClaimedDeferredBranchSeed(chatJid: string): void {
++  const primaryPath = getDeferredBranchSeedPath(chatJid);
++  const claimedPath = getClaimedDeferredBranchSeedPath(chatJid);
++  if (!existsSync(claimedPath)) return;
++  rmSync(primaryPath, { force: true });
++  renameSync(claimedPath, primaryPath);
++}
++
++export function finalizeClaimedDeferredBranchSeed(chatJid: string): void {
++  rmSync(getClaimedDeferredBranchSeedPath(chatJid), { force: true });
++}
++
 +export function clearDeferredBranchSeed(chatJid: string): void {
 +  rmSync(getDeferredBranchSeedPath(chatJid), { force: true });
++  rmSync(getClaimedDeferredBranchSeedPath(chatJid), { force: true });
 +}
 diff --git a/runtime/src/agent-pool/service-factory.ts b/runtime/src/agent-pool/service-factory.ts
 index 7240429d..d0dd5b85 100644
@@ -558,19 +593,20 @@ index 7240429d..d0dd5b85 100644
    });
    sessionManager = new AgentSessionManager({
 diff --git a/runtime/src/agent-pool/session-manager.ts b/runtime/src/agent-pool/session-manager.ts
-index d03bda97..8f5b9dc5 100644
+index d03bda97..a4debd12 100644
 --- a/runtime/src/agent-pool/session-manager.ts
 +++ b/runtime/src/agent-pool/session-manager.ts
-@@ -8,8 +8,15 @@
+@@ -8,8 +8,16 @@
  
  import type { AgentSession, AgentSessionRuntime, ExtensionFactory, ModelRegistry, SettingsManager, AuthStorage } from "@mariozechner/pi-coding-agent";
  
 +import {
-+  clearDeferredBranchSeed,
++  claimDeferredBranchSeed,
++  finalizeClaimedDeferredBranchSeed,
++  getDeferredBranchSeedFingerprint,
 +  hasDeferredBranchSeed,
-+  readDeferredBranchSeed,
++  restoreClaimedDeferredBranchSeed,
 +  seedSessionManagerFromDeferredBranchSeed,
-+  writeDeferredBranchSeed,
 +} from "./branch-seeding.js";
  import { createDefaultSession, createSessionInDir, ensureNamedSessionDir, ensureSessionDir } from "./session.js";
 -import { seedRotatedSession } from "../session-rotation.js";
@@ -578,21 +614,40 @@ index d03bda97..8f5b9dc5 100644
  
  /** Cached session entry stored for each chat JID. */
  export interface PoolEntry {
-@@ -39,7 +46,9 @@ export interface AgentSessionManagerOptions {
+@@ -39,14 +47,28 @@ export interface AgentSessionManagerOptions {
   * Handles lifecycle operations for main and auxiliary AgentSession instances.
   */
  export class AgentSessionManager {
 +  private readonly branchSeedRealizationInFlight = new Map<string, Promise<boolean>>();
    private readonly createInFlight = new Map<string, Promise<AgentSessionRuntime>>();
-+  private readonly invalidDeferredBranchSeedErrors = new Map<string, Error>();
++  private readonly invalidDeferredBranchSeedErrors = new Map<string, { error: Error; fingerprint: string | null }>();
++  private readonly runtimeDisposeInFlight = new WeakMap<AgentSessionRuntime, Promise<void>>();
    private readonly prewarmInFlight = new Set<string>();
    private readonly queuedPrewarms = new Set<string>();
    private readonly prewarmQueue: string[] = [];
-@@ -57,6 +66,11 @@ export class AgentSessionManager {
++  private readonly prewarmCooldownByChat = new Map<string, number>();
+   private prewarmLoopActive = false;
+ 
+   constructor(private readonly options: AgentSessionManagerOptions) {}
+ 
++  private getBlockingInvalidSeedError(chatJid: string): Error | null {
++    const knownInvalidSeedState = this.invalidDeferredBranchSeedErrors.get(chatJid);
++    if (!knownInvalidSeedState) return null;
++    if (knownInvalidSeedState.fingerprint === getDeferredBranchSeedFingerprint(chatJid)) {
++      return knownInvalidSeedState.error;
++    }
++    this.invalidDeferredBranchSeedErrors.delete(chatJid);
++    return null;
++  }
++
+   async refreshRuntime(chatJid: string, runtime: AgentSessionRuntime): Promise<void> {
+     const entry = this.options.pool.get(chatJid);
+     if (entry) {
+@@ -57,6 +79,11 @@ export class AgentSessionManager {
    }
  
    async getOrCreate(chatJid: string): Promise<AgentSessionRuntime> {
-+    const knownInvalidSeedError = this.invalidDeferredBranchSeedErrors.get(chatJid);
++    const knownInvalidSeedError = this.getBlockingInvalidSeedError(chatJid);
 +    if (knownInvalidSeedError) {
 +      throw knownInvalidSeedError;
 +    }
@@ -600,7 +655,7 @@ index d03bda97..8f5b9dc5 100644
      const pendingCreate = this.createInFlight.get(chatJid);
      if (pendingCreate) {
        return await pendingCreate;
-@@ -65,7 +79,13 @@ export class AgentSessionManager {
+@@ -65,7 +92,13 @@ export class AgentSessionManager {
      const existing = this.options.pool.get(chatJid);
      if (existing) {
        existing.lastUsed = Date.now();
@@ -615,7 +670,7 @@ index d03bda97..8f5b9dc5 100644
      }
  
      const task = (async () => {
-@@ -89,7 +109,10 @@ export class AgentSessionManager {
+@@ -89,7 +122,10 @@ export class AgentSessionManager {
  
        this.options.pool.set(chatJid, { runtime, lastUsed: Date.now() });
        try {
@@ -627,17 +682,24 @@ index d03bda97..8f5b9dc5 100644
          await this.refreshRuntime(chatJid, runtime);
          this.options.onInfo?.("Session ready", {
            operation: this.options.createSession ? "get_or_create.create_main_session" : "get_or_create.create_default_session",
-@@ -197,7 +220,8 @@ export class AgentSessionManager {
+@@ -197,10 +233,15 @@ export class AgentSessionManager {
    prewarm(chatJid: string, options: { priority?: boolean } = {}): boolean {
      const normalizedChatJid = String(chatJid || "").trim();
      if (!normalizedChatJid) return false;
 -    if (this.options.pool.has(normalizedChatJid)) return false;
-+    if (this.invalidDeferredBranchSeedErrors.has(normalizedChatJid)) return false;
++    if (this.getBlockingInvalidSeedError(normalizedChatJid)) return false;
 +    if (this.options.pool.has(normalizedChatJid) && !hasDeferredBranchSeed(normalizedChatJid)) return false;
      if (this.prewarmInFlight.has(normalizedChatJid) || this.queuedPrewarms.has(normalizedChatJid)) return false;
++    const now = Date.now();
++    const lastQueuedAt = this.prewarmCooldownByChat.get(normalizedChatJid) ?? 0;
++    if (now - lastQueuedAt < 30_000) return false;
  
      this.queuedPrewarms.add(normalizedChatJid);
-@@ -297,11 +321,90 @@ export class AgentSessionManager {
++    this.prewarmCooldownByChat.set(normalizedChatJid, now);
+     if (options.priority) {
+       this.prewarmQueue.unshift(normalizedChatJid);
+     } else {
+@@ -297,11 +338,92 @@ export class AgentSessionManager {
      const modelId = this.options.settingsManager.getDefaultModel();
      if (!provider || !modelId) return;
  
@@ -651,18 +713,19 @@ index d03bda97..8f5b9dc5 100644
 +    const task = (async () => {
 +      let seed;
 +      try {
-+        seed = readDeferredBranchSeed(chatJid);
++        seed = claimDeferredBranchSeed(chatJid);
 +      } catch (error) {
 +        if (error instanceof Error && error.message.startsWith("Invalid deferred branch seed for ")) {
-+          this.invalidDeferredBranchSeedErrors.set(chatJid, error);
++          this.invalidDeferredBranchSeedErrors.set(chatJid, {
++            error,
++            fingerprint: getDeferredBranchSeedFingerprint(chatJid),
++          });
 +        }
 +        throw error;
 +      }
 +      if (!seed) return false;
 +
 +      try {
-+        clearDeferredBranchSeed(chatJid);
-+
 +        const result = await runtime.newSession({
 +          ...(seed.parentSession ? { parentSession: seed.parentSession } : {}),
 +          setup: async (sessionManager) => {
@@ -699,10 +762,11 @@ index d03bda97..8f5b9dc5 100644
 +        }
 +
 +        forcePersistSessionFile(session);
++        finalizeClaimedDeferredBranchSeed(chatJid);
 +        this.invalidDeferredBranchSeedErrors.delete(chatJid);
 +        return true;
 +      } catch (error) {
-+        writeDeferredBranchSeed(chatJid, seed);
++        restoreClaimedDeferredBranchSeed(chatJid);
 +        throw error;
 +      }
 +    })().finally(() => {
@@ -730,7 +794,7 @@ index d03bda97..8f5b9dc5 100644
      if (!resolved) return;
  
      const setModel = (session as { setModel?: (model: typeof resolved) => Promise<void> }).setModel;
-@@ -311,8 +414,8 @@ export class AgentSessionManager {
+@@ -311,8 +433,8 @@ export class AgentSessionManager {
        await setModel.call(session, resolved);
      } catch (err) {
        this.options.onWarn?.("Failed to restore model", {
@@ -741,7 +805,7 @@ index d03bda97..8f5b9dc5 100644
          err,
        });
      }
-@@ -328,7 +431,8 @@ export class AgentSessionManager {
+@@ -328,7 +450,8 @@ export class AgentSessionManager {
            const chatJid = this.prewarmQueue.shift();
            if (!chatJid) continue;
            this.queuedPrewarms.delete(chatJid);
@@ -751,6 +815,39 @@ index d03bda97..8f5b9dc5 100644
  
            this.prewarmInFlight.add(chatJid);
            try {
+@@ -360,14 +483,24 @@ export class AgentSessionManager {
+     if (this.options.pool.get(chatJid)?.runtime === runtime) {
+       this.options.pool.delete(chatJid);
+     }
+-    try {
+-      await runtime.dispose();
+-    } catch (disposeErr) {
+-      this.options.onWarn?.("Failed to dispose session after initialization error", {
+-        operation,
+-        chatJid,
+-        err: disposeErr,
+-      });
++    const pendingDispose = this.runtimeDisposeInFlight.get(runtime);
++    if (pendingDispose) {
++      await pendingDispose;
++      return;
+     }
++
++    const task = (async () => {
++      try {
++        await runtime.dispose();
++      } catch (disposeErr) {
++        this.options.onWarn?.("Failed to dispose session after initialization error", {
++          operation,
++          chatJid,
++          err: disposeErr,
++        });
++      }
++    })();
++    this.runtimeDisposeInFlight.set(runtime, task);
++    await task;
+   }
+ }
 diff --git a/runtime/test/agent-pool/agent-pool.test.ts b/runtime/test/agent-pool/agent-pool.test.ts
 index 458c357c..34211fb5 100644
 --- a/runtime/test/agent-pool/agent-pool.test.ts
@@ -898,7 +995,7 @@ index 5ecd13ae..63b4a6c4 100644
  
    ws.cleanup();
 diff --git a/runtime/test/agent-pool/session-manager.test.ts b/runtime/test/agent-pool/session-manager.test.ts
-index 42b24c59..923b5436 100644
+index 42b24c59..2a705d90 100644
 --- a/runtime/test/agent-pool/session-manager.test.ts
 +++ b/runtime/test/agent-pool/session-manager.test.ts
 @@ -1,7 +1,22 @@
@@ -908,7 +1005,7 @@ index 42b24c59..923b5436 100644
 +import { join } from "path";
  
  import type { AgentSessionRuntime } from "@mariozechner/pi-coding-agent";
-+import { readDeferredBranchSeed } from "../../src/agent-pool/branch-seeding.js";
++import { readDeferredBranchSeed, writeDeferredBranchSeed } from "../../src/agent-pool/branch-seeding.js";
 +import { ensureSessionDir } from "../../src/agent-pool/session.js";
  import { AgentSessionManager } from "../../src/agent-pool/session-manager.js";
 +import { createTempWorkspace, setEnv } from "../helpers.js";
@@ -925,7 +1022,7 @@ index 42b24c59..923b5436 100644
  
  function createRuntime(session: any): AgentSessionRuntime {
    return {
-@@ -198,3 +213,66 @@ test("AgentSessionManager serializes queued prewarms and honors priority orderin
+@@ -198,3 +213,141 @@ test("AgentSessionManager serializes queued prewarms and honors priority orderin
  
    await fixture.manager.shutdown();
  });
@@ -992,6 +1089,78 @@ index 42b24c59..923b5436 100644
 +  expect(disposed).toBe(1);
 +  expect(readDeferredBranchSeed(chatJid)?.sessionName).toBe("Seeded");
 +});
--- 
-2.51.2
-
++
++test("AgentSessionManager clears cached invalid-seed errors after the seed file is rewritten", async () => {
++  const ws = createTempWorkspace("piclaw-session-manager-invalid-seed-rewrite-");
++  cleanupWorkspace = ws.cleanup;
++  restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
++
++  let createCalls = 0;
++  const fixture = createManager({
++    createSession: async (_chatJid: string, sessionDir: string) => {
++      createCalls += 1;
++      return createRuntime({
++        sessionFile: join(sessionDir, "session.jsonl"),
++        sessionManager: {
++          getHeader: () => ({ type: "session_header" }),
++          getEntries: () => [],
++        },
++        setSessionName() {},
++        dispose() {},
++      });
++    },
++  });
++
++  const chatJid = "web:rewritten-branch";
++  writeFileSync(join(ensureSessionDir(chatJid), ".branch-seed.json"), "{not-json", "utf8");
++  await expect(fixture.manager.getOrCreate(chatJid)).rejects.toThrow("Invalid deferred branch seed");
++
++  writeDeferredBranchSeed(chatJid, {
++    version: 1,
++    parentSession: null,
++    sessionName: "Recovered",
++    model: null,
++    thinkingLevel: null,
++    mode: "rotated_context",
++  });
++
++  await expect(fixture.manager.getOrCreate(chatJid)).resolves.toBeTruthy();
++  expect(createCalls).toBe(2);
++});
++
++test("AgentSessionManager disposes a broken existing runtime only once across concurrent callers", async () => {
++  const ws = createTempWorkspace("piclaw-session-manager-single-dispose-");
++  cleanupWorkspace = ws.cleanup;
++  restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
++
++  let disposed = 0;
++  const runtime = createRuntime({
++    dispose() {
++      disposed += 1;
++    },
++  });
++  runtime.newSession = async () => {
++    throw new Error("seed replay failed");
++  };
++
++  const fixture = createManager();
++  const chatJid = "web:concurrent-broken-branch";
++  fixture.pool.set(chatJid, { runtime, lastUsed: Date.now() });
++  writeDeferredBranchSeed(chatJid, {
++    version: 1,
++    parentSession: null,
++    sessionName: "Broken",
++    model: null,
++    thinkingLevel: null,
++    mode: "rotated_context",
++  });
++
++  const [first, second] = await Promise.allSettled([
++    fixture.manager.getOrCreate(chatJid),
++    fixture.manager.getOrCreate(chatJid),
++  ]);
++
++  expect(first.status).toBe("rejected");
++  expect(second.status).toBe("rejected");
++  expect(disposed).toBe(1);
++});

@@ -1,42 +1,8 @@
-From 6c0bc59dc355f8d33d9cd06192bfb4ff9b5b196e Mon Sep 17 00:00:00 2001
-From: alice <aliceisjustplaying@gmail.com>
-Date: Thu, 16 Apr 2026 10:06:00 +0000
-Subject: [PATCH] web: add push subscription foundation
-
----
- .../src/channels/web/http/dispatch-agent.ts   |  50 ++++-
- .../src/channels/web/http/dispatch-shell.ts   |   4 +
- runtime/src/channels/web/http/route-flags.ts  |   4 +
- runtime/src/channels/web/http/static.ts       |  20 +-
- .../src/channels/web/push/web-push-routes.ts  |  55 +++++
- .../src/channels/web/push/web-push-store.ts   | 208 ++++++++++++++++++
- .../test/channels/web/helpers/route-flags.ts  |   1 +
- .../channels/web/http-dispatch-agent.test.ts  |   3 +
- .../channels/web/http-dispatch-shell.test.ts  |   5 +-
- runtime/test/channels/web/route-flags.test.ts |  13 ++
- .../test/channels/web/web-push-routes.test.ts |  70 ++++++
- .../test/channels/web/web-push-store.test.ts  | 121 ++++++++++
- runtime/test/web/use-notifications.test.ts    |  15 ++
- runtime/web/src/api.ts                        |  26 +++
- runtime/web/src/ui/app-shell-bootstrap.ts     |  12 +
- runtime/web/src/ui/use-notifications.ts       | 138 +++++++++++-
- runtime/web/static/manifest.json              |   1 +
- runtime/web/static/sw.js                      |  77 +++++++
- 18 files changed, 805 insertions(+), 18 deletions(-)
- create mode 100644 runtime/src/channels/web/push/web-push-routes.ts
- create mode 100644 runtime/src/channels/web/push/web-push-store.ts
- create mode 100644 runtime/test/channels/web/route-flags.test.ts
- create mode 100644 runtime/test/channels/web/web-push-routes.test.ts
- create mode 100644 runtime/test/channels/web/web-push-store.test.ts
- create mode 100644 runtime/test/web/use-notifications.test.ts
- create mode 100644 runtime/web/static/sw.js
-
 diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
-index a77a57f7..9e56c228 100644
+index 25bfb264..370c3062 100644
 --- a/runtime/src/channels/web/http/dispatch-agent.ts
 +++ b/runtime/src/channels/web/http/dispatch-agent.ts
 @@ -3,6 +3,11 @@
-  * web/http/dispatch-agent.ts – Agent route dispatch helpers.
   */
  
  import type { WebChannelLike } from "../core/web-channel-contracts.js";
@@ -48,7 +14,7 @@ index a77a57f7..9e56c228 100644
  
  interface ExactAgentRoute {
    method: string;
-@@ -222,6 +227,21 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+@@ -235,6 +240,21 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
      path: "/agent/card-action",
      handle: (channel, req) => channel.handleAdaptiveCardAction(req),
    },
@@ -71,7 +37,7 @@ index a77a57f7..9e56c228 100644
      method: "POST",
      path: "/agent/side-prompt",
 diff --git a/runtime/src/channels/web/http/dispatch-shell.ts b/runtime/src/channels/web/http/dispatch-shell.ts
-index 7c66bca..9afbef5 100644
+index 7c66bca6..9afbef5f 100644
 --- a/runtime/src/channels/web/http/dispatch-shell.ts
 +++ b/runtime/src/channels/web/http/dispatch-shell.ts
 @@ -49,6 +49,10 @@ export async function handleShellRoutes(
@@ -86,7 +52,7 @@ index 7c66bca..9afbef5 100644
      return channel.serveStatic("js/vendor/ghostty-vt.wasm");
    }
 diff --git a/runtime/src/channels/web/http/route-flags.ts b/runtime/src/channels/web/http/route-flags.ts
-index 7244599..72bc5ab 100644
+index 7244599e..72bc5ab0 100644
 --- a/runtime/src/channels/web/http/route-flags.ts
 +++ b/runtime/src/channels/web/http/route-flags.ts
 @@ -42,6 +42,8 @@ export type RouteFlags = {
@@ -115,7 +81,7 @@ index 7244599..72bc5ab 100644
      flags.isAvatar
    );
 diff --git a/runtime/src/channels/web/http/static.ts b/runtime/src/channels/web/http/static.ts
-index 4aa8e58..8fbf1c2 100644
+index 4aa8e589..8fbf1c25 100644
 --- a/runtime/src/channels/web/http/static.ts
 +++ b/runtime/src/channels/web/http/static.ts
 @@ -99,9 +99,11 @@ export async function serveStatic(relPath: string, notFound: () => Response): Pr
@@ -156,7 +122,7 @@ index 4aa8e58..8fbf1c2 100644
  
 diff --git a/runtime/src/channels/web/push/web-push-routes.ts b/runtime/src/channels/web/push/web-push-routes.ts
 new file mode 100644
-index 0000000..2836dd2
+index 00000000..2836dd22
 --- /dev/null
 +++ b/runtime/src/channels/web/push/web-push-routes.ts
 @@ -0,0 +1,55 @@
@@ -217,10 +183,10 @@ index 0000000..2836dd2
 +}
 diff --git a/runtime/src/channels/web/push/web-push-store.ts b/runtime/src/channels/web/push/web-push-store.ts
 new file mode 100644
-index 0000000..82853db
+index 00000000..7a494b4f
 --- /dev/null
 +++ b/runtime/src/channels/web/push/web-push-store.ts
-@@ -0,0 +1,208 @@
+@@ -0,0 +1,237 @@
 +/**
 + * web/push/web-push-store.ts – Minimal persistent storage for VAPID keys and Web Push subscriptions.
 + */
@@ -280,7 +246,7 @@ index 0000000..82853db
 +}
 +
 +function writeJsonFile(path: string, value: unknown): void {
-+  mkdirSync(dirname(path), { recursive: true });
++  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 +  const tempPath = `${path}.tmp-${process.pid}-${Date.now()}`;
 +  try {
 +    writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
@@ -389,6 +355,27 @@ index 0000000..82853db
 +  writeJsonFile(resolveSubscriptionsPath(baseDir), entries);
 +}
 +
++function getMaxStoredWebPushSubscriptions(): number {
++  return Math.max(
++    1,
++    Number.parseInt(String(process.env.PICLAW_WEB_PUSH_SUBSCRIPTION_CAP || "32"), 10) || 32,
++  );
++}
++
++function capStoredWebPushSubscriptions(entries: StoredWebPushSubscription[]): StoredWebPushSubscription[] {
++  const maxEntries = getMaxStoredWebPushSubscriptions();
++  if (entries.length <= maxEntries) return entries;
++  return entries
++    .slice()
++    .sort((left, right) => {
++      const leftTime = Date.parse(left.updatedAt || left.createdAt || "") || 0;
++      const rightTime = Date.parse(right.updatedAt || right.createdAt || "") || 0;
++      if (rightTime !== leftTime) return rightTime - leftTime;
++      return left.endpoint.localeCompare(right.endpoint);
++    })
++    .slice(0, maxEntries);
++}
++
 +export function upsertStoredWebPushSubscription(
 +  value: unknown,
 +  options: { baseDir?: string; userAgent?: string | null; now?: string; deviceId?: string | null } = {}
@@ -409,7 +396,7 @@ index 0000000..82853db
 +  const existingIndex = endpointIndex !== -1 ? endpointIndex : deviceIndex;
 +  if (existingIndex !== -1) {
 +    const existing = entries[existingIndex];
-+    entries[existingIndex] = {
++    const nextEntry = {
 +      ...existing,
 +      endpoint: normalized.endpoint,
 +      expirationTime: normalized.expirationTime,
@@ -418,12 +405,13 @@ index 0000000..82853db
 +      userAgent: normalized.userAgent || existing.userAgent || null,
 +      deviceId: normalized.deviceId || existing.deviceId || null,
 +    };
-+    writeStoredWebPushSubscriptions(entries, baseDir);
-+    return entries[existingIndex];
++    entries[existingIndex] = nextEntry;
++    writeStoredWebPushSubscriptions(capStoredWebPushSubscriptions(entries), baseDir);
++    return nextEntry;
 +  }
 +
 +  entries.push(normalized);
-+  writeStoredWebPushSubscriptions(entries, baseDir);
++  writeStoredWebPushSubscriptions(capStoredWebPushSubscriptions(entries), baseDir);
 +  return normalized;
 +}
 +
@@ -437,7 +425,7 @@ index 0000000..82853db
 +  return true;
 +}
 diff --git a/runtime/test/channels/web/helpers/route-flags.ts b/runtime/test/channels/web/helpers/route-flags.ts
-index 8aaf63e..d6f6066 100644
+index 8aaf63ea..d6f6066f 100644
 --- a/runtime/test/channels/web/helpers/route-flags.ts
 +++ b/runtime/test/channels/web/helpers/route-flags.ts
 @@ -21,6 +21,7 @@ export function buildRouteFlags(overrides: Partial<RouteFlags> = {}): RouteFlags
@@ -449,7 +437,7 @@ index 8aaf63e..d6f6066 100644
      isPublicStatic: false,
      isDocsAsset: false,
 diff --git a/runtime/test/channels/web/http-dispatch-agent.test.ts b/runtime/test/channels/web/http-dispatch-agent.test.ts
-index e3d02f9..73cc4fb 100644
+index e3d02f9f..73cc4fbd 100644
 --- a/runtime/test/channels/web/http-dispatch-agent.test.ts
 +++ b/runtime/test/channels/web/http-dispatch-agent.test.ts
 @@ -128,6 +128,9 @@ describe("web http agent dispatch", () => {
@@ -463,7 +451,7 @@ index e3d02f9..73cc4fb 100644
      expect((await handleAgentRoutes(channel, sidePromptReq, "/agent/side-prompt", new URL(sidePromptReq.url)))?.status).toBe(206);
  
 diff --git a/runtime/test/channels/web/http-dispatch-shell.test.ts b/runtime/test/channels/web/http-dispatch-shell.test.ts
-index 892692d..2711491 100644
+index 892692d8..27114913 100644
 --- a/runtime/test/channels/web/http-dispatch-shell.test.ts
 +++ b/runtime/test/channels/web/http-dispatch-shell.test.ts
 @@ -10,7 +10,7 @@ describe("web http shell dispatch", () => {
@@ -487,7 +475,7 @@ index 892692d..2711491 100644
      const staticFlags = buildRouteFlags({ isStaticAsset: true });
 diff --git a/runtime/test/channels/web/route-flags.test.ts b/runtime/test/channels/web/route-flags.test.ts
 new file mode 100644
-index 0000000..5714233
+index 00000000..57142338
 --- /dev/null
 +++ b/runtime/test/channels/web/route-flags.test.ts
 @@ -0,0 +1,13 @@
@@ -506,7 +494,7 @@ index 0000000..5714233
 +});
 diff --git a/runtime/test/channels/web/web-push-routes.test.ts b/runtime/test/channels/web/web-push-routes.test.ts
 new file mode 100644
-index 0000000..9d735e8
+index 00000000..9d735e8b
 --- /dev/null
 +++ b/runtime/test/channels/web/web-push-routes.test.ts
 @@ -0,0 +1,70 @@
@@ -582,10 +570,10 @@ index 0000000..9d735e8
 +});
 diff --git a/runtime/test/channels/web/web-push-store.test.ts b/runtime/test/channels/web/web-push-store.test.ts
 new file mode 100644
-index 0000000..b8b2c15
+index 00000000..2682abb6
 --- /dev/null
 +++ b/runtime/test/channels/web/web-push-store.test.ts
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,150 @@
 +import { afterEach, describe, expect, test } from "bun:test";
 +import { mkdtempSync, rmSync } from "node:fs";
 +import { join } from "node:path";
@@ -706,10 +694,39 @@ index 0000000..b8b2c15
 +      "https://push.example.test/device/new",
 +    ]);
 +  });
++
++  test("caps the stored subscription list to the newest entries", () => {
++    const baseDir = createTempPushDir();
++    const previousCap = process.env.PICLAW_WEB_PUSH_SUBSCRIPTION_CAP;
++    process.env.PICLAW_WEB_PUSH_SUBSCRIPTION_CAP = "2";
++
++    try {
++      upsertStoredWebPushSubscription(createSubscription("https://push.example.test/device/1", "device-1"), {
++        baseDir,
++        now: "2026-04-14T19:00:00.000Z",
++      });
++      upsertStoredWebPushSubscription(createSubscription("https://push.example.test/device/2", "device-2"), {
++        baseDir,
++        now: "2026-04-14T19:01:00.000Z",
++      });
++      upsertStoredWebPushSubscription(createSubscription("https://push.example.test/device/3", "device-3"), {
++        baseDir,
++        now: "2026-04-14T19:02:00.000Z",
++      });
++
++      expect(listStoredWebPushSubscriptions(baseDir).map((entry) => entry.endpoint)).toEqual([
++        "https://push.example.test/device/3",
++        "https://push.example.test/device/2",
++      ]);
++    } finally {
++      if (previousCap === undefined) delete process.env.PICLAW_WEB_PUSH_SUBSCRIPTION_CAP;
++      else process.env.PICLAW_WEB_PUSH_SUBSCRIPTION_CAP = previousCap;
++    }
++  });
 +});
 diff --git a/runtime/test/web/use-notifications.test.ts b/runtime/test/web/use-notifications.test.ts
 new file mode 100644
-index 0000000..6f74358
+index 00000000..6f743585
 --- /dev/null
 +++ b/runtime/test/web/use-notifications.test.ts
 @@ -0,0 +1,15 @@
@@ -729,10 +746,10 @@ index 0000000..6f74358
 +  expect(formatNotificationTitle('', '')).toBe('PiClaw');
 +});
 diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
-index ba6bdf0..67a60d0 100644
+index 4e0597a1..eb5adf78 100644
 --- a/runtime/web/src/api.ts
 +++ b/runtime/web/src/api.ts
-@@ -278,6 +278,32 @@ export async function sendPeerAgentMessage(sourceChatJid, targetChatOrName, cont
+@@ -274,6 +274,32 @@ export async function sendPeerAgentMessage(sourceChatJid, targetChatOrName, cont
      });
  }
  
@@ -766,7 +783,7 @@ index ba6bdf0..67a60d0 100644
   * Get available agents / current agent roster.
   */
 diff --git a/runtime/web/src/ui/app-shell-bootstrap.ts b/runtime/web/src/ui/app-shell-bootstrap.ts
-index e50ddb08..65f856e5 100644
+index 6dc4e0f6..df44296a 100644
 --- a/runtime/web/src/ui/app-shell-bootstrap.ts
 +++ b/runtime/web/src/ui/app-shell-bootstrap.ts
 @@ -26,6 +26,7 @@ interface AppApiSurface {
@@ -777,7 +794,7 @@ index e50ddb08..65f856e5 100644
  
  export function configureMarked(markedInstance: { setOptions?: (options: Record<string, unknown>) => void } | null | undefined): void {
    if (!markedInstance || typeof markedInstance.setOptions !== 'function') return;
-@@ -66,6 +67,16 @@ export function registerAppPaneExtensions(): void {
+@@ -72,6 +73,16 @@ export function registerAppPaneExtensions(): void {
    paneRegistry.register(terminalTabPaneExtension);
  }
  
@@ -794,7 +811,8 @@ index e50ddb08..65f856e5 100644
  export function initializeAppShellRuntime(): void {
    if (initialized) return;
    const markedInstance = typeof window !== 'undefined'
-@@ -74,6 +85,7 @@ export function initializeAppShellRuntime(): void {
+@@ -80,6 +91,7 @@ export function initializeAppShellRuntime(): void {
+   configureMarked(markedInstance);
    installBrowserNoiseFilters(typeof window !== 'undefined' ? window : null);
    registerAppPaneExtensions();
 +  registerAppServiceWorker(typeof window !== 'undefined' ? window : null);
@@ -802,7 +820,7 @@ index e50ddb08..65f856e5 100644
  }
  
 diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
-index 5ccaf9b..a4f3fe5 100644
+index 5ccaf9b6..a4f3fe55 100644
 --- a/runtime/web/src/ui/use-notifications.ts
 +++ b/runtime/web/src/ui/use-notifications.ts
 @@ -1,18 +1,122 @@
@@ -985,7 +1003,7 @@ index 5ccaf9b..a4f3fe5 100644
      }
    }, []);
 diff --git a/runtime/web/static/manifest.json b/runtime/web/static/manifest.json
-index 6c25751..d5e8a1c 100644
+index 6c25751a..d5e8a1c6 100644
 --- a/runtime/web/static/manifest.json
 +++ b/runtime/web/static/manifest.json
 @@ -1,4 +1,5 @@
@@ -996,7 +1014,7 @@ index 6c25751..d5e8a1c 100644
    "description": "Slack-like interface for coding agents",
 diff --git a/runtime/web/static/sw.js b/runtime/web/static/sw.js
 new file mode 100644
-index 0000000..5b96ffe
+index 00000000..5b96ffee
 --- /dev/null
 +++ b/runtime/web/static/sw.js
 @@ -0,0 +1,77 @@

@@ -1,19 +1,5 @@
-From 675e3601bde84fd5f71dde198e64b8d0f1d6c64e Mon Sep 17 00:00:00 2001
-From: Codex <codex@example.com>
-Date: Thu, 16 Apr 2026 12:34:29 +0000
-Subject: [PATCH] perf: warm recent chats from branch refreshes
-
----
- runtime/src/agent-pool.ts                     | 44 +++++++++++++++++++
- .../channel-endpoint-facade-service.ts        | 18 ++++++++
- runtime/src/db.ts                             |  1 +
- runtime/src/db/messages.ts                    | 23 ++++++++++
- runtime/test/agent-pool/agent-pool.test.ts    | 41 +++++++++++++++++
- .../channel-endpoint-facade-service.test.ts   | 19 ++++++++
- 6 files changed, 146 insertions(+)
-
 diff --git a/runtime/src/agent-pool.ts b/runtime/src/agent-pool.ts
-index 8d1e90f3..e0b5b6f5 100644
+index 8d1e90f3..73c3a61a 100644
 --- a/runtime/src/agent-pool.ts
 +++ b/runtime/src/agent-pool.ts
 @@ -56,6 +56,7 @@ import {
@@ -42,7 +28,7 @@ index 8d1e90f3..e0b5b6f5 100644
 +
 +    while (scheduled.length < targetCount) {
 +      const candidates = listRecentChatJids(fetchLimit, {
-+        excludeChatJids: [...excluded],
++        excludeChatJids: [...excluded, ...seen],
 +      });
 +      for (const chatJid of candidates) {
 +        if (seen.has(chatJid)) continue;
@@ -75,10 +61,10 @@ index 8d1e90f3..e0b5b6f5 100644
      return this.sessionManager.prewarm(chatJid, options);
    }
 diff --git a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
-index 9079d06a..bab203d5 100644
+index 9079d06a..c0be364f 100644
 --- a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
 +++ b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
-@@ -194,6 +194,24 @@ export class WebChannelEndpointFacadeService {
+@@ -194,9 +194,33 @@ export class WebChannelEndpointFacadeService {
        const includeArchived = ["1", "true", "yes", "on"].includes(
          String(url.searchParams.get("include_archived") || "").trim().toLowerCase(),
        );
@@ -92,6 +78,13 @@ index 9079d06a..bab203d5 100644
 +      const excludeChatJid = typeof url.searchParams.get("exclude_chat_jid") === "string"
 +        ? url.searchParams.get("exclude_chat_jid")!.trim()
 +        : "";
++      const prewarmChatJid = typeof url.searchParams.get("prewarm_chat_jid") === "string"
++        ? url.searchParams.get("prewarm_chat_jid")!.trim()
++        : "";
++
+       const chats = typeof this.options.listKnownChats === "function"
+         ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
+         : this.options.listActiveChats();
 +
 +      if (!rootChatJid && prewarmRecent) {
 +        this.options.agentPool.scheduleRecentChatWarmup({
@@ -99,10 +92,12 @@ index 9079d06a..bab203d5 100644
 +          excludeChatJids: excludeChatJid ? [excludeChatJid] : [],
 +        });
 +      }
-+
-       const chats = typeof this.options.listKnownChats === "function"
-         ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
-         : this.options.listActiveChats();
++      if (prewarmChatJid && chats.some((chat) => typeof (chat as { chat_jid?: unknown })?.chat_jid === "string" && (chat as { chat_jid: string }).chat_jid.trim() === prewarmChatJid)) {
++        this.options.agentPool.scheduleChatWarmup(prewarmChatJid, { priority: true });
++      }
+       return this.options.json({ chats }, 200);
+     });
+     return appendServerTiming(result, {
 diff --git a/runtime/src/db.ts b/runtime/src/db.ts
 index 1c1612b3..cf205c41 100644
 --- a/runtime/src/db.ts
@@ -150,10 +145,10 @@ index 9145015f..5a56019d 100644
   * Persist a message into the `messages` table (INSERT OR REPLACE).
   * Returns the SQLite rowid of the inserted row (used as the interaction id
 diff --git a/runtime/test/agent-pool/agent-pool.test.ts b/runtime/test/agent-pool/agent-pool.test.ts
-index 34211fb5..10f79101 100644
+index 34211fb5..dc408b07 100644
 --- a/runtime/test/agent-pool/agent-pool.test.ts
 +++ b/runtime/test/agent-pool/agent-pool.test.ts
-@@ -290,6 +290,47 @@ test("agent pool evicts idle sessions and recreates them", async () => {
+@@ -290,6 +290,75 @@ test("agent pool evicts idle sessions and recreates them", async () => {
    await pool.shutdown();
  });
  
@@ -198,18 +193,47 @@ index 34211fb5..10f79101 100644
 +  await pool.shutdown();
 +});
 +
++test("agent pool keeps expanding recent-chat warmup past already-warm top rows", async () => {
++  const ws = getTestWorkspace();
++  restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
++
++  const db = await importFresh<typeof import("../src/db.js")>("../src/db.js");
++  db.initDatabase();
++  const baseTimeMs = Date.parse("2026-04-14T23:59:00.000Z");
++  for (let index = 0; index < 101; index += 1) {
++    const chatJid = `web:chat-${String(index).padStart(3, "0")}`;
++    db.storeChatMetadata(chatJid, new Date(baseTimeMs - index * 60_000).toISOString(), `Chat ${index}`);
++  }
++
++  const { AgentPool } = await importFresh<typeof import("../src/agent-pool.js")>("../src/agent-pool.js");
++  const pool = new AgentPool({
++    createSession: async () => createRuntime({ subscribe: () => () => {}, prompt: async () => {}, abort: async () => {}, dispose() {} }) as any,
++  });
++
++  for (let index = 0; index < 100; index += 1) {
++    const chatJid = `web:chat-${String(index).padStart(3, "0")}`;
++    (pool as any).pool.set(chatJid, { runtime: createRuntime({ dispose() {} }), lastUsed: Date.now() });
++  }
++
++  const scheduled = (pool as any).scheduleRecentChatWarmup({ limit: 1, excludeChatJids: ["web:default"] });
++  expect(scheduled).toEqual(["web:chat-100"]);
++
++  await pool.shutdown();
++});
++
  test("agent pool can run a side prompt with the current model and thinking level", async () => {
    const ws = getTestWorkspace();
    restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
 diff --git a/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts b/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts
-index b5e17332..1c25ea35 100644
+index b5e17332..509e3e98 100644
 --- a/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts
 +++ b/runtime/test/channels/web/endpoints/channel-endpoint-facade-service.test.ts
-@@ -71,11 +71,18 @@ function createFacade(getIdentitySnapshot: () => WebChannelIdentitySnapshot) {
+@@ -71,11 +71,23 @@ function createFacade(getIdentitySnapshot: () => WebChannelIdentitySnapshot) {
  
    const ensureCalls: string[] = [];
    const postCalls: Array<{ isReply: boolean; chatJid: string }> = [];
 +  const scheduledWarmups: Array<{ limit?: number; excludeChatJids?: string[] }> = [];
++  const scheduledPriorityWarmups: string[] = [];
    const activeChats = [{ chat_jid: "web:default", agent_name: "Pi" }];
    const knownChats = [{ chat_jid: "web:branch", agent_name: "Branch" }];
    const options: WebChannelEndpointFacadeOptions = {
@@ -220,19 +244,24 @@ index b5e17332..1c25ea35 100644
 +        scheduledWarmups.push(input);
 +        return [];
 +      },
++      scheduleChatWarmup: (chatJid: string) => {
++        scheduledPriorityWarmups.push(chatJid);
++        return true;
++      },
 +    } as unknown as AgentPool,
      getIdentitySnapshot,
      ensureAvatarCache: async (_kind, source) => {
        ensureCalls.push(source);
-@@ -95,6 +102,7 @@ function createFacade(getIdentitySnapshot: () => WebChannelIdentitySnapshot) {
+@@ -95,6 +107,8 @@ function createFacade(getIdentitySnapshot: () => WebChannelIdentitySnapshot) {
      facade: new WebChannelEndpointFacadeService(options),
      ensureCalls,
      postCalls,
 +    scheduledWarmups,
++    scheduledPriorityWarmups,
      activeChats,
      knownChats,
    };
-@@ -179,4 +187,15 @@ describe("web channel endpoint facade service", () => {
+@@ -179,4 +193,27 @@ describe("web channel endpoint facade service", () => {
      expect(branchesResponse.status).toBe(200);
      expect(await branchesResponse.json()).toEqual({ chats: knownChats });
    });
@@ -247,7 +276,16 @@ index b5e17332..1c25ea35 100644
 +    expect(await branchesResponse.json()).toEqual({ chats: knownChats });
 +    expect(scheduledWarmups).toEqual([{ limit: 4, excludeChatJids: ["web:default"] }]);
 +  });
++
++  test("can schedule a validated priority warmup for the currently opened chat", async () => {
++    const { facade, scheduledPriorityWarmups } = createFacade(() => createIdentitySnapshot());
++
++    const response = facade.handleAgentBranches(
++      new Request("https://example.com/agent/branches?prewarm_chat_jid=web%3Abranch")
++    );
++
++    expect(response.status).toBe(200);
++    expect(await response.json()).toEqual({ chats: [{ chat_jid: "web:branch", agent_name: "Branch" }] });
++    expect(scheduledPriorityWarmups).toEqual(["web:branch"]);
++  });
  });
--- 
-2.51.2
-

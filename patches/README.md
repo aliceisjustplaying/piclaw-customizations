@@ -101,7 +101,7 @@ Historical note:
 | ~~30~~ | Re-split | Replaced by active patches `57`, `58`, `59`, and `60`; monolith retained in `patches/retired/30-web-push-and-notification-delivery.patch` |
 | ~~31~~ | Merged upstream | PR #42; upstream commit `63f3aae4` |
 | ~~47~~ | Merged upstream | PR #48; upstream commit `97cae922` |
-| ~~48~~ | Upstreamed/subsumed | Equivalent behavior landed on `main` by `8dec1ab`; PR #53 left open |
+| ~~48~~ | Upstreamed/subsumed | Equivalent behavior landed on `main` by `62329116`; PR #53 left open |
 | ~~49~~ | Merged upstream | PR #49; upstream commit `62329116` |
 | ~~50~~ | Merged upstream | PR #50; upstream commit `054c1a62` |
 | ~~54~~ | Merged upstream | PR #56; upstream commit `8dec1ab6` |
