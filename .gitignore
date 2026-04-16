@@ -1,5 +1,6 @@
 node_modules/
 patches/.state/
+*.locket/
 *.swp
 *.swo
 .DS_Store
