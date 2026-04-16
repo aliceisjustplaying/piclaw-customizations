@@ -120,8 +120,16 @@ Codex and Claude "updates" are explicit no-ops — those CLIs are Nix-managed; t
 PiClaw's web-push runtime needs a real public VAPID subject in the service environment:
 
 - `PICLAW_WEB_PUSH_VAPID_SUBJECT=https://pix.mosphere.at`
+- `PICLAW_WEB_NOTIFICATION_DEBUG_LABELS=1` only if you want notification titles to show `[Local]` / `[Web Push]` while debugging; default is off
 
 Without that, iPhone Safari PWA subscriptions can be stored successfully in `/workspace/.piclaw/web-push/subscriptions.json`, but Apple Push rejects outbound deliveries with `403 {"reason":"BadJwtToken"}`. The upstream fallback `mailto:notifications@localhost.invalid` is not sufficient for this deployment.
+
+Current delivery behavior is per-device and per-chat:
+
+- visible live client for that chat on a device: no notification on that device
+- hidden desktop/non-iPhone live client for that chat: local notification on that device
+- hidden iPhone/iPad PWA live client only: Web Push is allowed for that device
+- no live client for that chat: Web Push is allowed for that device
 
 Source of truth for the live service env is the host config in [`/workspace/src/pix/modules/piclaw.nix`](/workspace/src/pix/modules/piclaw.nix). If mobile web push stops working after a restart or rebuild, check that rendered env first:
 
