@@ -7,6 +7,7 @@ index 649469b1..9f8c0acc 100644
  import { createLogger, debugSuppressedError } from "../utils/logger.js";
  
 +const ANTHROPIC_OAUTH_USAGE_BETA = "oauth-2025-04-20";
++const PROVIDER_USAGE_FETCH_TIMEOUT_MS = 10_000;
 +
  export interface ProviderUsageWindow {
    label: string;
@@ -116,7 +117,7 @@ index 649469b1..9f8c0acc 100644
 +    ? overageGrant.currency.trim().toUpperCase()
 +    : null;
 +
-+  if (!enabled && (grantAmountMinorUnits == null || grantAmountMinorUnits <= 0) && (monthlyLimitMinor == null || monthlyLimitMinor === 0)) {
++  if (!enabled && (grantAmountMinorUnits == null || grantAmountMinorUnits <= 0) && monthlyLimitMinor == null) {
 +    return null;
 +  }
 +
@@ -163,6 +164,21 @@ index 649469b1..9f8c0acc 100644
 +  return null;
 +}
 +
++const anthropicOrgUuidByAccessToken = new Map<string, string | null>();
++
++async function fetchJsonWithTimeout(url: string, init: RequestInit): Promise<Response> {
++  const controller = typeof AbortController === "function" ? new AbortController() : null;
++  const timeoutId = controller ? setTimeout(() => controller.abort(), PROVIDER_USAGE_FETCH_TIMEOUT_MS) : null;
++  try {
++    return await fetch(url, {
++      ...init,
++      ...(controller ? { signal: controller.signal } : {}),
++    });
++  } finally {
++    if (timeoutId) clearTimeout(timeoutId);
++  }
++}
++
  async function getOAuthCredential(authStorage: AuthStorage, providerId: string): Promise<any | null> {
    const current = (authStorage.get(providerId) as any) ?? null;
    if (!current || current.type !== "oauth") return null;
@@ -184,7 +200,7 @@ index 649469b1..9f8c0acc 100644
  }
  
 +async function fetchAnthropicOAuthProfile(accessToken: string): Promise<any | null> {
-+  const res = await fetch("https://api.anthropic.com/api/oauth/profile", {
++  const res = await fetchJsonWithTimeout("https://api.anthropic.com/api/oauth/profile", {
 +    headers: {
 +      Authorization: `Bearer ${accessToken}`,
 +      Accept: "application/json",
@@ -197,14 +213,23 @@ index 649469b1..9f8c0acc 100644
 +  return await res.json();
 +}
 +
-+async function fetchAnthropicOverageCreditGrant(accessToken: string): Promise<any | null> {
++async function getAnthropicOrganizationUuid(accessToken: string): Promise<string | null> {
++  if (anthropicOrgUuidByAccessToken.has(accessToken)) {
++    return anthropicOrgUuidByAccessToken.get(accessToken) || null;
++  }
 +  const profile = await fetchAnthropicOAuthProfile(accessToken);
 +  const orgUuid = typeof profile?.organization?.uuid === "string" && profile.organization.uuid.trim()
 +    ? profile.organization.uuid.trim()
 +    : null;
++  anthropicOrgUuidByAccessToken.set(accessToken, orgUuid);
++  return orgUuid;
++}
++
++async function fetchAnthropicOverageCreditGrant(accessToken: string): Promise<any | null> {
++  const orgUuid = await getAnthropicOrganizationUuid(accessToken);
 +  if (!orgUuid) return null;
 +
-+  const res = await fetch(`https://api.anthropic.com/api/oauth/organizations/${orgUuid}/overage_credit_grant`, {
++  const res = await fetchJsonWithTimeout(`https://api.anthropic.com/api/oauth/organizations/${orgUuid}/overage_credit_grant`, {
 +    headers: {
 +      Authorization: `Bearer ${accessToken}`,
 +      Accept: "application/json",
@@ -222,7 +247,7 @@ index 649469b1..9f8c0acc 100644
 +  const credential = await getOAuthCredential(authStorage, "anthropic");
 +  if (!credential?.access) return null;
 +
-+  const usageResponse = await fetch("https://api.anthropic.com/api/oauth/usage", {
++  const usageResponse = await fetchJsonWithTimeout("https://api.anthropic.com/api/oauth/usage", {
 +    headers: {
 +      Authorization: `Bearer ${credential.access}`,
 +      Accept: "application/json",
@@ -251,7 +276,7 @@ index 649469b1..9f8c0acc 100644
 +
 +  return {
 +    provider: "anthropic",
-+    source: overageGrant ? "anthropic-oauth-usage-api+overage-credit-grant" : "anthropic-oauth-usage-api",
++    source: overageGrant?.granted === true ? "anthropic-oauth-usage-api+overage-credit-grant" : "anthropic-oauth-usage-api",
 +    plan: firstNonEmptyString(
 +      payload?.plan,
 +      payload?.plan_type,
@@ -354,6 +379,7 @@ index 15e35a93..b1708a0a 100644
 +          "anthropic-beta": "oauth-2025-04-20",
 +        }),
 +      });
++      expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeTruthy();
 +      expect(usage?.provider).toBe("anthropic");
 +      expect(usage?.primary?.label).toBe("5h");
 +      expect(usage?.primary?.remaining_percent).toBe(65);
@@ -412,6 +438,55 @@ index 15e35a93..b1708a0a 100644
 +      expect(usage?.extra_usage?.grant_currency).toBe("GBP");
 +      expect(usage?.extra_usage?.hint_short).toBe("extra off (£150.00)");
 +      expect(usage?.hint_short).toContain("extra off (£150.00)");
++    } finally {
++      globalThis.fetch = previousFetch;
++    }
++  });
++
++  test("keeps configured disabled caps visible and only adds the grant source suffix when access was granted", async () => {
++    const fetchMock = mock(async (input: RequestInfo | URL) => {
++      const url = String(input);
++      if (url === "https://api.anthropic.com/api/oauth/usage") {
++        return new Response(JSON.stringify({
++          five_hour: { utilization: 12, resets_at: new Date(Date.now() + 3600_000).toISOString() },
++          seven_day: { utilization: 18, resets_at: new Date(Date.now() + 86400_000).toISOString() },
++          extra_usage: {
++            is_enabled: false,
++            monthly_limit: 0,
++            used_credits: 0,
++            utilization: 0,
++          },
++        }));
++      }
++      if (url === "https://api.anthropic.com/api/oauth/profile") {
++        return new Response(JSON.stringify({ organization: { uuid: "org_654" } }));
++      }
++      if (url === "https://api.anthropic.com/api/oauth/organizations/org_654/overage_credit_grant") {
++        return new Response(JSON.stringify({
++          available: true,
++          eligible: true,
++          granted: false,
++          amount_minor_units: 2500,
++          currency: "USD",
++        }));
++      }
++      return new Response("not found", { status: 404 });
++    });
++    const previousFetch = globalThis.fetch;
++    globalThis.fetch = fetchMock as any;
++
++    try {
++      const usage = await getProviderUsage(
++        createAuthStorage({
++          anthropic: { type: "oauth", access: "tok-zero", expires: Date.now() + 60_000 },
++        }),
++        "anthropic"
++      );
++
++      expect(usage?.source).toBe("anthropic-oauth-usage-api");
++      expect(usage?.extra_usage?.monthly_limit_usd).toBe(0);
++      expect(usage?.extra_usage?.hint_short).toBe("extra off ($0)");
++      expect(usage?.hint_short).toContain("extra off ($0)");
 +    } finally {
 +      globalThis.fetch = previousFetch;
 +    }

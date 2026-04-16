@@ -1,25 +1,25 @@
-From 240ce76250c99d0a5a85d8454723e72e3190a53e Mon Sep 17 00:00:00 2001
-From: alice <aliceisjustplaying@gmail.com>
-Date: Thu, 16 Apr 2026 10:06:29 +0000
-Subject: [PATCH] web: coordinate local notification delivery by chat
+From 79be911037afd011b46a9dae7b5dd2ddacb4a5fb Mon Sep 17 00:00:00 2001
+From: a <a@b.c>
+Date: Thu, 16 Apr 2026 14:05:41 +0000
+Subject: [PATCH] patch58
 
 ---
  docs/web-notification-delivery-policy.md      |  70 +++++++
  .../src/channels/web/http/dispatch-agent.ts   |   6 +
  .../push/web-notification-presence-service.ts | 137 +++++++++++++
  .../src/channels/web/push/web-push-routes.ts  |  35 ++++
- .../channels/web/http-dispatch-agent.test.ts  |  13 ++
+ .../http-dispatch-agent-push-presence.test.ts |  19 ++
  .../web-notification-presence-service.test.ts |  91 +++++++++
- .../test/channels/web/web-push-routes.test.ts |  46 +++--
+ .../test/channels/web/web-push-routes.test.ts |  29 +++
  .../notification-delivery-coordinator.test.ts | 144 ++++++++++++++
  runtime/web/src/app.ts                        |   1 +
  .../ui/app-chat-pane-runtime-orchestration.ts |  12 +-
- runtime/web/src/ui/app-main-surface-state.ts  |   4 +-
  .../ui/notification-delivery-coordinator.ts   | 187 ++++++++++++++++++
  runtime/web/src/ui/use-notifications.ts       | 113 +++++++++--
- 13 files changed, 821 insertions(+), 38 deletions(-)
+ 12 files changed, 827 insertions(+), 17 deletions(-)
  create mode 100644 docs/web-notification-delivery-policy.md
  create mode 100644 runtime/src/channels/web/push/web-notification-presence-service.ts
+ create mode 100644 runtime/test/channels/web/http-dispatch-agent-push-presence.test.ts
  create mode 100644 runtime/test/channels/web/web-notification-presence-service.test.ts
  create mode 100644 runtime/test/web/notification-delivery-coordinator.test.ts
  create mode 100644 runtime/web/src/ui/notification-delivery-coordinator.ts
@@ -101,17 +101,18 @@ index 0000000..721fab1
 +- both are live, neither is visible
 +- result: exactly **one** hidden tab shows the local notification
 diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
-index 9e56c228..6576bb6 100644
+index 6d0f0a8..0893ef6 100644
 --- a/runtime/src/channels/web/http/dispatch-agent.ts
 +++ b/runtime/src/channels/web/http/dispatch-agent.ts
-@@ -5,6 +5,7 @@
+@@ -4,6 +4,7 @@
+ 
  import type { WebChannelLike } from "../core/web-channel-contracts.js";
  import {
 +  handleWebPushPresence,
    handleWebPushSubscriptionDelete,
    handleWebPushSubscriptionUpsert,
    handleWebPushVapidPublicKey,
-@@ -255,6 +256,11 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+@@ -221,6 +222,11 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
      path: "/agent/push/subscription",
      handle: (_channel, req) => handleWebPushSubscriptionDelete(req),
    },
@@ -125,7 +126,7 @@ index 9e56c228..6576bb6 100644
      path: "/agent/side-prompt",
 diff --git a/runtime/src/channels/web/push/web-notification-presence-service.ts b/runtime/src/channels/web/push/web-notification-presence-service.ts
 new file mode 100644
-index 0000000..bde649d
+index 0000000..bbe8e21
 --- /dev/null
 +++ b/runtime/src/channels/web/push/web-notification-presence-service.ts
 @@ -0,0 +1,137 @@
@@ -267,7 +268,7 @@ index 0000000..bde649d
 +
 +export const webNotificationPresenceService = new WebNotificationPresenceService();
 diff --git a/runtime/src/channels/web/push/web-push-routes.ts b/runtime/src/channels/web/push/web-push-routes.ts
-index 2836dd2..564cb24 100644
+index b925293..83afd24 100644
 --- a/runtime/src/channels/web/push/web-push-routes.ts
 +++ b/runtime/src/channels/web/push/web-push-routes.ts
 @@ -7,6 +7,10 @@ import {
@@ -316,30 +317,31 @@ index 2836dd2..564cb24 100644
 +    return Response.json({ error: error instanceof Error ? error.message : "Invalid web notification presence payload." }, { status: 400 });
 +  }
 +}
-diff --git a/runtime/test/channels/web/http-dispatch-agent.test.ts b/runtime/test/channels/web/http-dispatch-agent.test.ts
-index 73cc4fb..54fa865 100644
---- a/runtime/test/channels/web/http-dispatch-agent.test.ts
-+++ b/runtime/test/channels/web/http-dispatch-agent.test.ts
-@@ -131,6 +131,19 @@ describe("web http agent dispatch", () => {
-     const vapidReq = new Request("https://example.com/agent/push/vapid-public-key", { method: "GET" });
-     expect((await handleAgentRoutes(channel, vapidReq, "/agent/push/vapid-public-key", new URL(vapidReq.url)))?.status).toBe(200);
- 
-+    const presenceReq = new Request("https://example.com/agent/push/presence", {
+diff --git a/runtime/test/channels/web/http-dispatch-agent-push-presence.test.ts b/runtime/test/channels/web/http-dispatch-agent-push-presence.test.ts
+new file mode 100644
+index 0000000..e72b1ec
+--- /dev/null
++++ b/runtime/test/channels/web/http-dispatch-agent-push-presence.test.ts
+@@ -0,0 +1,19 @@
++import { describe, expect, test } from "bun:test";
++
++import { handleAgentRoutes } from "../../../src/channels/web/http/dispatch-agent.js";
++
++describe("web http agent dispatch push presence", () => {
++  test("dispatches the push presence route", async () => {
++    const req = new Request("https://example.com/agent/push/presence", {
 +      method: "POST",
-+      headers: { "Content-Type": "application/json" },
++      headers: { "content-type": "application/json" },
 +      body: JSON.stringify({
 +        device_id: "device-1",
 +        client_id: "client-1",
 +        chat_jid: "web:default",
-+        visibility_state: "hidden",
-+        has_focus: false,
 +      }),
 +    });
-+    expect((await handleAgentRoutes(channel, presenceReq, "/agent/push/presence", new URL(presenceReq.url)))?.status).toBe(200);
 +
-     const sidePromptReq = new Request("https://example.com/agent/side-prompt", { method: "POST" });
-     expect((await handleAgentRoutes(channel, sidePromptReq, "/agent/side-prompt", new URL(sidePromptReq.url)))?.status).toBe(206);
- 
++    expect((await handleAgentRoutes({} as any, req, "/agent/push/presence", new URL(req.url)))?.status).toBe(200);
++  });
++});
 diff --git a/runtime/test/channels/web/web-notification-presence-service.test.ts b/runtime/test/channels/web/web-notification-presence-service.test.ts
 new file mode 100644
 index 0000000..90842e0
@@ -438,49 +440,25 @@ index 0000000..90842e0
 +  });
 +});
 diff --git a/runtime/test/channels/web/web-push-routes.test.ts b/runtime/test/channels/web/web-push-routes.test.ts
-index 9d735e8..9a81bb5 100644
+index 902b53a..2ae281f 100644
 --- a/runtime/test/channels/web/web-push-routes.test.ts
 +++ b/runtime/test/channels/web/web-push-routes.test.ts
-@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
+@@ -3,7 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
  import { join } from "node:path";
  import { tmpdir } from "node:os";
  
 +import { WebNotificationPresenceService } from "../../../src/channels/web/push/web-notification-presence-service.js";
  import {
--  handleWebPushSubscriptionDelete,
 +  handleWebPushPresence,
+   handleWebPushSubscriptionDelete,
    handleWebPushSubscriptionUpsert,
--  handleWebPushVapidPublicKey,
- } from "../../../src/channels/web/push/web-push-routes.js";
- 
- const tempDirs: string[] = [];
-@@ -26,17 +26,7 @@ afterEach(() => {
- });
- 
- describe("web push routes", () => {
--  test("returns a stored VAPID public key", async () => {
--    const baseDir = createTempPushDir();
--    const response = await handleWebPushVapidPublicKey({ baseDir });
--    const payload = await response.json();
--
--    expect(response.status).toBe(200);
--    expect(typeof payload.publicKey).toBe("string");
--    expect(payload.publicKey.length).toBeGreaterThan(0);
--  });
--
--  test("stores and removes subscription device ids", async () => {
-+  test("stores subscription device ids and tracks live presence updates", async () => {
-     const baseDir = createTempPushDir();
-     const upsertReq = new Request("https://example.com/agent/push/subscription", {
-       method: "POST",
-@@ -58,13 +48,29 @@ describe("web push routes", () => {
-     expect(upsertResponse.status).toBe(200);
-     expect(await upsertResponse.json()).toEqual({ ok: true, endpoint: "https://push.example.test/device/1", device_id: "device-1" });
- 
--    const deleteReq = new Request("https://example.com/agent/push/subscription", {
--      method: "DELETE",
--      headers: { "Content-Type": "application/json" },
--      body: JSON.stringify({ endpoint: "https://push.example.test/device/1" }),
+   handleWebPushVapidPublicKey,
+@@ -67,4 +69,31 @@ describe("web push routes", () => {
+     expect(deleteResponse.status).toBe(200);
+     expect(await deleteResponse.json()).toEqual({ ok: true, removed: true });
+   });
++
++  test("tracks live presence updates", async () => {
 +    const presenceService = new WebNotificationPresenceService({ now: () => 1000 });
 +    const presenceReq = new Request("https://example.com/agent/push/presence", {
 +      method: "POST",
@@ -503,12 +481,9 @@ index 9d735e8..9a81bb5 100644
 +      client_id: "client-1",
 +      chat_jid: "web:default",
 +      visibility_state: "hidden",
-     });
--    const deleteResponse = await handleWebPushSubscriptionDelete(deleteReq, { baseDir });
--    expect(deleteResponse.status).toBe(200);
--    expect(await deleteResponse.json()).toEqual({ ok: true, removed: true });
++    });
 +    expect(presenceService.getDeviceChatState("device-1", "web:default").hasLiveClient).toBe(true);
-   });
++  });
  });
 diff --git a/runtime/test/web/notification-delivery-coordinator.test.ts b/runtime/test/web/notification-delivery-coordinator.test.ts
 new file mode 100644
@@ -914,7 +889,7 @@ index 0000000..3d82c64
 +  return Boolean(leader && leader.clientId === snapshot.clientId);
 +}
 diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
-index a4f3fe5..0a586c8 100644
+index f5c4296..b257b9d 100644
 --- a/runtime/web/src/ui/use-notifications.ts
 +++ b/runtime/web/src/ui/use-notifications.ts
 @@ -2,6 +2,14 @@ import { deleteWebPushSubscription, getWebPushPublicKey, saveWebPushSubscription
@@ -932,7 +907,7 @@ index a4f3fe5..0a586c8 100644
  
  export const LOCAL_NOTIFICATION_SOURCE_LABEL = 'Local';
  export const WEB_PUSH_NOTIFICATION_SOURCE_LABEL = 'Web Push';
-@@ -71,26 +79,38 @@ async function disableWebPushSubscription(runtimeWindow, deviceId) {
+@@ -74,26 +82,38 @@ async function disableWebPushSubscription(runtimeWindow, deviceId) {
    return true;
  }
  
@@ -982,7 +957,7 @@ index a4f3fe5..0a586c8 100644
  
    useEffect(() => {
      const enabled = getLocalStorageBoolean('notificationsEnabled', false);
-@@ -98,6 +118,7 @@ export function useNotifications() {
+@@ -101,6 +121,7 @@ export function useNotifications() {
      setNotificationsEnabled(enabled);
      if (typeof window !== 'undefined') {
        deviceIdRef.current = getOrCreateNotificationDeviceId(window);
@@ -990,7 +965,7 @@ index a4f3fe5..0a586c8 100644
      }
      if (typeof Notification === 'undefined') {
        return;
-@@ -124,6 +145,64 @@ export function useNotifications() {
+@@ -127,6 +148,64 @@ export function useNotifications() {
      notificationsEnabledRef.current = notificationsEnabled;
    }, [notificationsEnabled]);
  
@@ -1055,7 +1030,7 @@ index a4f3fe5..0a586c8 100644
    const requestNotificationPermission = useCallback(() => {
      if (typeof Notification === 'undefined') return Promise.resolve('denied');
      try {
-@@ -201,10 +280,22 @@ export function useNotifications() {
+@@ -204,10 +283,22 @@ export function useNotifications() {
      }
    }, []);
  
@@ -1078,3 +1053,6 @@ index a4f3fe5..0a586c8 100644
 +    shouldNotifyLocallyForChat: shouldNotifyLocallyForChatId,
    };
  }
+-- 
+2.51.2
+

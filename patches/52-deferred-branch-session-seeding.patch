@@ -568,7 +568,10 @@ index 00000000..bd054871
 +  const primaryPath = getDeferredBranchSeedPath(chatJid);
 +  const claimedPath = getClaimedDeferredBranchSeedPath(chatJid);
 +  if (!existsSync(claimedPath)) return;
-+  rmSync(primaryPath, { force: true });
++  if (existsSync(primaryPath)) {
++    rmSync(claimedPath, { force: true });
++    return;
++  }
 +  renameSync(claimedPath, primaryPath);
 +}
 +
@@ -640,6 +643,14 @@ index d03bda97..a4debd12 100644
 +    return null;
 +  }
 +
++  private prunePrewarmCooldownEntries(now: number): void {
++    for (const [chatJid, lastQueuedAt] of this.prewarmCooldownByChat) {
++      if (now - lastQueuedAt >= 30_000) {
++        this.prewarmCooldownByChat.delete(chatJid);
++      }
++    }
++  }
++
    async refreshRuntime(chatJid: string, runtime: AgentSessionRuntime): Promise<void> {
      const entry = this.options.pool.get(chatJid);
      if (entry) {
@@ -691,8 +702,9 @@ index d03bda97..a4debd12 100644
 +    if (this.options.pool.has(normalizedChatJid) && !hasDeferredBranchSeed(normalizedChatJid)) return false;
      if (this.prewarmInFlight.has(normalizedChatJid) || this.queuedPrewarms.has(normalizedChatJid)) return false;
 +    const now = Date.now();
++    this.prunePrewarmCooldownEntries(now);
 +    const lastQueuedAt = this.prewarmCooldownByChat.get(normalizedChatJid) ?? 0;
-+    if (now - lastQueuedAt < 30_000) return false;
++    if (!options.priority && now - lastQueuedAt < 30_000) return false;
  
      this.queuedPrewarms.add(normalizedChatJid);
 +    this.prewarmCooldownByChat.set(normalizedChatJid, now);
@@ -1001,11 +1013,11 @@ index 42b24c59..2a705d90 100644
 @@ -1,7 +1,22 @@
 -import { expect, test } from "bun:test";
 +import { afterEach, expect, test } from "bun:test";
-+import { writeFileSync } from "fs";
++import { renameSync, writeFileSync } from "fs";
 +import { join } from "path";
  
  import type { AgentSessionRuntime } from "@mariozechner/pi-coding-agent";
-+import { readDeferredBranchSeed, writeDeferredBranchSeed } from "../../src/agent-pool/branch-seeding.js";
++import { readDeferredBranchSeed, restoreClaimedDeferredBranchSeed, writeDeferredBranchSeed } from "../../src/agent-pool/branch-seeding.js";
 +import { ensureSessionDir } from "../../src/agent-pool/session.js";
  import { AgentSessionManager } from "../../src/agent-pool/session-manager.js";
 +import { createTempWorkspace, setEnv } from "../helpers.js";
@@ -1163,4 +1175,60 @@ index 42b24c59..2a705d90 100644
 +  expect(first.status).toBe("rejected");
 +  expect(second.status).toBe("rejected");
 +  expect(disposed).toBe(1);
++});
++
++test("AgentSessionManager priority prewarms bypass the recent-chat cooldown and prune expired entries", async () => {
++  const fixture = createManager({
++    createSession: async () => createRuntime({ dispose() {} }),
++  });
++  const originalDateNow = Date.now;
++  Date.now = () => 100_000;
++
++  try {
++    (fixture.manager as any).prewarmCooldownByChat.set("web:recent", 99_500);
++    expect(fixture.manager.prewarm("web:recent")).toBe(false);
++    expect(fixture.manager.prewarm("web:recent", { priority: true })).toBe(true);
++
++    (fixture.manager as any).queuedPrewarms.clear();
++    (fixture.manager as any).prewarmQueue.length = 0;
++    (fixture.manager as any).prewarmCooldownByChat.set("web:stale", 69_000);
++    expect(fixture.manager.prewarm("web:fresh")).toBe(true);
++    expect((fixture.manager as any).prewarmCooldownByChat.has("web:stale")).toBe(false);
++  } finally {
++    Date.now = originalDateNow;
++    await fixture.manager.shutdown();
++  }
++});
++
++test("restoreClaimedDeferredBranchSeed preserves a newer primary seed written after claim", () => {
++  const ws = createTempWorkspace("piclaw-restore-claimed-seed-");
++  cleanupWorkspace = ws.cleanup;
++  restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
++
++  const chatJid = "web:claimed-seed";
++  const sessionDir = ensureSessionDir(chatJid);
++  const primaryPath = join(sessionDir, ".branch-seed.json");
++  const claimedPath = join(sessionDir, ".branch-seed.claimed.json");
++
++  writeDeferredBranchSeed(chatJid, {
++    version: 1,
++    parentSession: null,
++    sessionName: "Older",
++    model: null,
++    thinkingLevel: null,
++    mode: "rotated_context",
++  });
++  renameSync(primaryPath, claimedPath);
++  writeDeferredBranchSeed(chatJid, {
++    version: 1,
++    parentSession: null,
++    sessionName: "Newer",
++    model: null,
++    thinkingLevel: null,
++    mode: "rotated_context",
++  });
++
++  restoreClaimedDeferredBranchSeed(chatJid);
++
++  expect(readDeferredBranchSeed(chatJid)?.sessionName).toBe("Newer");
 +});

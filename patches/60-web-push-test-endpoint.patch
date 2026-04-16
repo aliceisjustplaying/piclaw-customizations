@@ -1,5 +1,50 @@
+From 26357ffc61565d88eec03e100b227e528adcbd6d Mon Sep 17 00:00:00 2001
+From: a <a@b.c>
+Date: Thu, 16 Apr 2026 14:08:59 +0000
+Subject: [PATCH] patch60
+
+---
+ .../src/channels/web/http/dispatch-agent.ts   |  6 ++
+ .../src/channels/web/http/rate-limit-rules.ts | 23 +++++
+ .../src/channels/web/push/web-push-routes.ts  | 66 +++++++++++++
+ .../src/channels/web/push/web-push-service.ts | 13 +++
+ .../web/http-dispatch-agent-push-test.test.ts | 25 +++++
+ .../web/http-route-classification.test.ts     |  6 ++
+ .../channels/web/web-push-test-routes.test.ts | 98 +++++++++++++++++++
+ .../web/web-push-test-service.test.ts         | 53 ++++++++++
+ runtime/web/src/api.ts                        | 11 +++
+ runtime/web/src/ui/use-notifications.ts       | 14 ++-
+ 10 files changed, 314 insertions(+), 1 deletion(-)
+ create mode 100644 runtime/test/channels/web/http-dispatch-agent-push-test.test.ts
+ create mode 100644 runtime/test/channels/web/web-push-test-routes.test.ts
+ create mode 100644 runtime/test/channels/web/web-push-test-service.test.ts
+
+diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
+index 0893ef6..624dd83 100644
+--- a/runtime/src/channels/web/http/dispatch-agent.ts
++++ b/runtime/src/channels/web/http/dispatch-agent.ts
+@@ -5,6 +5,7 @@
+ import type { WebChannelLike } from "../core/web-channel-contracts.js";
+ import {
+   handleWebPushPresence,
++  handleWebPushTest,
+   handleWebPushSubscriptionDelete,
+   handleWebPushSubscriptionUpsert,
+   handleWebPushVapidPublicKey,
+@@ -227,6 +228,11 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+     path: "/agent/push/presence",
+     handle: (_channel, req) => handleWebPushPresence(req),
+   },
++  {
++    method: "POST",
++    path: "/agent/push/test",
++    handle: (_channel, req) => handleWebPushTest(req),
++  },
+   {
+     method: "POST",
+     path: "/agent/side-prompt",
 diff --git a/runtime/src/channels/web/http/rate-limit-rules.ts b/runtime/src/channels/web/http/rate-limit-rules.ts
-index ccd1bc8d..96f59fa3 100644
+index ccd1bc8..2632814 100644
 --- a/runtime/src/channels/web/http/rate-limit-rules.ts
 +++ b/runtime/src/channels/web/http/rate-limit-rules.ts
 @@ -29,6 +29,8 @@ const DATA_AGENT_BRANCH_LIMIT = 20;
@@ -11,7 +56,7 @@ index ccd1bc8d..96f59fa3 100644
  
  /** Rate-limit rule returned for a specific method/path endpoint. */
  export type DataRateLimitRule = {
-@@ -104,6 +106,20 @@ export function getDataRateLimitRule(method: string, pathname: string): DataRate
+@@ -104,6 +106,27 @@ export function getDataRateLimitRule(method: string, pathname: string): DataRate
        message: "Too many side-prompt requests. Slow down.",
      };
    }
@@ -29,11 +74,18 @@ index ccd1bc8d..96f59fa3 100644
 +      message: "Too many notification subscription updates. Slow down.",
 +    };
 +  }
++  if (method === "DELETE" && pathname === "/agent/push/subscription") {
++    return {
++      bucket: "data/agent_push_subscription",
++      limit: DATA_AGENT_PUSH_SUBSCRIPTION_LIMIT,
++      message: "Too many notification subscription updates. Slow down.",
++    };
++  }
    if (method === "POST" && pathname === "/workspace/upload") {
      return {
        bucket: "data/workspace_upload",
 diff --git a/runtime/src/channels/web/push/web-push-routes.ts b/runtime/src/channels/web/push/web-push-routes.ts
-index 564cb241..edecb8e9 100644
+index 83afd24..674bff1 100644
 --- a/runtime/src/channels/web/push/web-push-routes.ts
 +++ b/runtime/src/channels/web/push/web-push-routes.ts
 @@ -7,6 +7,10 @@ import {
@@ -121,7 +173,7 @@ index 564cb241..edecb8e9 100644
 +  }
 +}
 diff --git a/runtime/src/channels/web/push/web-push-service.ts b/runtime/src/channels/web/push/web-push-service.ts
-index b12c2170..5e4c7d43 100644
+index d4704d0..c933c10 100644
 --- a/runtime/src/channels/web/push/web-push-service.ts
 +++ b/runtime/src/channels/web/push/web-push-service.ts
 @@ -54,6 +54,7 @@ export interface SendStoredWebPushNotificationOptions {
@@ -132,10 +184,11 @@ index b12c2170..5e4c7d43 100644
    ttl?: number;
    urgency?: "very-low" | "low" | "normal" | "high";
    sendNotification?: (
-@@ -417,3 +418,14 @@ export async function sendStoredWebPushNotification(
+@@ -436,3 +437,15 @@ export async function sendStoredWebPushNotification(
+     failed,
    };
  }
- 
++
 +export async function sendStoredWebPushTestNotification(
 +  options: SendStoredWebPushNotificationOptions & { title?: string; body?: string; url?: string; tag?: string; sourceLabel?: string } = {},
 +): Promise<StoredWebPushSendResult> {
@@ -147,49 +200,92 @@ index b12c2170..5e4c7d43 100644
 +    sourceLabel: options.sourceLabel || "Web Push",
 +  }, options);
 +}
+diff --git a/runtime/test/channels/web/http-dispatch-agent-push-test.test.ts b/runtime/test/channels/web/http-dispatch-agent-push-test.test.ts
+new file mode 100644
+index 0000000..b745b37
+--- /dev/null
++++ b/runtime/test/channels/web/http-dispatch-agent-push-test.test.ts
+@@ -0,0 +1,25 @@
++import { describe, expect, test } from "bun:test";
++
++import { handleAgentRoutes } from "../../../src/channels/web/http/dispatch-agent.js";
++
++describe("web http agent dispatch push test", () => {
++  test("dispatches the push test route", async () => {
++    const previousFlag = process.env.PICLAW_ENABLE_PUSH_TEST;
++    process.env.PICLAW_ENABLE_PUSH_TEST = "1";
++    const req = new Request("https://example.com/agent/push/test", {
++      method: "POST",
++      headers: { "content-type": "application/json" },
++      body: "{}",
++    });
++
++    try {
++      expect((await handleAgentRoutes({} as any, req, "/agent/push/test", new URL(req.url)))?.status).toBe(400);
++    } finally {
++      if (typeof previousFlag === "string") {
++        process.env.PICLAW_ENABLE_PUSH_TEST = previousFlag;
++      } else {
++        delete process.env.PICLAW_ENABLE_PUSH_TEST;
++      }
++    }
++  });
++});
 diff --git a/runtime/test/channels/web/http-route-classification.test.ts b/runtime/test/channels/web/http-route-classification.test.ts
-index 21d562c0..ea676c24 100644
+index 21d562c..e4ebf2b 100644
 --- a/runtime/test/channels/web/http-route-classification.test.ts
 +++ b/runtime/test/channels/web/http-route-classification.test.ts
-@@ -21,6 +21,7 @@ const MUTATING_ROUTE_COVERAGE = [
+@@ -19,6 +19,9 @@ const MUTATING_ROUTE_COVERAGE = [
+   { method: "POST", pathname: "/agent/peer-message", coverage: "data/agent_peer" },
+   { method: "POST", pathname: "/agent/respond", coverage: "data/agent_ui" },
    { method: "POST", pathname: "/agent/card-action", coverage: "data/agent_ui" },
++  { method: "POST", pathname: "/agent/push/test", coverage: "data/agent_push_test" },
++  { method: "DELETE", pathname: "/agent/push/subscription", coverage: "data/agent_push_subscription" },
++  { method: "POST", pathname: "/agent/push/subscription", coverage: "data/agent_push_subscription" },
    { method: "POST", pathname: "/agent/side-prompt", coverage: "data/agent_side_prompt" },
    { method: "POST", pathname: "/agent/side-prompt/stream", coverage: "data/agent_side_prompt" },
-+  { method: "POST", pathname: "/agent/push/subscription", coverage: "data/agent_push_subscription" },
    { method: "POST", pathname: "/agent/whitelist", coverage: "deprecated-noop" },
-   { method: "POST", pathname: "/workspace/attach", coverage: "data/workspace_attach" },
-   { method: "POST", pathname: "/workspace/upload", coverage: "data/workspace_upload" },
-@@ -84,6 +85,8 @@ describe("web http route classification", () => {
+@@ -82,6 +85,9 @@ describe("web http route classification", () => {
+     expect(getDataRateLimitRule("POST", "/agent/thought/visibility")?.bucket).toBe("data/agent_ui");
+     expect(getDataRateLimitRule("POST", "/agent/respond")?.bucket).toBe("data/agent_ui");
      expect(getDataRateLimitRule("POST", "/agent/card-action")?.bucket).toBe("data/agent_ui");
-     expect(getDataRateLimitRule("POST", "/agent/side-prompt")?.bucket).toBe("data/agent_side_prompt");
-     expect(getDataRateLimitRule("POST", "/agent/side-prompt/stream")?.bucket).toBe("data/agent_side_prompt");
 +    expect(getDataRateLimitRule("POST", "/agent/push/test")?.bucket).toBe("data/agent_push_test");
 +    expect(getDataRateLimitRule("POST", "/agent/push/subscription")?.bucket).toBe("data/agent_push_subscription");
++    expect(getDataRateLimitRule("DELETE", "/agent/push/subscription")?.bucket).toBe("data/agent_push_subscription");
+     expect(getDataRateLimitRule("POST", "/agent/side-prompt")?.bucket).toBe("data/agent_side_prompt");
+     expect(getDataRateLimitRule("POST", "/agent/side-prompt/stream")?.bucket).toBe("data/agent_side_prompt");
      expect(getDataRateLimitRule("POST", "/workspace/attach")?.bucket).toBe("data/workspace_attach");
-     expect(getDataRateLimitRule("POST", "/workspace/visibility")?.bucket).toBe("data/workspace_ui");
-     expect(getDataRateLimitRule("POST", "/workspace/reindex")?.bucket).toBe("data/workspace_ui");
-diff --git a/runtime/test/channels/web/web-push-routes.test.ts b/runtime/test/channels/web/web-push-routes.test.ts
-index 9a81bb55..d67cc418 100644
---- a/runtime/test/channels/web/web-push-routes.test.ts
-+++ b/runtime/test/channels/web/web-push-routes.test.ts
-@@ -3,10 +3,12 @@ import { mkdtempSync, rmSync } from "node:fs";
- import { join } from "node:path";
- import { tmpdir } from "node:os";
- 
-+import { upsertStoredWebPushSubscription } from "../../../src/channels/web/push/web-push-store.js";
- import { WebNotificationPresenceService } from "../../../src/channels/web/push/web-notification-presence-service.js";
- import {
-   handleWebPushPresence,
-   handleWebPushSubscriptionUpsert,
-+  handleWebPushTest,
- } from "../../../src/channels/web/push/web-push-routes.js";
- 
- const tempDirs: string[] = [];
-@@ -73,4 +75,77 @@ describe("web push routes", () => {
-     });
-     expect(presenceService.getDeviceChatState("device-1", "web:default").hasLiveClient).toBe(true);
-   });
+diff --git a/runtime/test/channels/web/web-push-test-routes.test.ts b/runtime/test/channels/web/web-push-test-routes.test.ts
+new file mode 100644
+index 0000000..ec96abd
+--- /dev/null
++++ b/runtime/test/channels/web/web-push-test-routes.test.ts
+@@ -0,0 +1,98 @@
++import { afterEach, describe, expect, test } from "bun:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
 +
++import { upsertStoredWebPushSubscription } from "../../../src/channels/web/push/web-push-store.js";
++import { handleWebPushTest } from "../../../src/channels/web/push/web-push-routes.js";
++
++const tempDirs: string[] = [];
++
++function createTempPushDir(): string {
++  const dir = mkdtempSync(join(tmpdir(), "piclaw-web-push-test-routes-"));
++  tempDirs.push(dir);
++  return dir;
++}
++
++afterEach(() => {
++  while (tempDirs.length > 0) {
++    const dir = tempDirs.pop();
++    if (!dir) continue;
++    rmSync(dir, { recursive: true, force: true });
++  }
++});
++
++describe("web push test routes", () => {
 +  test("sends a test notification using stored subscriptions", async () => {
 +    const baseDir = createTempPushDir();
 +    upsertStoredWebPushSubscription({
@@ -262,29 +358,48 @@ index 9a81bb55..d67cc418 100644
 +    expect(response.status).toBe(400);
 +    expect(await response.json()).toEqual({ error: "Invalid push test URL." });
 +  });
- });
-diff --git a/runtime/test/channels/web/web-push-service.test.ts b/runtime/test/channels/web/web-push-service.test.ts
-index e0094b06..7016477c 100644
---- a/runtime/test/channels/web/web-push-service.test.ts
-+++ b/runtime/test/channels/web/web-push-service.test.ts
-@@ -7,7 +7,8 @@ import { upsertStoredWebPushSubscription, listStoredWebPushSubscriptions } from
- import {
-   buildStoredAgentReplyWebPushNotification,
-   sendStoredAgentReplyWebPushNotification,
--  sendStoredWebPushNotification
-+  sendStoredWebPushNotification,
-+  sendStoredWebPushTestNotification,
- } from "../../../src/channels/web/push/web-push-service.js";
- import { WebNotificationPresenceService } from "../../../src/channels/web/push/web-notification-presence-service.js";
- 
-@@ -259,4 +260,25 @@ describe("web push service", () => {
-       sourceLabel: "Web Push",
-     }]);
-   });
++});
+diff --git a/runtime/test/channels/web/web-push-test-service.test.ts b/runtime/test/channels/web/web-push-test-service.test.ts
+new file mode 100644
+index 0000000..78a4f1a
+--- /dev/null
++++ b/runtime/test/channels/web/web-push-test-service.test.ts
+@@ -0,0 +1,53 @@
++import { afterEach, describe, expect, test } from "bun:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
 +
++import { upsertStoredWebPushSubscription } from "../../../src/channels/web/push/web-push-store.js";
++import { sendStoredWebPushTestNotification } from "../../../src/channels/web/push/web-push-service.js";
++
++const tempDirs: string[] = [];
++
++function createTempPushDir(): string {
++  const dir = mkdtempSync(join(tmpdir(), "piclaw-web-push-test-service-"));
++  tempDirs.push(dir);
++  return dir;
++}
++
++afterEach(() => {
++  while (tempDirs.length > 0) {
++    const dir = tempDirs.pop();
++    if (!dir) continue;
++    rmSync(dir, { recursive: true, force: true });
++  }
++});
++
++describe("web push test service", () => {
 +  test("adds a default source marker to test notifications", async () => {
 +    const baseDir = createTempPushDir();
-+    upsertStoredWebPushSubscription(createSubscription(9), { baseDir });
++    upsertStoredWebPushSubscription({
++      endpoint: "https://push.example.test/device/9",
++      expirationTime: null,
++      keys: {
++        auth: "auth-token",
++        p256dh: "p256dh-token",
++      },
++    }, { baseDir });
 +
 +    const deliveries: Array<Record<string, unknown>> = [];
 +    await sendStoredWebPushTestNotification({
@@ -302,9 +417,9 @@ index e0094b06..7016477c 100644
 +      sourceLabel: "Web Push",
 +    }]);
 +  });
- });
++});
 diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
-index eb5adf78..4af35b99 100644
+index eb5adf7..4af35b9 100644
 --- a/runtime/web/src/api.ts
 +++ b/runtime/web/src/api.ts
 @@ -202,6 +202,10 @@ export async function getChatBranches(rootChatJid = null, options = {}) {
@@ -333,7 +448,7 @@ index eb5adf78..4af35b99 100644
   * Get available agents / current agent roster.
   */
 diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
-index 0a586c8e..f63f9d31 100644
+index b257b9d..cf24f47 100644
 --- a/runtime/web/src/ui/use-notifications.ts
 +++ b/runtime/web/src/ui/use-notifications.ts
 @@ -1,4 +1,4 @@
@@ -342,7 +457,7 @@ index 0a586c8e..f63f9d31 100644
  import { useCallback, useEffect, useRef, useState } from '../vendor/preact-htm.js';
  import { getLocalStorageBoolean, setLocalStorageItem } from '../utils/storage.js';
  import { focusWindowBestEffort } from './notification-focus.js';
-@@ -250,6 +250,18 @@ export function useNotifications(options = {}) {
+@@ -253,6 +253,18 @@ export function useNotifications(options = {}) {
        try {
          if (next) {
            await syncWebPushSubscription(window, deviceId);
@@ -361,3 +476,6 @@ index 0a586c8e..f63f9d31 100644
          } else {
            await disableWebPushSubscription(window, deviceId);
          }
+-- 
+2.51.2
+

@@ -15,12 +15,20 @@ index 8d1e90f3..73c3a61a 100644
    }
  
 +  scheduleRecentChatWarmup(options: { limit?: number; excludeChatJids?: string[] } = {}): string[] {
++    if ((this as { shuttingDown?: boolean }).shuttingDown) return [];
 +    const targetCount = Math.max(1, Math.min(8, Math.trunc(options.limit ?? 3) || 3));
 +    const excluded = new Set(
 +      Array.isArray(options.excludeChatJids)
 +        ? options.excludeChatJids.map((jid) => String(jid || "").trim()).filter(Boolean)
 +        : [],
 +    );
++    const cooldownByChat = ((this as any).__piclawRecentWarmupCooldownByChat ||= new Map<string, number>()) as Map<string, number>;
++    const now = Date.now();
++    for (const [chatJid, lastQueuedAt] of cooldownByChat) {
++      if (now - lastQueuedAt >= 30_000) {
++        cooldownByChat.delete(chatJid);
++      }
++    }
 +
 +    const scheduled: string[] = [];
 +    const seen = new Set<string>();
@@ -35,11 +43,12 @@ index 8d1e90f3..73c3a61a 100644
 +        seen.add(chatJid);
 +        if (excluded.has(chatJid)) continue;
 +        if (this.pool.has(chatJid)) continue;
++        if (now - (cooldownByChat.get(chatJid) ?? 0) < 30_000) continue;
 +        scheduled.push(chatJid);
 +        if (scheduled.length >= targetCount) break;
 +      }
 +
-+      if (scheduled.length >= targetCount || fetchLimit >= 100) {
++      if (scheduled.length >= targetCount || fetchLimit >= 100 || candidates.length < fetchLimit) {
 +        break;
 +      }
 +
@@ -51,6 +60,7 @@ index 8d1e90f3..73c3a61a 100644
 +    }
 +
 +    for (const chatJid of scheduled) {
++      cooldownByChat.set(chatJid, now);
 +      this.sessionManager.prewarm(chatJid);
 +    }
 +
@@ -85,6 +95,13 @@ index 9079d06a..c0be364f 100644
        const chats = typeof this.options.listKnownChats === "function"
          ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
          : this.options.listActiveChats();
++      const knownChatJids = typeof this.options.listKnownChats === "function"
++        ? new Set(
++            chats
++              .map((chat) => (typeof (chat as { chat_jid?: unknown })?.chat_jid === "string" ? (chat as { chat_jid: string }).chat_jid.trim() : ""))
++              .filter(Boolean),
++          )
++        : null;
 +
 +      if (!rootChatJid && prewarmRecent) {
 +        this.options.agentPool.scheduleRecentChatWarmup({
@@ -92,7 +109,7 @@ index 9079d06a..c0be364f 100644
 +          excludeChatJids: excludeChatJid ? [excludeChatJid] : [],
 +        });
 +      }
-+      if (prewarmChatJid && chats.some((chat) => typeof (chat as { chat_jid?: unknown })?.chat_jid === "string" && (chat as { chat_jid: string }).chat_jid.trim() === prewarmChatJid)) {
++      if (prewarmChatJid && knownChatJids?.has(prewarmChatJid)) {
 +        this.options.agentPool.scheduleChatWarmup(prewarmChatJid, { priority: true });
 +      }
        return this.options.json({ chats }, 200);
@@ -121,7 +138,7 @@ index 9145015f..5a56019d 100644
 +export function listRecentChatJids(limit = 10, options?: { excludeChatJids?: string[] }): string[] {
 +  const maxRows = Math.max(1, Math.min(100, Math.trunc(limit) || 10));
 +  const excluded = Array.isArray(options?.excludeChatJids)
-+    ? options.excludeChatJids.map((jid) => String(jid || "").trim()).filter(Boolean)
++    ? options.excludeChatJids.map((jid) => String(jid || "").trim()).filter(Boolean).slice(0, 900)
 +    : [];
 +  const db = getDb();
 +  const exclusionSql = excluded.length > 0
@@ -217,6 +234,28 @@ index 34211fb5..dc408b07 100644
 +
 +  const scheduled = (pool as any).scheduleRecentChatWarmup({ limit: 1, excludeChatJids: ["web:default"] });
 +  expect(scheduled).toEqual(["web:chat-100"]);
++
++  await pool.shutdown();
++});
++
++test("agent pool rate-limits repeated recent-chat warmup for the same chat", async () => {
++  const ws = getTestWorkspace();
++  restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
++
++  const db = await importFresh<typeof import("../src/db.js")>("../src/db.js");
++  db.initDatabase();
++  db.storeChatMetadata("web:only", "2026-04-14T12:00:00.000Z", "Only");
++
++  const { AgentPool } = await importFresh<typeof import("../src/agent-pool.js")>("../src/agent-pool.js");
++  const pool = new AgentPool({
++    createSession: async () => createRuntime({ subscribe: () => () => {}, prompt: async () => {}, abort: async () => {}, dispose() {} }) as any,
++  });
++
++  const first = (pool as any).scheduleRecentChatWarmup({ limit: 1 });
++  const second = (pool as any).scheduleRecentChatWarmup({ limit: 1 });
++
++  expect(first).toEqual(["web:only"]);
++  expect(second).toEqual([]);
 +
 +  await pool.shutdown();
 +});
