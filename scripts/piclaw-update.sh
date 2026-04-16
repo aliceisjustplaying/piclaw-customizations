@@ -312,10 +312,26 @@ refresh_source_checkout() {
     quiet git clone --branch "${FORK_BRANCH}" --no-single-branch "${FORK_URL}" "${CACHE_DIR}"
   fi
 
+  # Track upstream/main in the cache so we can count customization commits
+  # (commits on pix/main not on upstream/main). Network cost is low since
+  # upstream history is already present via the fork.
+  if git -C "${CACHE_DIR}" remote get-url upstream >/dev/null 2>&1; then
+    quiet git -C "${CACHE_DIR}" remote set-url upstream "${UPSTREAM_URL}"
+  else
+    quiet git -C "${CACHE_DIR}" remote add upstream "${UPSTREAM_URL}"
+  fi
+  quiet git -C "${CACHE_DIR}" fetch --prune upstream main
+
   status "Creating candidate checkout in ${SOURCE_DIR}"
   # Clone from the local cache with tags so `git describe` works in the
   # candidate / activated live tree.
   quiet git clone --no-hardlinks --branch "${FORK_BRANCH}" --no-single-branch "${CACHE_DIR}" "${SOURCE_DIR}"
+
+  # Carry the cache's upstream/main ref into the candidate so
+  # count_customization_commits can resolve it post-activation. `git clone`
+  # does not copy remote-tracking refs, so fetch it explicitly from the cache.
+  quiet git -C "${SOURCE_DIR}" fetch "${CACHE_DIR}" \
+    "+refs/remotes/upstream/main:refs/remotes/upstream/main"
 }
 
 compare_versions_or_exit() {
