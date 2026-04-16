@@ -408,10 +408,14 @@ build_from_source() {
     error "Dependency installation failed"
     exit 1
   fi
-  status "Compiling server"
+  status "Compiling server (tsc type-check)"
+  # Upstream runs the server directly via bun (tsc output under generated/dist/
+  # is informational only, never served). tsc is retained here as a *warning*
+  # gate because upstream's own CI does not run it and ships broken types
+  # periodically; we still want failures surfaced in deploy logs so we notice
+  # regressions in our customizations, but we no longer block deploy on them.
   if ! quiet bun run build; then
-    error "Server build failed"
-    exit 1
+    status "WARNING: tsc reported errors — continuing (server runs via bun transpile)"
   fi
   status "Compiling web UI"
   if ! quiet bun run build:web; then
