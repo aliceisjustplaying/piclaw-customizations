@@ -65,7 +65,6 @@ Local-only customizations (intentionally never upstreamed):
 - `web: codex action handlers` — Piclaw-specific UI plumbing
 - `web: slash commands` — `/update`, `/rebuild`, `/fast` autocomplete
 - `db: lazy init` — Jiti-specific runtime compatibility
-- `deps: ghostty-web pin` — until the upstream dep bump lands
 - `provider-usage: Anthropic OAuth` — 5h/week usage windows
 - `web: iOS share-sheet` — currently not in upstream PR flow
 - `web-push: /agent/push/test` — diagnostic endpoint, local-only by design
