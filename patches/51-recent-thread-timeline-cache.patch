@@ -130,15 +130,19 @@ index 00000000..2d34ea48
 +
 +import { mergeFreshTimelinePosts } from '../../web/src/ui/use-timeline.js';
 +
-+test('mergeFreshTimelinePosts replaces cached rows with the fresh server payload', () => {
++test('mergeFreshTimelinePosts prepends fresh rows while keeping older cached rows around', () => {
 +  expect(mergeFreshTimelinePosts(
 +    [{ id: 9 }, { id: 8 }, { id: 7 }, { id: 6 }],
 +    [{ id: 10 }, { id: 9 }, { id: 8 }],
-+  )).toEqual([{ id: 10 }, { id: 9 }, { id: 8 }]);
++  )).toEqual([{ id: 10 }, { id: 9 }, { id: 8 }, { id: 7 }, { id: 6 }]);
 +});
 +
 +test('mergeFreshTimelinePosts falls back to the fresh payload when no current rows exist', () => {
 +  expect(mergeFreshTimelinePosts(null, [{ id: 2 }, { id: 1 }])).toEqual([{ id: 2 }, { id: 1 }]);
++});
++
++test('mergeFreshTimelinePosts keeps the current rows when the fresh payload is malformed', () => {
++  expect(mergeFreshTimelinePosts([{ id: 2 }, { id: 1 }], null)).toEqual([{ id: 2 }, { id: 1 }]);
 +});
 diff --git a/runtime/web/src/app.ts b/runtime/web/src/app.ts
 index 0348aa41..d371d69d 100644
@@ -445,8 +449,11 @@ index 60909478..91b7f47d 100644
 -  const [posts, setPosts] = useState(null);
 -  const [hasMore, setHasMore] = useState(false);
 +export function mergeFreshTimelinePosts(currentPosts, freshPosts) {
-+  const normalizedFreshPosts = Array.isArray(freshPosts) ? freshPosts : [];
-+  return normalizedFreshPosts;
++  const currentArray = Array.isArray(currentPosts) ? currentPosts : [];
++  const freshArray = Array.isArray(freshPosts) ? freshPosts : null;
++  if (!freshArray) return currentArray;
++  if (currentArray.length === 0) return freshArray;
++  return dedupePosts([...freshArray, ...currentArray]);
 +}
 +
 +export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop, chatJid = null, currentHashtag = null, searchQuery = null }) {
@@ -543,7 +550,7 @@ index 60909478..91b7f47d 100644
      } catch (error) {
        if (token !== chatTokenRef.current) return;
        console.error('Failed to load posts:', error);
--      throw error;
+       throw error;
      }
 -  }, [chatJid]);
 +  }, [chatJid, setTimelineState]);
@@ -595,12 +602,28 @@ index 60909478..91b7f47d 100644
  
    useEffect(() => {
      loadMoreRef.current = loadMore;
-@@ -118,9 +164,9 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
- 
+@@ -118,9 +164,29 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
+
++  const setPosts = useCallback((updater) => {
++    setPostsState((prev) => {
++      const nextPosts = typeof updater === 'function' ? updater(prev) : updater;
++      postsRef.current = nextPosts;
++      if (Array.isArray(nextPosts)) {
++        mutationVersionRef.current += 1;
++        if (shouldCacheCurrentView) {
++          cacheTimelineSnapshot(chatJid, {
++            posts: nextPosts,
++            has_more: hasMoreRef.current,
++          });
++        }
++      }
++      return nextPosts;
++    });
++  }, [chatJid, shouldCacheCurrentView]);
++
    return {
      posts,
--    setPosts,
-+    setPosts: setPostsState,
+     setPosts,
      hasMore,
 -    setHasMore,
 +    setHasMore: setHasMoreState,

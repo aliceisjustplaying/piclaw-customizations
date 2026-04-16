@@ -704,7 +704,7 @@ index 0000000..3d82c64
 +const DEVICE_ID_KEY = 'piclaw.notifications.deviceId';
 +const CLIENT_ID_KEY = 'piclaw.notifications.clientId';
 +const PRESENCE_KEY_PREFIX = 'piclaw.notifications.presence.';
-+export const LOCAL_NOTIFICATION_PRESENCE_TTL_MS = 45000;
++export const LOCAL_NOTIFICATION_PRESENCE_TTL_MS = 120000;
 +
 +function safeStorageGet(storage, key) {
 +  if (!storage || !key) return null;

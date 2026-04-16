@@ -10,12 +10,18 @@ index 8d1e90f3..73c3a61a 100644
    upsertSshConfig,
  } from "./db.js";
  import { setSshToolHandlers } from "./extensions/ssh.js";
+@@ -117,6 +117,7 @@ export class AgentPool {
+   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
++  private shuttingDown = false;
+
+   // Shared across all sessions (expensive to create, safe to reuse)
+   private authStorage: AuthStorage;
 @@ -258,6 +259,49 @@ export class AgentPool {
      return this.runtimeFacade.getContextUsageForChat(chatJid);
    }
- 
+
 +  scheduleRecentChatWarmup(options: { limit?: number; excludeChatJids?: string[] } = {}): string[] {
-+    if ((this as { shuttingDown?: boolean }).shuttingDown) return [];
++    if (this.shuttingDown) return [];
 +    const targetCount = Math.max(1, Math.min(8, Math.trunc(options.limit ?? 3) || 3));
 +    const excluded = new Set(
 +      Array.isArray(options.excludeChatJids)
@@ -70,6 +76,13 @@ index 8d1e90f3..73c3a61a 100644
    scheduleChatWarmup(chatJid: string, options: { priority?: boolean } = {}): boolean {
      return this.sessionManager.prewarm(chatJid, options);
    }
+@@ -407,6 +408,7 @@ export class AgentPool {
+   /** Gracefully shut down all sessions. */
+   async shutdown(): Promise<void> {
++    this.shuttingDown = true;
+     if (this.cleanupTimer) {
+       clearInterval(this.cleanupTimer);
+       this.cleanupTimer = null;
 diff --git a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
 index 9079d06a..c0be364f 100644
 --- a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
@@ -239,7 +252,7 @@ index 34211fb5..dc408b07 100644
 +});
 +
 +test("agent pool rate-limits repeated recent-chat warmup for the same chat", async () => {
-+  const ws = getTestWorkspace();
++  const ws = createTempWorkspace("piclaw-recent-warmup-cooldown-");
 +  restoreEnv = setEnv({ PICLAW_WORKSPACE: ws.workspace, PICLAW_STORE: ws.store, PICLAW_DATA: ws.data });
 +
 +  const db = await importFresh<typeof import("../src/db.js")>("../src/db.js");
@@ -251,8 +264,8 @@ index 34211fb5..dc408b07 100644
 +    createSession: async () => createRuntime({ subscribe: () => () => {}, prompt: async () => {}, abort: async () => {}, dispose() {} }) as any,
 +  });
 +
-+  const first = (pool as any).scheduleRecentChatWarmup({ limit: 1 });
-+  const second = (pool as any).scheduleRecentChatWarmup({ limit: 1 });
++  const first = (pool as any).scheduleRecentChatWarmup({ limit: 1, excludeChatJids: ["web:default"] });
++  const second = (pool as any).scheduleRecentChatWarmup({ limit: 1, excludeChatJids: ["web:default"] });
 +
 +  expect(first).toEqual(["web:only"]);
 +  expect(second).toEqual([]);

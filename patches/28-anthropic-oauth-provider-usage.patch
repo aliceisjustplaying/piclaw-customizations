@@ -123,7 +123,7 @@ index 649469b1..9f8c0acc 100644
 +
 +  const unlimited = enabled && monthlyLimitMinor === null;
 +  const usedUsd = usedMinor != null && Number.isFinite(Number(usedMinor)) ? Number(usedMinor) / 100 : null;
-+  const monthlyLimitUsd = enabled && !unlimited && monthlyLimitMinor != null && Number.isFinite(Number(monthlyLimitMinor))
++  const monthlyLimitUsd = !unlimited && monthlyLimitMinor != null && Number.isFinite(Number(monthlyLimitMinor))
 +    ? Number(monthlyLimitMinor) / 100
 +    : null;
 +  const resetDate = enabled ? (parseDate(payload?.resets_at ?? payload?.reset_at) ?? nextMonthResetDate()) : null;
