@@ -1,0 +1,16 @@
+diff --git a/runtime/src/channels/web/agent/agent-control-plane-service.ts b/runtime/src/channels/web/agent/agent-control-plane-service.ts
+--- a/runtime/src/channels/web/agent/agent-control-plane-service.ts
++++ b/runtime/src/channels/web/agent/agent-control-plane-service.ts
+@@ -43,7 +43,12 @@ type ControlPlaneAgentPool = AgentPool & {
+ 
+ type ControlPlaneQueuedLifecycle = Pick<
+   QueuedFollowupLifecycleService,
+-  "getQueuedFollowupCount" | "listQueuedStateItems" | "prependQueuedFollowupItem" | "removeQueuedFollowupForAction"
++  | "getQueuedFollowupCount"
++  | "listQueuedStateItems"
++  | "prependQueuedFollowupItem"
++  | "removeQueuedFollowupForAction"
++  | "reorderQueuedFollowupItems"
+ >;
+ 
+ export interface WebAgentControlPlaneServiceOptions {

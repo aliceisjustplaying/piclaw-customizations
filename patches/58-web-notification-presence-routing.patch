@@ -1,3 +1,29 @@
+From 240ce76250c99d0a5a85d8454723e72e3190a53e Mon Sep 17 00:00:00 2001
+From: alice <aliceisjustplaying@gmail.com>
+Date: Thu, 16 Apr 2026 10:06:29 +0000
+Subject: [PATCH] web: coordinate local notification delivery by chat
+
+---
+ docs/web-notification-delivery-policy.md      |  70 +++++++
+ .../src/channels/web/http/dispatch-agent.ts   |   6 +
+ .../push/web-notification-presence-service.ts | 137 +++++++++++++
+ .../src/channels/web/push/web-push-routes.ts  |  35 ++++
+ .../channels/web/http-dispatch-agent.test.ts  |  13 ++
+ .../web-notification-presence-service.test.ts |  91 +++++++++
+ .../test/channels/web/web-push-routes.test.ts |  46 +++--
+ .../notification-delivery-coordinator.test.ts | 144 ++++++++++++++
+ runtime/web/src/app.ts                        |   1 +
+ .../ui/app-chat-pane-runtime-orchestration.ts |  12 +-
+ runtime/web/src/ui/app-main-surface-state.ts  |   4 +-
+ .../ui/notification-delivery-coordinator.ts   | 187 ++++++++++++++++++
+ runtime/web/src/ui/use-notifications.ts       | 113 +++++++++--
+ 13 files changed, 821 insertions(+), 38 deletions(-)
+ create mode 100644 docs/web-notification-delivery-policy.md
+ create mode 100644 runtime/src/channels/web/push/web-notification-presence-service.ts
+ create mode 100644 runtime/test/channels/web/web-notification-presence-service.test.ts
+ create mode 100644 runtime/test/web/notification-delivery-coordinator.test.ts
+ create mode 100644 runtime/web/src/ui/notification-delivery-coordinator.ts
+
 diff --git a/docs/web-notification-delivery-policy.md b/docs/web-notification-delivery-policy.md
 new file mode 100644
 index 0000000..721fab1
@@ -75,18 +101,17 @@ index 0000000..721fab1
 +- both are live, neither is visible
 +- result: exactly **one** hidden tab shows the local notification
 diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
-index 2db5875..b82f474 100644
+index 9e56c228..6576bb6 100644
 --- a/runtime/src/channels/web/http/dispatch-agent.ts
 +++ b/runtime/src/channels/web/http/dispatch-agent.ts
-@@ -4,6 +4,7 @@
- 
+@@ -5,6 +5,7 @@
  import type { WebChannelLike } from "../core/web-channel-contracts.js";
  import {
 +  handleWebPushPresence,
    handleWebPushSubscriptionDelete,
    handleWebPushSubscriptionUpsert,
    handleWebPushVapidPublicKey,
-@@ -155,6 +156,11 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+@@ -255,6 +256,11 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
      path: "/agent/push/subscription",
      handle: (_channel, req) => handleWebPushSubscriptionDelete(req),
    },
@@ -113,7 +138,7 @@ index 0000000..bde649d
 + * - no live client for that chat on a device → Web Push allowed for that device
 + */
 +
-+export const DEFAULT_WEB_NOTIFICATION_PRESENCE_TTL_MS = 45000;
++export const DEFAULT_WEB_NOTIFICATION_PRESENCE_TTL_MS = 120000;
 +
 +export interface WebNotificationPresenceRecord {
 +  deviceId: string;
@@ -149,8 +174,7 @@ index 0000000..bde649d
 +  const rawVisibility = normalizeTrimmedString(input.visibility_state ?? input.visibilityState).toLowerCase();
 +  const visibilityState = rawVisibility === "hidden" ? "hidden" : "visible";
 +  const hasFocus = Boolean(input.has_focus ?? input.hasFocus);
-+  const rawUpdatedAtMs = Number(input.updated_at_ms ?? input.updatedAtMs);
-+  const updatedAtMs = Number.isFinite(rawUpdatedAtMs) ? rawUpdatedAtMs : (options.nowMs ?? Date.now());
++  const updatedAtMs = options.nowMs ?? Date.now();
 +
 +  return {
 +    deviceId,
@@ -189,14 +213,15 @@ index 0000000..bde649d
 +  }
 +
 +  upsert(value: unknown, options: { nowMs?: number; userAgent?: string | null } = {}): WebNotificationPresenceRecord {
++    const nowMs = options.nowMs ?? this.now();
 +    const normalized = normalizeWebNotificationPresence(value, {
-+      nowMs: options.nowMs ?? this.now(),
++      nowMs,
 +      userAgent: options.userAgent,
 +    });
 +    if (!normalized) {
 +      throw new Error("Invalid web notification presence payload.");
 +    }
-+    this.prune(normalized.updatedAtMs);
++    this.prune(nowMs);
 +    this.records.set(this.buildKey(normalized.deviceId, normalized.clientId), normalized);
 +    return normalized;
 +  }
@@ -636,19 +661,10 @@ index 0000000..a4993ad
 +  });
 +});
 diff --git a/runtime/web/src/app.ts b/runtime/web/src/app.ts
-index d371d69..9aab2b1 100644
+index d371d69..ee137a7 100644
 --- a/runtime/web/src/app.ts
 +++ b/runtime/web/src/app.ts
-@@ -153,8 +153,6 @@ function MainApp({ locationParams, navigate }) {
-         viewStateRef: surface.viewStateRef,
-         followupQueueRowIdsRef: surface.followupQueueRowIdsRef,
-         currentChatJid,
--        currentHashtag: surface.currentHashtag,
--        searchQuery: surface.searchQuery,
-         followupQueueItems: surface.followupQueueItems,
-     });
- 
-@@ -262,6 +260,7 @@ function MainApp({ locationParams, navigate }) {
+@@ -262,6 +262,7 @@ function MainApp({ locationParams, navigate }) {
              lastNotifiedIdRef: surface.lastNotifiedIdRef,
              agentsRef: surface.agentsRef,
              notify: surface.notify,
@@ -704,28 +720,6 @@ index f8ac6cf..47105a1 100644
  
    return {
      clearQueuedSteerStateIfStale,
-diff --git a/runtime/web/src/ui/app-main-surface-state.ts b/runtime/web/src/ui/app-main-surface-state.ts
-index 4f44251..84f9831 100644
---- a/runtime/web/src/ui/app-main-surface-state.ts
-+++ b/runtime/web/src/ui/app-main-surface-state.ts
-@@ -111,7 +111,8 @@ export function useMainAppSurfaceState(options: {
-     notificationPermission,
-     toggleNotifications: handleToggleNotifications,
-     notify,
--  } = useNotifications();
-+    shouldNotifyLocallyForChat,
-+  } = useNotifications({ chatJid: currentChatJid });
- 
-   const [removingPostIds, setRemovingPostIds] = useState(() => new Set<string | number>());
-   const [workspaceOpen, setWorkspaceOpen] = useState(() => readStoredWorkspaceOpenPreference({
-@@ -224,6 +225,7 @@ export function useMainAppSurfaceState(options: {
-     notificationPermission,
-     handleToggleNotifications,
-     notify,
-+    shouldNotifyLocallyForChat,
-     removingPostIds,
-     setRemovingPostIds,
-     workspaceOpen,
 diff --git a/runtime/web/src/ui/notification-delivery-coordinator.ts b/runtime/web/src/ui/notification-delivery-coordinator.ts
 new file mode 100644
 index 0000000..3d82c64
@@ -920,7 +914,7 @@ index 0000000..3d82c64
 +  return Boolean(leader && leader.clientId === snapshot.clientId);
 +}
 diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
-index ae72abc..cb58f08 100644
+index a4f3fe5..0a586c8 100644
 --- a/runtime/web/src/ui/use-notifications.ts
 +++ b/runtime/web/src/ui/use-notifications.ts
 @@ -2,6 +2,14 @@ import { deleteWebPushSubscription, getWebPushPublicKey, saveWebPushSubscription
@@ -938,7 +932,7 @@ index ae72abc..cb58f08 100644
  
  export const LOCAL_NOTIFICATION_SOURCE_LABEL = 'Local';
  export const WEB_PUSH_NOTIFICATION_SOURCE_LABEL = 'Web Push';
-@@ -71,24 +79,34 @@ async function disableWebPushSubscription(runtimeWindow, deviceId) {
+@@ -71,26 +79,38 @@ async function disableWebPushSubscription(runtimeWindow, deviceId) {
    return true;
  }
  
@@ -967,7 +961,12 @@ index ae72abc..cb58f08 100644
 +      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
 +      return runtimeWindow.navigator.sendBeacon('/agent/push/presence', blob);
 +    }
-   } catch {}
+   } catch (error) {
+-    console.debug('[use-notifications] Ignoring notification device-id persistence failure.', error);
++    console.debug('[use-notifications] Ignoring sendBeacon failure for best-effort notification presence teardown.', error, {
++      hasNavigator: Boolean(runtimeWindow?.navigator),
++    });
+   }
 -  return (typeof storage?.getItem === 'function' ? storage.getItem('piclaw.notifications.deviceId') : null) || created;
 +  return false;
  }
@@ -983,7 +982,7 @@ index ae72abc..cb58f08 100644
  
    useEffect(() => {
      const enabled = getLocalStorageBoolean('notificationsEnabled', false);
-@@ -96,6 +114,7 @@ export function useNotifications() {
+@@ -98,6 +118,7 @@ export function useNotifications() {
      setNotificationsEnabled(enabled);
      if (typeof window !== 'undefined') {
        deviceIdRef.current = getOrCreateNotificationDeviceId(window);
@@ -991,7 +990,7 @@ index ae72abc..cb58f08 100644
      }
      if (typeof Notification === 'undefined') {
        return;
-@@ -122,6 +141,64 @@ export function useNotifications() {
+@@ -124,6 +145,64 @@ export function useNotifications() {
      notificationsEnabledRef.current = notificationsEnabled;
    }, [notificationsEnabled]);
  
@@ -1056,7 +1055,7 @@ index ae72abc..cb58f08 100644
    const requestNotificationPermission = useCallback(() => {
      if (typeof Notification === 'undefined') return Promise.resolve('denied');
      try {
-@@ -195,10 +272,22 @@ export function useNotifications() {
+@@ -201,10 +280,22 @@ export function useNotifications() {
      }
    }, []);
  

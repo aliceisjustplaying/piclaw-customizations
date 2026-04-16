@@ -1,0 +1,78 @@
+From 3201862b81090dd2fb06cf72fb4103ca769aeb4a Mon Sep 17 00:00:00 2001
+From: Codex <codex@example.com>
+Date: Thu, 16 Apr 2026 11:57:59 +0000
+Subject: [PATCH] perf: route compose branch creation through branch loader
+
+---
+ runtime/test/web/app-window-actions.test.ts | 15 +++++++++++++++
+ runtime/web/src/ui/app-window-actions.ts    | 17 +++++++++++++++++
+ 2 files changed, 32 insertions(+)
+
+diff --git a/runtime/test/web/app-window-actions.test.ts b/runtime/test/web/app-window-actions.test.ts
+index 60644f8c..8dd26de3 100644
+--- a/runtime/test/web/app-window-actions.test.ts
++++ b/runtime/test/web/app-window-actions.test.ts
+@@ -5,10 +5,12 @@ import {
+   popOutChat,
+   popOutPane,
+ } from '../../web/src/ui/app-window-actions.js';
++import { getAppPerfTracing } from '../../web/src/ui/app-perf-tracing.js';
+ 
+ const originalWindow = globalThis.window;
+ 
+ afterEach(() => {
++  getAppPerfTracing().clear();
+   if (originalWindow === undefined) {
+     delete globalThis.window;
+   } else {
+@@ -44,6 +46,19 @@ test('createSessionFromCompose navigates immediately to the branch-loader route'
+   expect(toasts).toEqual([]);
+   expect(navigateCalls[0]).toContain('branch_loader=1');
+   expect(navigateCalls[0]).toContain('branch_source_chat_jid=web%3Aroot');
++
++  const traces = getAppPerfTracing().getTraces();
++  expect(traces).toHaveLength(1);
++  expect(traces[0]?.type).toBe('branch-create');
++  expect(traces[0]?.chatJid).toBe('web:root');
++  expect(traces[0]?.phases.map((phase) => phase.phase)).toEqual([
++    'intent',
++    'navigation-dispatched',
++  ]);
++  expect(traces[0]?.phases[1]?.detail).toMatchObject({
++    mode: 'branch-loader',
++    sourceChatJid: 'web:root',
++  });
+ });
+ 
+ test('popOutPane transfers pane state and closes the source tab after navigation', async () => {
+diff --git a/runtime/web/src/ui/app-window-actions.ts b/runtime/web/src/ui/app-window-actions.ts
+index 96668311..0dc96e7d 100644
+--- a/runtime/web/src/ui/app-window-actions.ts
++++ b/runtime/web/src/ui/app-window-actions.ts
+@@ -64,6 +64,23 @@ export async function createSessionFromCompose(options: CreateSessionFromCompose
+     }
+   }
+ 
++  if (typeof navigate === 'function') {
++    try {
++      const loaderUrl = buildBranchLoaderUrl(baseHref, currentChatJid, { chatOnly: chatOnlyMode });
++      navigate(loaderUrl);
++      markAppPerfTrace(traceId, 'navigation-dispatched', {
++        mode: 'branch-loader',
++        sourceChatJid: currentChatJid,
++        url: loaderUrl,
++      });
++      return true;
++    } catch (error) {
++      failAppPerfTrace(traceId, error, 'branch-loader-navigation-failed');
++      showIntentToast?.('Could not create branch', describeBranchOpenError(error), 'warning', 5000);
++      return false;
++    }
++  }
++
+   try {
+     const response = await forkChatBranch(currentChatJid);
+     const branch = response?.branch;
+-- 
+2.51.2
+

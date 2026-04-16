@@ -42,26 +42,6 @@
       "track_upstream": false,
       "upstream_prs": []
     },
-    "47": {
-      "name": "stable-root-chat-resolution",
-      "track_upstream": true,
-      "upstream_prs": [48]
-    },
-    "48": {
-      "name": "web-ui-tracing-hooks",
-      "track_upstream": true,
-      "upstream_prs": [53]
-    },
-    "49": {
-      "name": "thread-state-hydration-after-timeline-load",
-      "track_upstream": true,
-      "upstream_prs": [49]
-    },
-    "50": {
-      "name": "cold-open-refresh-coordination",
-      "track_upstream": true,
-      "upstream_prs": [50]
-    },
     "51": {
       "name": "recent-thread-timeline-cache",
       "track_upstream": true,
@@ -77,25 +57,10 @@
       "track_upstream": true,
       "upstream_prs": [54]
     },
-    "54": {
-      "name": "priority-session-warmup",
-      "track_upstream": true,
-      "upstream_prs": [56]
-    },
-    "55": {
-      "name": "compose-branch-loader-fast-path",
-      "track_upstream": true,
-      "upstream_prs": [55]
-    },
-    "56": {
-      "name": "longer-idle-session-ttl",
-      "track_upstream": true,
-      "upstream_prs": [52]
-    },
     "57": {
       "name": "web-push-subscription-foundation",
       "track_upstream": true,
-      "upstream_prs": []
+      "upstream_prs": [58]
     },
     "58": {
       "name": "web-notification-presence-routing",
@@ -110,6 +75,16 @@
     "60": {
       "name": "web-push-test-endpoint",
       "track_upstream": false,
+      "upstream_prs": []
+    },
+    "61": {
+      "name": "perf-helpers-silent-catch-logging",
+      "track_upstream": true,
+      "upstream_prs": []
+    },
+    "62": {
+      "name": "control-plane-queue-reorder-type-fix",
+      "track_upstream": true,
       "upstream_prs": []
     }
   }

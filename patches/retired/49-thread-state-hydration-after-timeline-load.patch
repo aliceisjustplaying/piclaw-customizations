@@ -1,0 +1,196 @@
+From 68b94ef315c9bb5109b8c72f2d95b09bc21731dd Mon Sep 17 00:00:00 2001
+From: alice <aliceisjustplaying@gmail.com>
+Date: Thu, 16 Apr 2026 11:19:21 +0000
+Subject: [PATCH] fix(web): settle post-paint hydration traces reliably
+
+---
+ .../web/app-boot-load-orchestration.test.ts   | 28 +++++++++++
+ .../web/src/ui/app-boot-load-orchestration.ts | 48 ++++++++++++++++++-
+ .../web/src/ui/app-chat-refresh-lifecycle.ts  | 15 +++---
+ runtime/web/src/ui/use-timeline.ts            |  1 +
+ 4 files changed, 84 insertions(+), 8 deletions(-)
+
+diff --git a/runtime/test/web/app-boot-load-orchestration.test.ts b/runtime/test/web/app-boot-load-orchestration.test.ts
+index ec5271e4..f4f4a8d3 100644
+--- a/runtime/test/web/app-boot-load-orchestration.test.ts
++++ b/runtime/test/web/app-boot-load-orchestration.test.ts
+@@ -99,3 +99,31 @@ test('runTimelineLoadFlow loads main timeline and triggers deferred scroll', asy
+ 
+   expect(calls).toEqual(['load', 'scroll']);
+ });
++
++test('runTimelineLoadFlow forwards timeline load failures to the error callback', async () => {
++  const calls: string[] = [];
++
++  await runTimelineLoadFlow({
++    currentHashtag: null,
++    searchQuery: null,
++    searchScope: 'current',
++    currentChatJid: 'web:default',
++    currentRootChatJid: 'web:default',
++    loadPosts: async () => {
++      calls.push('load');
++      throw new Error('boom');
++    },
++    searchPosts: async () => ({ results: [] }),
++    setPosts: () => undefined,
++    setHasMore: () => undefined,
++    scrollToBottom: () => {
++      calls.push('scroll');
++    },
++    isCancelled: () => false,
++    onTimelineError: (_error, detail) => {
++      calls.push(`error:${detail?.mode}`);
++    },
++  });
++
++  expect(calls).toEqual(['load', 'error:timeline']);
++});
+diff --git a/runtime/web/src/ui/app-boot-load-orchestration.ts b/runtime/web/src/ui/app-boot-load-orchestration.ts
+index 8bfb209a..5e41878e 100644
+--- a/runtime/web/src/ui/app-boot-load-orchestration.ts
++++ b/runtime/web/src/ui/app-boot-load-orchestration.ts
+@@ -58,6 +58,10 @@ export interface RunTimelineLoadFlowOptions {
+   isCancelled: () => boolean;
+   scheduleRaf?: RafLike;
+   scheduleTimeout?: (callback: () => void, delayMs: number) => void;
++  onTimelineLoadStart?: (detail?: Record<string, unknown>) => void;
++  onTimelineDataReady?: (detail?: Record<string, unknown>) => void;
++  onTimelineFirstPaint?: (detail?: Record<string, unknown>) => void;
++  onTimelineError?: (error: unknown, detail?: Record<string, unknown>) => void;
+ }
+ 
+ /**
+@@ -77,12 +81,33 @@ export async function runTimelineLoadFlow(options: RunTimelineLoadFlowOptions):
+     setHasMore,
+     scrollToBottom,
+     isCancelled,
+-    scheduleRaf = (callback) => requestAnimationFrame(callback),
++    scheduleRaf = (callback) => {
++      if (typeof requestAnimationFrame === 'function') {
++        requestAnimationFrame(callback);
++        return;
++      }
++      setTimeout(callback, 0);
++    },
+     scheduleTimeout = (callback, delayMs) => {
+       setTimeout(callback, delayMs);
+     },
++    onTimelineLoadStart,
++    onTimelineDataReady,
++    onTimelineFirstPaint,
++    onTimelineError,
+   } = options;
+ 
++  const noteFirstPaint = (detail?: Record<string, unknown>) => {
++    if (isCancelled()) return;
++    scheduleRaf(() => {
++      if (isCancelled()) return;
++      scheduleRaf(() => {
++        if (isCancelled()) return;
++        onTimelineFirstPaint?.(detail);
++      });
++    });
++  };
++
+   const safeScrollToBottom = () => {
+     if (isCancelled()) return;
+     scheduleRaf(() => {
+@@ -95,18 +120,32 @@ export async function runTimelineLoadFlow(options: RunTimelineLoadFlowOptions):
+   };
+ 
+   if (currentHashtag) {
+-    await loadPosts(currentHashtag);
++    onTimelineLoadStart?.({ mode: 'hashtag', hashtag: currentHashtag });
++    try {
++      await loadPosts(currentHashtag);
++      if (isCancelled()) return;
++      onTimelineDataReady?.({ mode: 'hashtag', hashtag: currentHashtag });
++      noteFirstPaint({ mode: 'hashtag' });
++    } catch (error) {
++      if (isCancelled()) return;
++      onTimelineError?.(error, { mode: 'hashtag', hashtag: currentHashtag });
++      throw error;
++    }
+     return;
+   }
+ 
+   if (searchQuery) {
++    onTimelineLoadStart?.({ mode: 'search', searchQuery, searchScope });
+     try {
+       const result = await searchPosts(searchQuery, 50, 0, currentChatJid, searchScope, currentRootChatJid);
+       if (isCancelled()) return;
+       setPosts(Array.isArray(result?.results) ? result.results : []);
+       setHasMore(false);
++      onTimelineDataReady?.({ mode: 'search', resultCount: Array.isArray(result?.results) ? result.results.length : 0 });
++      noteFirstPaint({ mode: 'search' });
+     } catch (error) {
+       if (isCancelled()) return;
++      onTimelineError?.(error, { mode: 'search', searchQuery, searchScope });
+       console.error('Failed to search:', error);
+       setPosts([]);
+       setHasMore(false);
+@@ -114,11 +153,16 @@ export async function runTimelineLoadFlow(options: RunTimelineLoadFlowOptions):
+     return;
+   }
+ 
++  onTimelineLoadStart?.({ mode: 'timeline' });
+   try {
+     await loadPosts();
++    if (isCancelled()) return;
++    onTimelineDataReady?.({ mode: 'timeline' });
++    noteFirstPaint({ mode: 'timeline' });
+     safeScrollToBottom();
+   } catch (error) {
+     if (isCancelled()) return;
++    onTimelineError?.(error, { mode: 'timeline' });
+     console.error('Failed to load timeline:', error);
+   }
+ }
+diff --git a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
+index becb07bf..0d4fe6ec 100644
+--- a/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
++++ b/runtime/web/src/ui/app-chat-refresh-lifecycle.ts
+@@ -225,18 +225,21 @@ export function useChatRefreshLifecycle(options: UseChatRefreshLifecycleOptions)
+                 hasCurrent: Boolean(payload?.current),
+                 modelCount: Array.isArray(payload?.models) ? payload.models.length : 0,
+               });
+-              markAppPerfTrace(activeTraceId, 'runtime-hydration-ready', {
+-                chatJid,
+-              });
+-              completeAppPerfTraceIfReady(activeTraceId, ['runtime-hydration-ready', 'timeline-first-paint'], 'settled', {
+-                chatJid,
+-              });
+             }
+             return payload;
+           },
+           activeChatJidRef,
+           applyModelState,
+         });
++        const activeTraceId = traceId || getThreadSwitchTraceId();
++        if (activeTraceId) {
++          markAppPerfTrace(activeTraceId, 'runtime-hydration-ready', {
++            chatJid: currentChatJid,
++          });
++          completeAppPerfTraceIfReady(activeTraceId, ['runtime-hydration-ready', 'timeline-first-paint'], 'settled', {
++            chatJid: currentChatJid,
++          });
++        }
+         return null;
+       },
+     });
+diff --git a/runtime/web/src/ui/use-timeline.ts b/runtime/web/src/ui/use-timeline.ts
+index 60909478..25a8b744 100644
+--- a/runtime/web/src/ui/use-timeline.ts
++++ b/runtime/web/src/ui/use-timeline.ts
+@@ -49,6 +49,7 @@ export function useTimeline({ preserveTimelineScroll, preserveTimelineScrollTop,
+     } catch (error) {
+       if (token !== chatTokenRef.current) return;
+       console.error('Failed to load posts:', error);
++      throw error;
+     }
+   }, [chatJid]);
+ 
+-- 
+2.51.2
+

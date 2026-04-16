@@ -1,5 +1,22 @@
+From a9e26adfdd4a58bcdf399699564fac210326b528 Mon Sep 17 00:00:00 2001
+From: Codex <codex@example.com>
+Date: Thu, 16 Apr 2026 12:06:17 +0000
+Subject: [PATCH] web: add push test endpoint and self-check
+
+---
+ .../src/channels/web/http/dispatch-agent.ts   |  6 +++
+ .../src/channels/web/http/rate-limit-rules.ts |  8 +++
+ .../src/channels/web/push/web-push-routes.ts  | 32 ++++++++++++
+ .../src/channels/web/push/web-push-service.ts | 17 ++++++
+ .../web/http-route-classification.test.ts     |  1 +
+ .../test/channels/web/web-push-routes.test.ts | 52 +++++++++++++++++++
+ .../channels/web/web-push-service.test.ts     | 22 ++++++++
+ runtime/web/src/api.ts                        | 11 ++++
+ runtime/web/src/ui/use-notifications.ts       | 14 ++++-
+ 9 files changed, 162 insertions(+), 1 deletion(-)
+
 diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
-index b82f474..d02ecd7 100644
+index 16933d7c..9740b28d 100644
 --- a/runtime/src/channels/web/http/dispatch-agent.ts
 +++ b/runtime/src/channels/web/http/dispatch-agent.ts
 @@ -7,6 +7,7 @@ import {
@@ -10,7 +27,7 @@ index b82f474..d02ecd7 100644
    handleWebPushVapidPublicKey,
  } from "../push/web-push-routes.js";
  
-@@ -161,6 +162,11 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+@@ -261,6 +262,11 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
      path: "/agent/push/presence",
      handle: (_channel, req) => handleWebPushPresence(req),
    },
@@ -22,8 +39,34 @@ index b82f474..d02ecd7 100644
    {
      method: "POST",
      path: "/agent/side-prompt",
+diff --git a/runtime/src/channels/web/http/rate-limit-rules.ts b/runtime/src/channels/web/http/rate-limit-rules.ts
+index ccd1bc8d..4887b5d1 100644
+--- a/runtime/src/channels/web/http/rate-limit-rules.ts
++++ b/runtime/src/channels/web/http/rate-limit-rules.ts
+@@ -29,6 +29,7 @@ const DATA_AGENT_BRANCH_LIMIT = 20;
+ const DATA_AGENT_PEER_LIMIT = 30;
+ const DATA_AGENT_UI_LIMIT = 30;
+ const DATA_AGENT_SIDE_PROMPT_LIMIT = 20;
++const DATA_AGENT_PUSH_TEST_LIMIT = 5;
+ 
+ /** Rate-limit rule returned for a specific method/path endpoint. */
+ export type DataRateLimitRule = {
+@@ -104,6 +105,13 @@ export function getDataRateLimitRule(method: string, pathname: string): DataRate
+       message: "Too many side-prompt requests. Slow down.",
+     };
+   }
++  if (method === "POST" && pathname === "/agent/push/test") {
++    return {
++      bucket: "data/agent_push_test",
++      limit: DATA_AGENT_PUSH_TEST_LIMIT,
++      message: "Too many notification test requests. Slow down.",
++    };
++  }
+   if (method === "POST" && pathname === "/workspace/upload") {
+     return {
+       bucket: "data/workspace_upload",
 diff --git a/runtime/src/channels/web/push/web-push-routes.ts b/runtime/src/channels/web/push/web-push-routes.ts
-index 564cb24..16885b5 100644
+index 564cb241..78f551e7 100644
 --- a/runtime/src/channels/web/push/web-push-routes.ts
 +++ b/runtime/src/channels/web/push/web-push-routes.ts
 @@ -7,6 +7,10 @@ import {
@@ -37,7 +80,7 @@ index 564cb24..16885b5 100644
  import {
    webNotificationPresenceService,
    type WebNotificationPresenceService,
-@@ -88,3 +92,26 @@ export async function handleWebPushPresence(
+@@ -88,3 +92,31 @@ export async function handleWebPushPresence(
      return Response.json({ error: error instanceof Error ? error.message : "Invalid web notification presence payload." }, { status: 400 });
    }
  }
@@ -51,6 +94,11 @@ index 564cb24..16885b5 100644
 +    const payload = body && typeof body === "object" ? body : {};
 +    const result = await sendStoredWebPushTestNotification({
 +      ...options,
++      targetDeviceId: typeof payload.device_id === "string"
++        ? payload.device_id
++        : typeof payload.deviceId === "string"
++          ? payload.deviceId
++          : options.targetDeviceId,
 +      title: typeof payload.title === "string" ? payload.title : undefined,
 +      body: typeof payload.body === "string" ? payload.body : undefined,
 +      url: typeof payload.url === "string" ? payload.url : undefined,
@@ -64,15 +112,67 @@ index 564cb24..16885b5 100644
 +    return Response.json({ error: error instanceof Error ? error.message : "Failed to send test push notification." }, { status: 500 });
 +  }
 +}
+diff --git a/runtime/src/channels/web/push/web-push-service.ts b/runtime/src/channels/web/push/web-push-service.ts
+index 596d3950..908e9af9 100644
+--- a/runtime/src/channels/web/push/web-push-service.ts
++++ b/runtime/src/channels/web/push/web-push-service.ts
+@@ -42,6 +42,7 @@ export interface SendStoredWebPushNotificationOptions {
+   baseDir?: string;
+   vapidSubject?: string;
+   chatJid?: string;
++  targetDeviceId?: string | null;
+   ttl?: number;
+   urgency?: "very-low" | "low" | "normal" | "high";
+   sendNotification?: (
+@@ -290,6 +291,10 @@ export async function sendStoredWebPushNotification(
+   let failed = 0;
+ 
+   for (const subscription of subscriptions) {
++    if (typeof options.targetDeviceId === "string" && options.targetDeviceId.trim() && subscription.deviceId !== options.targetDeviceId.trim()) {
++      continue;
++    }
++
+     if (!presenceService.shouldSendWebPush(subscription.deviceId, options.chatJid)) {
+       continue;
+     }
+@@ -329,3 +334,15 @@ export async function sendStoredWebPushNotification(
+     failed,
+   };
+ }
++
++export async function sendStoredWebPushTestNotification(
++  options: SendStoredWebPushNotificationOptions & { title?: string; body?: string; url?: string; tag?: string; sourceLabel?: string } = {},
++): Promise<StoredWebPushSendResult> {
++  return await sendStoredWebPushNotification({
++    title: options.title || "PiClaw notifications enabled",
++    body: options.body || "Web Push is configured for this device.",
++    url: options.url || "/",
++    tag: options.tag || "piclaw:test",
++    sourceLabel: options.sourceLabel || "Web Push",
++  }, options);
++}
+diff --git a/runtime/test/channels/web/http-route-classification.test.ts b/runtime/test/channels/web/http-route-classification.test.ts
+index 21d562c0..9ca23884 100644
+--- a/runtime/test/channels/web/http-route-classification.test.ts
++++ b/runtime/test/channels/web/http-route-classification.test.ts
+@@ -84,6 +84,7 @@ describe("web http route classification", () => {
+     expect(getDataRateLimitRule("POST", "/agent/card-action")?.bucket).toBe("data/agent_ui");
+     expect(getDataRateLimitRule("POST", "/agent/side-prompt")?.bucket).toBe("data/agent_side_prompt");
+     expect(getDataRateLimitRule("POST", "/agent/side-prompt/stream")?.bucket).toBe("data/agent_side_prompt");
++    expect(getDataRateLimitRule("POST", "/agent/push/test")?.bucket).toBe("data/agent_push_test");
+     expect(getDataRateLimitRule("POST", "/workspace/attach")?.bucket).toBe("data/workspace_attach");
+     expect(getDataRateLimitRule("POST", "/workspace/visibility")?.bucket).toBe("data/workspace_ui");
+     expect(getDataRateLimitRule("POST", "/workspace/reindex")?.bucket).toBe("data/workspace_ui");
 diff --git a/runtime/test/channels/web/web-push-routes.test.ts b/runtime/test/channels/web/web-push-routes.test.ts
-index 9a81bb5..75c9088 100644
+index 9a81bb55..73872ac4 100644
 --- a/runtime/test/channels/web/web-push-routes.test.ts
 +++ b/runtime/test/channels/web/web-push-routes.test.ts
-@@ -4,9 +4,11 @@ import { join } from "node:path";
+@@ -3,10 +3,12 @@ import { mkdtempSync, rmSync } from "node:fs";
+ import { join } from "node:path";
  import { tmpdir } from "node:os";
  
- import { WebNotificationPresenceService } from "../../../src/channels/web/push/web-notification-presence-service.js";
 +import { upsertStoredWebPushSubscription } from "../../../src/channels/web/push/web-push-store.js";
+ import { WebNotificationPresenceService } from "../../../src/channels/web/push/web-notification-presence-service.js";
  import {
    handleWebPushPresence,
    handleWebPushSubscriptionUpsert,
@@ -80,7 +180,7 @@ index 9a81bb5..75c9088 100644
  } from "../../../src/channels/web/push/web-push-routes.js";
  
  const tempDirs: string[] = [];
-@@ -73,4 +75,53 @@ describe("web push routes", () => {
+@@ -73,4 +75,54 @@ describe("web push routes", () => {
      });
      expect(presenceService.getDeviceChatState("device-1", "web:default").hasLiveClient).toBe(true);
    });
@@ -101,6 +201,7 @@ index 9a81bb5..75c9088 100644
 +      method: "POST",
 +      headers: { "Content-Type": "application/json" },
 +      body: JSON.stringify({
++        device_id: "device-1",
 +        title: "Custom title",
 +        body: "Custom body",
 +        url: "/?chat_jid=web%3Atest",
@@ -134,11 +235,60 @@ index 9a81bb5..75c9088 100644
 +    expect(((deliveries[0]?.options as any)?.urgency)).toBe("high");
 +  });
  });
+diff --git a/runtime/test/channels/web/web-push-service.test.ts b/runtime/test/channels/web/web-push-service.test.ts
+index fe5625b5..fb0f5a4d 100644
+--- a/runtime/test/channels/web/web-push-service.test.ts
++++ b/runtime/test/channels/web/web-push-service.test.ts
+@@ -8,6 +8,7 @@ import {
+   buildStoredAgentReplyWebPushNotification,
+   sendStoredAgentReplyWebPushNotification,
+   sendStoredWebPushNotification,
++  sendStoredWebPushTestNotification,
+ } from "../../../src/channels/web/push/web-push-service.js";
+ import { WebNotificationPresenceService } from "../../../src/channels/web/push/web-notification-presence-service.js";
+ 
+@@ -238,4 +239,25 @@ describe("web push service", () => {
+       sourceLabel: "Web Push",
+     }]);
+   });
++
++  test("adds a default source marker to test notifications", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(9), { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    await sendStoredWebPushTestNotification({
++      baseDir,
++      sendNotification: async (_subscription, payload) => {
++        deliveries.push(JSON.parse(payload));
++      },
++    });
++
++    expect(deliveries).toEqual([{
++      title: "PiClaw notifications enabled",
++      body: "Web Push is configured for this device.",
++      url: "/",
++      tag: "piclaw:test",
++      sourceLabel: "Web Push",
++    }]);
++  });
+ });
 diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
-index 3bcaed1..d8ee038 100644
+index eb5adf78..4af35b99 100644
 --- a/runtime/web/src/api.ts
 +++ b/runtime/web/src/api.ts
-@@ -300,6 +300,13 @@ export async function deleteWebPushSubscription(subscription, options = {}) {
+@@ -202,6 +202,10 @@ export async function getChatBranches(rootChatJid = null, options = {}) {
+     const params = new URLSearchParams();
+     if (rootChatJid) params.set('root_chat_jid', String(rootChatJid));
+     if (options?.includeArchived) params.set('include_archived', '1');
++    if (options?.prewarmRecent) params.set('prewarm_recent', '1');
++    if (Number.isFinite(options?.prewarmLimit)) params.set('prewarm_limit', String(options.prewarmLimit));
++    if (options?.excludeChatJid) params.set('exclude_chat_jid', String(options.excludeChatJid));
++    if (options?.prewarmChatJid) params.set('prewarm_chat_jid', String(options.prewarmChatJid));
+     const query = params.toString() ? `?${params.toString()}` : '';
+     return request(`/agent/branches${query}`);
+ }
+@@ -300,6 +304,13 @@ export async function deleteWebPushSubscription(subscription, options = {}) {
      });
  }
  
@@ -153,7 +303,7 @@ index 3bcaed1..d8ee038 100644
   * Get available agents / current agent roster.
   */
 diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
-index cb58f08..84fa3c6 100644
+index 0a586c8e..f63f9d31 100644
 --- a/runtime/web/src/ui/use-notifications.ts
 +++ b/runtime/web/src/ui/use-notifications.ts
 @@ -1,4 +1,4 @@
@@ -162,7 +312,7 @@ index cb58f08..84fa3c6 100644
  import { useCallback, useEffect, useRef, useState } from '../vendor/preact-htm.js';
  import { getLocalStorageBoolean, setLocalStorageItem } from '../utils/storage.js';
  import { focusWindowBestEffort } from './notification-focus.js';
-@@ -245,6 +245,17 @@ export function useNotifications(options = {}) {
+@@ -250,6 +250,18 @@ export function useNotifications(options = {}) {
        try {
          if (next) {
            await syncWebPushSubscription(window, deviceId);
@@ -171,6 +321,7 @@ index cb58f08..84fa3c6 100644
 +              title: 'PiClaw notifications enabled',
 +              body: 'Web Push is configured for this device.',
 +              url: window.location.pathname + window.location.search,
++              deviceId,
 +              tag: 'piclaw:test',
 +              sourceLabel: WEB_PUSH_NOTIFICATION_SOURCE_LABEL,
 +            });
@@ -180,3 +331,6 @@ index cb58f08..84fa3c6 100644
          } else {
            await disableWebPushSubscription(window, deviceId);
          }
+-- 
+2.51.2
+

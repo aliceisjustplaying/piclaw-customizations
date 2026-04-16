@@ -1,8 +1,42 @@
+From 6c0bc59dc355f8d33d9cd06192bfb4ff9b5b196e Mon Sep 17 00:00:00 2001
+From: alice <aliceisjustplaying@gmail.com>
+Date: Thu, 16 Apr 2026 10:06:00 +0000
+Subject: [PATCH] web: add push subscription foundation
+
+---
+ .../src/channels/web/http/dispatch-agent.ts   |  50 ++++-
+ .../src/channels/web/http/dispatch-shell.ts   |   4 +
+ runtime/src/channels/web/http/route-flags.ts  |   4 +
+ runtime/src/channels/web/http/static.ts       |  20 +-
+ .../src/channels/web/push/web-push-routes.ts  |  55 +++++
+ .../src/channels/web/push/web-push-store.ts   | 208 ++++++++++++++++++
+ .../test/channels/web/helpers/route-flags.ts  |   1 +
+ .../channels/web/http-dispatch-agent.test.ts  |   3 +
+ .../channels/web/http-dispatch-shell.test.ts  |   5 +-
+ runtime/test/channels/web/route-flags.test.ts |  13 ++
+ .../test/channels/web/web-push-routes.test.ts |  70 ++++++
+ .../test/channels/web/web-push-store.test.ts  | 121 ++++++++++
+ runtime/test/web/use-notifications.test.ts    |  15 ++
+ runtime/web/src/api.ts                        |  26 +++
+ runtime/web/src/ui/app-shell-bootstrap.ts     |  12 +
+ runtime/web/src/ui/use-notifications.ts       | 138 +++++++++++-
+ runtime/web/static/manifest.json              |   1 +
+ runtime/web/static/sw.js                      |  77 +++++++
+ 18 files changed, 805 insertions(+), 18 deletions(-)
+ create mode 100644 runtime/src/channels/web/push/web-push-routes.ts
+ create mode 100644 runtime/src/channels/web/push/web-push-store.ts
+ create mode 100644 runtime/test/channels/web/route-flags.test.ts
+ create mode 100644 runtime/test/channels/web/web-push-routes.test.ts
+ create mode 100644 runtime/test/channels/web/web-push-store.test.ts
+ create mode 100644 runtime/test/web/use-notifications.test.ts
+ create mode 100644 runtime/web/static/sw.js
+
 diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
-index a77a57f..2db5875 100644
+index a77a57f7..9e56c228 100644
 --- a/runtime/src/channels/web/http/dispatch-agent.ts
 +++ b/runtime/src/channels/web/http/dispatch-agent.ts
 @@ -3,6 +3,11 @@
+  * web/http/dispatch-agent.ts – Agent route dispatch helpers.
   */
  
  import type { WebChannelLike } from "../core/web-channel-contracts.js";
@@ -14,101 +48,7 @@ index a77a57f..2db5875 100644
  
  interface ExactAgentRoute {
    method: string;
-@@ -60,93 +65,6 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
-     path: "/agent/autoresearch/dismiss",
-     handle: (channel, req) => channel.handleAutoresearchDismiss(req),
-   },
--  {
--    method: "POST" as const,
--    path: "/agent/codex/dismiss",
--    handle: async (_channel: any, req: Request) => {
--      try {
--        let taskId = "";
--        let chatJid = "web:default";
--        try {
--          const body = await req.json();
--          if (typeof body?.key === "string") taskId = body.key.replace("codex.dismiss.", "");
--          if (typeof body?.chat_jid === "string" && body.chat_jid.trim()) chatJid = body.chat_jid.trim();
--        } catch {}
--        if (taskId) {
--          try {
--            const { existsSync, readFileSync } = await import("node:fs");
--            const { join } = await import("node:path");
--            const metaPath = join("/workspace/.piclaw/data/extensions/codex-delegate/tasks", taskId, "task.json");
--            if (existsSync(metaPath)) {
--              const meta = JSON.parse(readFileSync(metaPath, "utf8"));
--              if (typeof meta?.chat_jid === "string" && meta.chat_jid.trim()) chatJid = meta.chat_jid.trim();
--            }
--          } catch {}
--        }
--        const broadcast = (globalThis as any).__PICLAW_BROADCAST_EVENT__;
--        if (typeof broadcast === "function") {
--          const wkey = taskId ? `codex-${taskId}` : "codex-delegate";
--          broadcast("extension_ui_widget", { chat_jid: chatJid, key: wkey, content: [], options: { surface: "status-panel", remove: true } });
--        }
--        return Response.json({ ok: true });
--      } catch (err) {
--        return Response.json({ error: String(err) }, { status: 500 });
--      }
--    },
--  },
--  {
--    method: "POST" as const,
--    path: "/agent/codex/stop",
--    handle: async (_channel: any, req: Request) => {
--      try {
--        let taskId = "";
--        let chatJid = "web:default";
--        try {
--          const body = await req.json();
--          if (typeof body?.key === "string") taskId = body.key.replace("codex.stop.", "");
--          if (typeof body?.chat_jid === "string" && body.chat_jid.trim()) chatJid = body.chat_jid.trim();
--        } catch {}
--        const { spawnSync } = await import("node:child_process");
--        const { accessSync, constants, existsSync, readFileSync } = await import("node:fs");
--        const { join } = await import("node:path");
--        const searchPath = [
--          ...(process.env.PATH || "").split(":"),
--          "/run/current-system/sw/bin",
--          "/etc/profiles/per-user/agent/bin",
--          "/home/agent/.nix-profile/bin",
--          "/nix/profile/bin",
--          "/home/agent/.local/bin",
--          "/home/agent/.bun/bin",
--        ].filter(Boolean);
--        let tmuxBin = "tmux";
--        for (const dir of searchPath) {
--          const candidate = `${dir}/tmux`;
--          try { accessSync(candidate, constants.X_OK); tmuxBin = candidate; break; } catch {}
--        }
--        const env = { ...process.env, PATH: Array.from(new Set(searchPath)).join(":") };
--        const tmuxSession = "codex-" + taskId;
--        spawnSync(tmuxBin, ["send-keys", "-t", tmuxSession, "C-c", ""], { stdio: "ignore", env });
--        setTimeout(() => spawnSync(tmuxBin, ["kill-session", "-t", tmuxSession], { stdio: "ignore", env }), 2000);
--        if (taskId) {
--          try {
--            const metaPath = join("/workspace/.piclaw/data/extensions/codex-delegate/tasks", taskId, "task.json");
--            if (existsSync(metaPath)) {
--              const meta = JSON.parse(readFileSync(metaPath, "utf8"));
--              if (typeof meta?.chat_jid === "string" && meta.chat_jid.trim()) chatJid = meta.chat_jid.trim();
--            }
--          } catch {}
--        }
--        const broadcast = (globalThis as any).__PICLAW_BROADCAST_EVENT__;
--        if (typeof broadcast === "function") {
--          const wkey = "codex-" + taskId;
--          broadcast("extension_ui_widget", { chat_jid: chatJid, key: wkey, content: [], options: { surface: "status-panel", remove: true } });
--        }
--        return Response.json({ ok: true });
--      } catch (err) {
--        return Response.json({ error: String(err) }, { status: 500 });
--      }
--    },
--  },
-   {
-     method: "GET",
-     path: "/agent/queue-state",
-@@ -222,6 +140,21 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+@@ -222,6 +227,21 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
      path: "/agent/card-action",
      handle: (channel, req) => channel.handleAdaptiveCardAction(req),
    },
@@ -286,7 +226,7 @@ index 0000000..82853db
 + */
 +
 +import { createPublicKey, generateKeyPairSync } from "node:crypto";
-+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
++import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 +import { dirname, resolve } from "node:path";
 +
 +import { WORKSPACE_DIR } from "../../../core/config.js";
@@ -341,7 +281,14 @@ index 0000000..82853db
 +
 +function writeJsonFile(path: string, value: unknown): void {
 +  mkdirSync(dirname(path), { recursive: true });
-+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
++  const tempPath = `${path}.tmp-${process.pid}-${Date.now()}`;
++  try {
++    writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
++    renameSync(tempPath, path);
++  } catch (error) {
++    rmSync(tempPath, { force: true });
++    throw error;
++  }
 +}
 +
 +function decodeBase64Url(value: string): Buffer {
@@ -782,21 +729,10 @@ index 0000000..6f74358
 +  expect(formatNotificationTitle('', '')).toBe('PiClaw');
 +});
 diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
-index ba6bdf0..3bcaed1 100644
+index ba6bdf0..67a60d0 100644
 --- a/runtime/web/src/api.ts
 +++ b/runtime/web/src/api.ts
-@@ -202,10 +202,6 @@ export async function getChatBranches(rootChatJid = null, options = {}) {
-     const params = new URLSearchParams();
-     if (rootChatJid) params.set('root_chat_jid', String(rootChatJid));
-     if (options?.includeArchived) params.set('include_archived', '1');
--    if (options?.prewarmRecent) params.set('prewarm_recent', '1');
--    if (Number.isFinite(options?.prewarmLimit)) params.set('prewarm_limit', String(options.prewarmLimit));
--    if (options?.excludeChatJid) params.set('exclude_chat_jid', String(options.excludeChatJid));
--    if (options?.prewarmChatJid) params.set('prewarm_chat_jid', String(options.prewarmChatJid));
-     const query = params.toString() ? `?${params.toString()}` : '';
-     return request(`/agent/branches${query}`);
- }
-@@ -278,6 +274,32 @@ export async function sendPeerAgentMessage(sourceChatJid, targetChatOrName, cont
+@@ -278,6 +278,32 @@ export async function sendPeerAgentMessage(sourceChatJid, targetChatOrName, cont
      });
  }
  
@@ -830,18 +766,10 @@ index ba6bdf0..3bcaed1 100644
   * Get available agents / current agent roster.
   */
 diff --git a/runtime/web/src/ui/app-shell-bootstrap.ts b/runtime/web/src/ui/app-shell-bootstrap.ts
-index 6068117..df44296 100644
+index e50ddb08..65f856e5 100644
 --- a/runtime/web/src/ui/app-shell-bootstrap.ts
 +++ b/runtime/web/src/ui/app-shell-bootstrap.ts
-@@ -18,7 +18,6 @@ import {
-   mindmapPaneExtension,
-   kanbanPaneExtension,
- } from '../panes/index.js';
--import { installAppPerfTracing } from './app-perf-tracing.js';
- import { resolveOptionalApi } from './optional-api.js';
- 
- interface AppApiSurface {
-@@ -27,6 +26,7 @@ interface AppApiSurface {
+@@ -26,6 +26,7 @@ interface AppApiSurface {
  
  let initialized = false;
  let browserNoiseFilterInstalled = false;
@@ -849,7 +777,7 @@ index 6068117..df44296 100644
  
  export function configureMarked(markedInstance: { setOptions?: (options: Record<string, unknown>) => void } | null | undefined): void {
    if (!markedInstance || typeof markedInstance.setOptions !== 'function') return;
-@@ -73,6 +73,16 @@ export function registerAppPaneExtensions(): void {
+@@ -66,6 +67,16 @@ export function registerAppPaneExtensions(): void {
    paneRegistry.register(terminalTabPaneExtension);
  }
  
@@ -866,20 +794,18 @@ index 6068117..df44296 100644
  export function initializeAppShellRuntime(): void {
    if (initialized) return;
    const markedInstance = typeof window !== 'undefined'
-@@ -81,7 +91,7 @@ export function initializeAppShellRuntime(): void {
-   configureMarked(markedInstance);
+@@ -74,6 +85,7 @@ export function initializeAppShellRuntime(): void {
    installBrowserNoiseFilters(typeof window !== 'undefined' ? window : null);
    registerAppPaneExtensions();
--  installAppPerfTracing(typeof window !== 'undefined' ? window as any : null);
 +  registerAppServiceWorker(typeof window !== 'undefined' ? window : null);
    initialized = true;
  }
  
 diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
-index 5ccaf9b..ae72abc 100644
+index 5ccaf9b..a4f3fe5 100644
 --- a/runtime/web/src/ui/use-notifications.ts
 +++ b/runtime/web/src/ui/use-notifications.ts
-@@ -1,18 +1,120 @@
+@@ -1,18 +1,122 @@
 +import { deleteWebPushSubscription, getWebPushPublicKey, saveWebPushSubscription } from '../api.js';
  import { useCallback, useEffect, useRef, useState } from '../vendor/preact-htm.js';
  import { getLocalStorageBoolean, setLocalStorageItem } from '../utils/storage.js';
@@ -962,7 +888,9 @@ index 5ccaf9b..ae72abc 100644
 +    : `device-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
 +  try {
 +    storage?.setItem?.('piclaw.notifications.deviceId', created);
-+  } catch {}
++  } catch (error) {
++    console.debug('[use-notifications] Ignoring notification device-id persistence failure.', error);
++  }
 +  return (typeof storage?.getItem === 'function' ? storage.getItem('piclaw.notifications.deviceId') : null) || created;
 +}
 +
@@ -1002,7 +930,17 @@ index 5ccaf9b..ae72abc 100644
      }
    }, []);
  
-@@ -58,14 +160,32 @@ export function useNotifications() {
+@@ -28,7 +132,8 @@ export function useNotifications() {
+         return result;
+       }
+       return Promise.resolve(result);
+-    } catch {
++    } catch (error) {
++      console.debug('[use-notifications] Notification permission request threw; returning default permission state.', error);
+       return Promise.resolve('default');
+     }
+   }, []);
+@@ -58,19 +163,40 @@ export function useNotifications() {
      notificationsEnabledRef.current = next;
      setNotificationsEnabled(next);
      setLocalStorageItem('notificationsEnabled', String(next));
@@ -1037,6 +975,15 @@ index 5ccaf9b..ae72abc 100644
        notification.onclick = () => {
          focusWindowBestEffort(window);
        };
+       return true;
+-    } catch {
++    } catch (error) {
++      console.debug('[use-notifications] Local notification creation failed.', error, {
++        title: typeof title === 'string' ? title : null,
++      });
+       return false;
+     }
+   }, []);
 diff --git a/runtime/web/static/manifest.json b/runtime/web/static/manifest.json
 index 6c25751..d5e8a1c 100644
 --- a/runtime/web/static/manifest.json

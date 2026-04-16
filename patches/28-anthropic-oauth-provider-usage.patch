@@ -233,7 +233,12 @@ index 649469b..db7c5bf 100644
 +
 +  if (!usageResponse.ok) return null;
 +  const payload = (await usageResponse.json()) as any;
-+  const overageGrant = await fetchAnthropicOverageCreditGrant(credential.access);
++  let overageGrant: any = null;
++  try {
++    overageGrant = await fetchAnthropicOverageCreditGrant(credential.access);
++  } catch (error) {
++    debugSuppressedError(log, "Failed to fetch Anthropic overage credit grant; continuing without it.", error);
++  }
 +  const primary = makeWindow("5h", payload?.five_hour?.utilization, payload?.five_hour?.resets_at ?? payload?.five_hour?.reset_at, 300);
 +  const secondary = makeWindow(
 +    "week",
@@ -406,6 +411,43 @@ index 15e35a9..fc071ab 100644
 +      expect(usage?.extra_usage?.grant_currency).toBe("GBP");
 +      expect(usage?.extra_usage?.hint_short).toBe("extra off (£150.00)");
 +      expect(usage?.hint_short).not.toContain("extra");
++    } finally {
++      globalThis.fetch = previousFetch;
++    }
++  });
++
++  test("keeps Anthropic usage available when the overage grant fetch fails", async () => {
++    const fetchMock = mock(async (input: RequestInfo | URL) => {
++      const url = String(input);
++      if (url === "https://api.anthropic.com/api/oauth/usage") {
++        return new Response(JSON.stringify({
++          five_hour: { utilization: 25, resets_at: new Date(Date.now() + 3600_000).toISOString() },
++          seven_day: { utilization: 40, resets_at: new Date(Date.now() + 86400_000).toISOString() },
++        }));
++      }
++      if (url === "https://api.anthropic.com/api/oauth/profile") {
++        return new Response(JSON.stringify({ organization: { uuid: "org_789" } }));
++      }
++      if (url === "https://api.anthropic.com/api/oauth/organizations/org_789/overage_credit_grant") {
++        throw new Error("temporary overage failure");
++      }
++      return new Response("not found", { status: 404 });
++    });
++    const previousFetch = globalThis.fetch;
++    globalThis.fetch = fetchMock as any;
++
++    try {
++      const usage = await getProviderUsage(
++        createAuthStorage({
++          anthropic: { type: "oauth", access: "tok", expires: Date.now() + 60_000 },
++        }),
++        "anthropic"
++      );
++
++      expect(usage?.provider).toBe("anthropic");
++      expect(usage?.primary?.remaining_percent).toBe(75);
++      expect(usage?.secondary?.remaining_percent).toBe(60);
++      expect(usage?.extra_usage).toBeNull();
 +    } finally {
 +      globalThis.fetch = previousFetch;
 +    }

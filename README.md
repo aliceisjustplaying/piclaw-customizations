@@ -40,10 +40,10 @@ scripts/
 
 See [`patches/README.md`](patches/README.md) for the full patch table, retired patches, terminal patch outcomes, and upstream-audit automation.
 
-Active source patches: `01`, `02`, `04`, `05`, `11`, `24`, `28`, `30`, `32`, `46–56`
-Retired patches kept under `patches/retired/`: `06` (folded into `21`), `15` (folded into `05`), `20–23`, `25–27`, `31`, and `45` (merged upstream), `29–44` (retired after consolidation into `29–32`), consolidated active `29` (retired after re-splitting into `52–56`)
+Active source patches: `01`, `02`, `04`, `05`, `11`, `24`, `28`, `32`, `51–53`, `57–62`
+Retired patches kept under `patches/retired/`: `06` (folded into `21`), `15` (folded into `05`), `20–23`, `25–27`, `31`, `45`, and `46` (merged upstream), `47`, `49`, `50`, `54–56` (merged upstream), `48` (subsumed upstream), `29–44` (retired after consolidation into `29–32`), consolidated active `29` (retired after re-splitting into `52–56`), consolidated active `30` (retired after re-splitting into `57–60`)
 Post-install patches: `01` (jiti/Bun fix), `02` (context usage)
-Next available number: **57**
+Next available number: **63**
 
 Upstream maintenance helpers:
 - `./patches/audit-upstream.sh` audits every active patch against current upstream
@@ -52,6 +52,10 @@ Upstream maintenance helpers:
 
 Local-only note:
 - patch `28` (Anthropic OAuth provider usage) is intentionally not slated for upstreaming
+- patch `60` (push self-check endpoint) is also intentionally local-only
+
+Upstream PR mapping note:
+- see [`patches/README.md`](patches/README.md) for the live patch -> PR -> status table
 
 ## Codex Delegate Extension
 

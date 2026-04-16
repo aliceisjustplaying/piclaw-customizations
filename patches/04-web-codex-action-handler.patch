@@ -13,9 +13,13 @@ index b6fb365..95ff947 100644
 +      try {
 +        let taskId = "";
 +        let chatJid = "web:default";
++        const validTaskId = (value: string) => /^[a-zA-Z0-9_-]+$/.test(value);
 +        try {
 +          const body = await req.json();
-+          if (typeof body?.key === "string") taskId = body.key.replace("codex.dismiss.", "");
++          if (typeof body?.key === "string" && body.key.startsWith("codex.dismiss.")) {
++            const candidateTaskId = body.key.replace("codex.dismiss.", "").trim();
++            taskId = validTaskId(candidateTaskId) ? candidateTaskId : "";
++          }
 +          if (typeof body?.chat_jid === "string" && body.chat_jid.trim()) chatJid = body.chat_jid.trim();
 +        } catch {}
 +        if (taskId) {
@@ -47,9 +51,13 @@ index b6fb365..95ff947 100644
 +      try {
 +        let taskId = "";
 +        let chatJid = "web:default";
++        const validTaskId = (value: string) => /^[a-zA-Z0-9_-]+$/.test(value);
 +        try {
 +          const body = await req.json();
-+          if (typeof body?.key === "string") taskId = body.key.replace("codex.stop.", "");
++          if (typeof body?.key === "string" && body.key.startsWith("codex.stop.")) {
++            const candidateTaskId = body.key.replace("codex.stop.", "").trim();
++            taskId = validTaskId(candidateTaskId) ? candidateTaskId : "";
++          }
 +          if (typeof body?.chat_jid === "string" && body.chat_jid.trim()) chatJid = body.chat_jid.trim();
 +        } catch {}
 +        const { spawnSync } = await import("node:child_process");
@@ -70,7 +78,7 @@ index b6fb365..95ff947 100644
 +          try { accessSync(candidate, constants.X_OK); tmuxBin = candidate; break; } catch {}
 +        }
 +        const env = { ...process.env, PATH: Array.from(new Set(searchPath)).join(":") };
-+        const tmuxSession = "codex-" + taskId;
++        const tmuxSession = taskId ? `codex-${taskId}` : "codex-delegate";
 +        spawnSync(tmuxBin, ["send-keys", "-t", tmuxSession, "C-c", ""], { stdio: "ignore", env });
 +        setTimeout(() => spawnSync(tmuxBin, ["kill-session", "-t", tmuxSession], { stdio: "ignore", env }), 2000);
 +        if (taskId) {
@@ -84,7 +92,7 @@ index b6fb365..95ff947 100644
 +        }
 +        const broadcast = (globalThis as any).__PICLAW_BROADCAST_EVENT__;
 +        if (typeof broadcast === "function") {
-+          const wkey = "codex-" + taskId;
++          const wkey = taskId ? `codex-${taskId}` : "codex-delegate";
 +          broadcast("extension_ui_widget", { chat_jid: chatJid, key: wkey, content: [], options: { surface: "status-panel", remove: true } });
 +        }
 +        return Response.json({ ok: true });
@@ -123,6 +131,12 @@ index 640179a..33155be 100644
 +  }
 +
 +  if (actionType.startsWith('codex.dismiss')) {
++    await fetch('/agent/codex/dismiss', {
++      method: 'POST',
++      credentials: 'include',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ key: actionType, chat_jid: options.currentChatJid }),
++    });
 +    return { refreshAutoresearchStatus: false, dismissPanelKey: typeof options.panel?.key === 'string' ? options.panel.key : undefined };
 +  }
 +

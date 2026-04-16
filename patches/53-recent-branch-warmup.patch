@@ -1,22 +1,19 @@
-From 47a440c88139f36abf90d0873f4644fdea7fb29f Mon Sep 17 00:00:00 2001
-From: alice <aliceisjustplaying@gmail.com>
-Date: Wed, 15 Apr 2026 12:24:56 +0000
+From 675e3601bde84fd5f71dde198e64b8d0f1d6c64e Mon Sep 17 00:00:00 2001
+From: Codex <codex@example.com>
+Date: Thu, 16 Apr 2026 12:34:29 +0000
 Subject: [PATCH] perf: warm recent chats from branch refreshes
 
 ---
- runtime/src/agent-pool.ts                     | 27 ++++++++++++
+ runtime/src/agent-pool.ts                     | 44 +++++++++++++++++++
  .../channel-endpoint-facade-service.ts        | 18 ++++++++
  runtime/src/db.ts                             |  1 +
- runtime/src/db/messages.ts                    | 23 +++++++++++
- runtime/test/agent-pool/agent-pool.test.ts    | 41 +++++++++++++++++++
- .../channel-endpoint-facade-service.test.ts   | 19 +++++++++
- runtime/test/web/app-auth-bootstrap.test.ts   | 19 ++++++---
- runtime/web/src/api.ts                        |  3 ++
- runtime/web/src/ui/app-auth-bootstrap.ts      |  9 +++-
- 9 files changed, 153 insertions(+), 7 deletions(-)
+ runtime/src/db/messages.ts                    | 23 ++++++++++
+ runtime/test/agent-pool/agent-pool.test.ts    | 41 +++++++++++++++++
+ .../channel-endpoint-facade-service.test.ts   | 19 ++++++++
+ 6 files changed, 146 insertions(+)
 
 diff --git a/runtime/src/agent-pool.ts b/runtime/src/agent-pool.ts
-index 5378a2ab..d5d4e582 100644
+index 8d1e90f3..e0b5b6f5 100644
 --- a/runtime/src/agent-pool.ts
 +++ b/runtime/src/agent-pool.ts
 @@ -56,6 +56,7 @@ import {
@@ -27,7 +24,7 @@ index 5378a2ab..d5d4e582 100644
    upsertSshConfig,
  } from "./db.js";
  import { setSshToolHandlers } from "./extensions/ssh.js";
-@@ -258,6 +259,32 @@ export class AgentPool {
+@@ -258,6 +259,49 @@ export class AgentPool {
      return this.runtimeFacade.getContextUsageForChat(chatJid);
    }
  
@@ -40,14 +37,31 @@ index 5378a2ab..d5d4e582 100644
 +    );
 +
 +    const scheduled: string[] = [];
-+    const candidates = listRecentChatJids(targetCount * 4, {
-+      excludeChatJids: [...excluded],
-+    });
-+    for (const chatJid of candidates) {
-+      if (excluded.has(chatJid)) continue;
-+      if (this.pool.has(chatJid)) continue;
-+      scheduled.push(chatJid);
-+      if (scheduled.length >= targetCount) break;
++    const seen = new Set<string>();
++    let fetchLimit = Math.min(100, Math.max(targetCount * 4, targetCount));
++
++    while (scheduled.length < targetCount) {
++      const candidates = listRecentChatJids(fetchLimit, {
++        excludeChatJids: [...excluded],
++      });
++      for (const chatJid of candidates) {
++        if (seen.has(chatJid)) continue;
++        seen.add(chatJid);
++        if (excluded.has(chatJid)) continue;
++        if (this.pool.has(chatJid)) continue;
++        scheduled.push(chatJid);
++        if (scheduled.length >= targetCount) break;
++      }
++
++      if (scheduled.length >= targetCount || fetchLimit >= 100) {
++        break;
++      }
++
++      const nextFetchLimit = Math.min(100, fetchLimit * 2);
++      if (nextFetchLimit === fetchLimit) {
++        break;
++      }
++      fetchLimit = nextFetchLimit;
 +    }
 +
 +    for (const chatJid of scheduled) {
@@ -57,8 +71,8 @@ index 5378a2ab..d5d4e582 100644
 +    return scheduled;
 +  }
 +
-   getSessionTreeForChat(chatJid: string): { leafId: string | null; nodes: unknown[]; flat?: boolean; total?: number; capped?: boolean } | null {
-     return this.runtimeFacade.getSessionTreeForChat(chatJid);
+   scheduleChatWarmup(chatJid: string, options: { priority?: boolean } = {}): boolean {
+     return this.sessionManager.prewarm(chatJid, options);
    }
 diff --git a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
 index 9079d06a..bab203d5 100644
@@ -136,7 +150,7 @@ index 9145015f..5a56019d 100644
   * Persist a message into the `messages` table (INSERT OR REPLACE).
   * Returns the SQLite rowid of the inserted row (used as the interaction id
 diff --git a/runtime/test/agent-pool/agent-pool.test.ts b/runtime/test/agent-pool/agent-pool.test.ts
-index 7052090f..fea1d8e8 100644
+index 34211fb5..10f79101 100644
 --- a/runtime/test/agent-pool/agent-pool.test.ts
 +++ b/runtime/test/agent-pool/agent-pool.test.ts
 @@ -290,6 +290,47 @@ test("agent pool evicts idle sessions and recreates them", async () => {
@@ -234,98 +248,6 @@ index b5e17332..1c25ea35 100644
 +    expect(scheduledWarmups).toEqual([{ limit: 4, excludeChatJids: ["web:default"] }]);
 +  });
  });
-diff --git a/runtime/test/web/app-auth-bootstrap.test.ts b/runtime/test/web/app-auth-bootstrap.test.ts
-index 9a0630ff..11e6954f 100644
---- a/runtime/test/web/app-auth-bootstrap.test.ts
-+++ b/runtime/test/web/app-auth-bootstrap.test.ts
-@@ -197,6 +197,7 @@ test('handleMessageResponseRefresh triggers queue refresh only for queued respon
- 
- test('refreshActiveChatAgents merges active + archived branch rows for target chat', async () => {
-   let rows: any[] = [];
-+  const branchOptions: any[] = [];
- 
-   refreshActiveChatAgents({
-     currentChatJid: 'chat-a',
-@@ -205,19 +206,25 @@ test('refreshActiveChatAgents merges active + archived branch rows for target ch
-         { chat_jid: 'chat-a', root_chat_jid: 'chat-a', agent_name: 'Primary', is_active: true },
-       ],
-     }),
--    getChatBranches: async () => ({
--      chats: [
--        { chat_jid: 'chat-a', root_chat_jid: 'chat-a', agent_name: 'Primary branch' },
--        { chat_jid: 'chat-b', root_chat_jid: 'chat-a', agent_name: 'Branch', archived_at: '2026-01-01T00:00:00.000Z' },
--      ],
--    }),
-+    getChatBranches: async (_rootChatJid, options) => {
-+      branchOptions.push(options || null);
-+      return {
-+        chats: [
-+          { chat_jid: 'chat-a', root_chat_jid: 'chat-a', agent_name: 'Primary branch' },
-+          { chat_jid: 'chat-b', root_chat_jid: 'chat-a', agent_name: 'Branch', archived_at: '2026-01-01T00:00:00.000Z' },
-+        ],
-+      };
-+    },
-     activeChatJidRef: { current: 'chat-a' },
-     setActiveChatAgents: (next) => {
-       rows = typeof next === 'function' ? next(rows) : next;
-     },
-+    prewarmRecent: true,
-+    prewarmLimit: 4,
-   });
- 
-   await new Promise((resolve) => setTimeout(resolve, 0));
- 
-   expect(rows.map((row) => row.chat_jid).sort()).toEqual(['chat-a', 'chat-b']);
-+  expect(branchOptions).toEqual([{ includeArchived: true, prewarmRecent: true, prewarmLimit: 4, excludeChatJid: 'chat-a' }]);
- });
-diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
-index 72756d0f..35a367c9 100644
---- a/runtime/web/src/api.ts
-+++ b/runtime/web/src/api.ts
-@@ -202,6 +202,9 @@ export async function getChatBranches(rootChatJid = null, options = {}) {
-     const params = new URLSearchParams();
-     if (rootChatJid) params.set('root_chat_jid', String(rootChatJid));
-     if (options?.includeArchived) params.set('include_archived', '1');
-+    if (options?.prewarmRecent) params.set('prewarm_recent', '1');
-+    if (Number.isFinite(options?.prewarmLimit)) params.set('prewarm_limit', String(options.prewarmLimit));
-+    if (options?.excludeChatJid) params.set('exclude_chat_jid', String(options.excludeChatJid));
-     const query = params.toString() ? `?${params.toString()}` : '';
-     return request(`/agent/branches${query}`);
- }
-diff --git a/runtime/web/src/ui/app-auth-bootstrap.ts b/runtime/web/src/ui/app-auth-bootstrap.ts
-index c9048bed..2f421ddb 100644
---- a/runtime/web/src/ui/app-auth-bootstrap.ts
-+++ b/runtime/web/src/ui/app-auth-bootstrap.ts
-@@ -155,6 +155,8 @@ export interface RefreshActiveChatAgentsOptions {
-   getChatBranches: (rootChatJid: string | null, options?: Record<string, unknown>) => Promise<{ chats?: unknown[] }>;
-   activeChatJidRef: { current: string };
-   setActiveChatAgents: StateSetter<any[]>;
-+  prewarmRecent?: boolean;
-+  prewarmLimit?: number;
- }
- 
- export async function refreshActiveChatAgents(options: RefreshActiveChatAgentsOptions): Promise<any[]> {
-@@ -164,6 +166,8 @@ export async function refreshActiveChatAgents(options: RefreshActiveChatAgentsOp
-     getChatBranches,
-     activeChatJidRef,
-     setActiveChatAgents,
-+    prewarmRecent = false,
-+    prewarmLimit = 3,
-   } = options;
- 
-   const targetChatJid = currentChatJid;
-@@ -171,7 +175,10 @@ export async function refreshActiveChatAgents(options: RefreshActiveChatAgentsOp
-   try {
-     const [activePayload, branchPayload] = await Promise.all([
-       getActiveChatAgents().catch(() => ({ chats: [] /* expected: active-agent refresh is best-effort. */ })),
--      getChatBranches(null, { includeArchived: true }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
-+      getChatBranches(null, {
-+        includeArchived: true,
-+        ...(prewarmRecent ? { prewarmRecent: true, prewarmLimit, excludeChatJid: targetChatJid } : {}),
-+      }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
-     ]);
- 
-     if (activeChatJidRef.current !== targetChatJid) return [];
 -- 
 2.51.2
 

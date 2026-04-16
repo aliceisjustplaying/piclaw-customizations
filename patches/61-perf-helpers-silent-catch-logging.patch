@@ -1,0 +1,30 @@
+diff --git a/runtime/web/src/ui/app-perf-tracing.ts b/runtime/web/src/ui/app-perf-tracing.ts
+--- a/runtime/web/src/ui/app-perf-tracing.ts
++++ b/runtime/web/src/ui/app-perf-tracing.ts
+@@ -109,7 +109,7 @@ function clearPerformanceMarks(traceId: string): void {
+     for (const phase of trace.phases) {
+       performance.clearMarks(`piclaw:${traceId}:${phase.phase}`);
+     }
+-  } catch (error) {
+-    debugSuppressedError(log, 'Ignoring performance.clearMarks failure.', error, { traceId });
++  } catch (error) {
++    console.debug('[app-perf] Ignoring performance.clearMarks failure.', error, { traceId });
+   }
+ }
+ 
+diff --git a/runtime/web/src/ui/app-timeline-cache.ts b/runtime/web/src/ui/app-timeline-cache.ts
+--- a/runtime/web/src/ui/app-timeline-cache.ts
++++ b/runtime/web/src/ui/app-timeline-cache.ts
+@@ -109,8 +109,10 @@ export async function prewarmTimelineSnapshots(options: {
+         try {
+           const payload = await options.fetchTimeline(chatJid);
+           cacheTimelineSnapshot(chatJid, payload);
+-        } catch {
+-          // Best-effort prewarm only.
++        } catch (error) {
++          console.debug('[app-timeline-cache] Ignoring timeline prewarm failure for a best-effort background fetch.', error, {
++            chatJid,
++          });
+         } finally {
+           prewarmInFlight.delete(chatJid);
+         }

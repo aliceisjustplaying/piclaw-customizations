@@ -138,7 +138,7 @@ diff --git a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.
 index bab203d5..c29f96a1 100644
 --- a/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
 +++ b/runtime/src/channels/web/endpoints/channel-endpoint-facade-service.ts
-@@ -200,16 +200,25 @@ export class WebChannelEndpointFacadeService {
+@@ -200,21 +200,33 @@
        const prewarmLimitRaw = Number.parseInt(String(url.searchParams.get("prewarm_limit") || "").trim(), 10);
        const prewarmLimit = Number.isFinite(prewarmLimitRaw)
          ? Math.max(1, Math.min(8, prewarmLimitRaw))
@@ -147,29 +147,37 @@ index bab203d5..c29f96a1 100644
        const excludeChatJid = typeof url.searchParams.get("exclude_chat_jid") === "string"
          ? url.searchParams.get("exclude_chat_jid")!.trim()
          : "";
-+      const prewarmChatJid = typeof url.searchParams.get("prewarm_chat_jid") === "string"
-+        ? url.searchParams.get("prewarm_chat_jid")!.trim()
-+        : "";
- 
+-
 -      if (!rootChatJid && prewarmRecent) {
 -        this.options.agentPool.scheduleRecentChatWarmup({
 -          limit: prewarmLimit,
 -          excludeChatJids: excludeChatJid ? [excludeChatJid] : [],
 -        });
+-      }
++      const prewarmChatJid = typeof url.searchParams.get("prewarm_chat_jid") === "string"
++        ? url.searchParams.get("prewarm_chat_jid")!.trim()
++        : "";
+ 
+       const chats = typeof this.options.listKnownChats === "function"
+         ? this.options.listKnownChats(rootChatJid || null, { includeArchived })
+         : this.options.listActiveChats();
++      const hasKnownPrewarmChat = prewarmChatJid
++        ? chats.some((chat) => chat.chat_jid === prewarmChatJid)
++        : false;
++
 +      if (!rootChatJid) {
-+        if (prewarmChatJid) {
++        if (hasKnownPrewarmChat) {
 +          this.options.agentPool.scheduleChatWarmup(prewarmChatJid, { priority: true });
 +        }
 +        if (prewarmRecent) {
-+          const excludeChatJids = [excludeChatJid, prewarmChatJid].filter(Boolean);
++          const excludeChatJids = [excludeChatJid, hasKnownPrewarmChat ? prewarmChatJid : ""].filter(Boolean);
 +          this.options.agentPool.scheduleRecentChatWarmup({
 +            limit: prewarmLimit,
 +            excludeChatJids,
 +          });
 +        }
-       }
- 
-       const chats = typeof this.options.listKnownChats === "function"
++      }
+       return this.options.json({ chats }, 200);
 diff --git a/runtime/src/runtime/startup.ts b/runtime/src/runtime/startup.ts
 index 0b5d0aa5..fb20ed41 100644
 --- a/runtime/src/runtime/startup.ts
@@ -423,6 +431,3 @@ index 2f421ddb..815d145d 100644
        }).catch(() => ({ chats: [] /* expected: archived-branch refresh is best-effort. */ })),
      ]);
  
--- 
-2.51.2
-

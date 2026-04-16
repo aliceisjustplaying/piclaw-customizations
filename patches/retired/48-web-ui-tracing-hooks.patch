@@ -1,0 +1,90 @@
+From bbbeddd023e0d52dbebb53d41dcf47d42faaa120 Mon Sep 17 00:00:00 2001
+From: alice <aliceisjustplaying@gmail.com>
+Date: Thu, 16 Apr 2026 11:17:01 +0000
+Subject: [PATCH] fix(web): close superseded perf traces cleanly
+
+---
+ runtime/test/web/app-perf-tracing.test.ts | 16 +++++++++++++++
+ runtime/web/src/ui/app-perf-tracing.ts    | 24 +++++++++++++++++++++++
+ 2 files changed, 40 insertions(+)
+
+diff --git a/runtime/test/web/app-perf-tracing.test.ts b/runtime/test/web/app-perf-tracing.test.ts
+index aaf80a72..0b0827b0 100644
+--- a/runtime/test/web/app-perf-tracing.test.ts
++++ b/runtime/test/web/app-perf-tracing.test.ts
+@@ -61,6 +61,22 @@ test('app perf tracing only auto-completes once required phases are present', ()
+   ]);
+ });
+ 
++test('app perf tracing cancels the previous active trace when a new trace starts for the same type/chat', () => {
++  const firstTraceId = startAppPerfTrace('thread-switch', 'web:branch');
++  markAppPerfTrace(firstTraceId, 'intent');
++
++  const secondTraceId = startAppPerfTrace('thread-switch', 'web:branch');
++
++  const traces = getAppPerfTracing().getTraces();
++  expect(traces).toHaveLength(2);
++  expect(traces[0]?.id).toBe(firstTraceId);
++  expect(traces[0]?.status).toBe('cancelled');
++  expect(traces[0]?.phases.map((phase) => phase.phase)).toEqual(['intent', 'superseded']);
++  expect(traces[1]?.id).toBe(secondTraceId);
++  expect(traces[1]?.status).toBe('active');
++  expect(getActiveAppPerfTraceId('thread-switch', 'web:branch')).toBe(secondTraceId);
++});
++
+ test('app perf tracing stores bounded request samples', () => {
+   const requestId = recordAppPerfRequest({
+     method: 'GET',
+diff --git a/runtime/web/src/ui/app-perf-tracing.ts b/runtime/web/src/ui/app-perf-tracing.ts
+index 57fe4539..1e21aa03 100644
+--- a/runtime/web/src/ui/app-perf-tracing.ts
++++ b/runtime/web/src/ui/app-perf-tracing.ts
+@@ -103,7 +103,29 @@ function markPerformance(traceId: string, phase: string): void {
+   }
+ }
+ 
++function clearPerformanceMarks(traceId: string): void {
++  if (typeof performance === 'undefined' || typeof performance.clearMarks !== 'function') return;
++  try {
++    performance.clearMarks(`piclaw:${traceId}:start`);
++    const trace = findTrace(traceId);
++    if (!trace) return;
++    for (const phase of trace.phases) {
++      performance.clearMarks(`piclaw:${traceId}:${phase.phase}`);
++    }
++  } catch (error) {
++    debugSuppressedError(log, 'Ignoring performance.clearMarks failure.', error, { traceId });
++  }
++}
++
+ function createTrace(type: string, chatJid: string, detail?: Record<string, unknown> | null): string {
++  const existingTraceId = activeTraceIds.get(buildTraceKey(type, chatJid));
++  if (existingTraceId && findTrace(existingTraceId)?.status === 'active') {
++    endTrace(existingTraceId, 'cancelled', 'superseded', {
++      replacementType: type,
++      replacementChatJid: chatJid,
++    });
++  }
++
+   const traceId = nextId(type);
+   const entry: TraceEntry = {
+     id: traceId,
+@@ -138,6 +160,7 @@ function endTrace(traceId: string | null | undefined, status: TraceStatus, phase
+   if (activeTraceIds.get(key) === trace.id) {
+     activeTraceIds.delete(key);
+   }
++  clearPerformanceMarks(trace.id);
+ }
+ 
+ const perfApi: PerfApi = {
+@@ -187,6 +210,7 @@ const perfApi: PerfApi = {
+     return requests.map((entry) => ({ ...entry, detail: cloneDetail(entry.detail) }));
+   },
+   'clear'() {
++    traces.forEach((entry) => clearPerformanceMarks(entry.id));
+     traces.splice(0, traces.length);
+     requests.splice(0, requests.length);
+     activeTraceIds.clear();
+-- 
+2.51.2
+
