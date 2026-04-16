@@ -300,16 +300,22 @@ refresh_source_checkout() {
 
   if [ -d "${CACHE_DIR}/.git" ]; then
     quiet git -C "${CACHE_DIR}" remote set-url origin "${FORK_URL}"
-    quiet git -C "${CACHE_DIR}" fetch --prune origin "${FORK_BRANCH}"
+    # Fetch branch + all tags so `git describe` finds the correct upstream
+    # release tag (v1.7.x) instead of falling back to an older one.
+    quiet git -C "${CACHE_DIR}" fetch --prune --tags origin "${FORK_BRANCH}"
     quiet git -C "${CACHE_DIR}" checkout -B "${FORK_BRANCH}" "origin/${FORK_BRANCH}"
     quiet git -C "${CACHE_DIR}" reset --hard "origin/${FORK_BRANCH}"
   else
     rm -rf "${CACHE_DIR}"
-    quiet git clone --branch "${FORK_BRANCH}" --single-branch "${FORK_URL}" "${CACHE_DIR}"
+    # --no-single-branch pulls tags along with the branch. Cache is local, so
+    # the extra ref bookkeeping is cheap and keeps version strings accurate.
+    quiet git clone --branch "${FORK_BRANCH}" --no-single-branch "${FORK_URL}" "${CACHE_DIR}"
   fi
 
   status "Creating candidate checkout in ${SOURCE_DIR}"
-  quiet git clone --no-hardlinks --branch "${FORK_BRANCH}" --single-branch "${CACHE_DIR}" "${SOURCE_DIR}"
+  # Clone from the local cache with tags so `git describe` works in the
+  # candidate / activated live tree.
+  quiet git clone --no-hardlinks --branch "${FORK_BRANCH}" --no-single-branch "${CACHE_DIR}" "${SOURCE_DIR}"
 }
 
 compare_versions_or_exit() {
