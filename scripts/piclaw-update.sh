@@ -3,9 +3,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_URL="https://github.com/rcarmo/piclaw.git"
-PATCH_DIR="$(cd "${SCRIPT_DIR}/../patches" && pwd)"
-CACHE_DIR="/workspace/.cache/piclaw-upstream"
+# Fork remote (pix/main holds upstream + our customization commits).
+# Historical note: this script used to clone rcarmo/piclaw and apply patches/
+# from the sibling customizations repo. Switched to branch-based workflow on
+# 2026-04-16 — customizations now live as commits on pix/main in the fork.
+FORK_URL="https://github.com/aliceisjustplaying/piclaw.git"
+UPSTREAM_URL="https://github.com/rcarmo/piclaw.git"
+FORK_BRANCH="pix/main"
+CACHE_DIR="/workspace/.cache/piclaw-fork"
 LIVE_DIR="/workspace/src/piclaw-live"
 PREVIOUS_DIR="/workspace/src/piclaw-live.previous"
 STATE_DIR="/workspace/.state"
@@ -74,12 +79,17 @@ usage() {
 Usage: piclaw-update.sh [--dry-run] [--force] [--verify-only] [--no-restart] [--verbose]
 
 Options:
-  --dry-run      Refresh the upstream cache, compare versions, and exit.
+  --dry-run      Refresh the fork cache, compare versions, and exit.
   --force        Skip the version comparison and proceed with candidate prep.
   --verify-only  Build and validate a candidate without activating it.
   --no-restart   Compatibility flag. Activation still skips restart; caller handles restart.
   --verbose      Show full output from git, bun, and helper tools.
   -h, --help     Show this help text.
+
+Source of truth: ${FORK_BRANCH} on the fork (see FORK_URL in the script header).
+Customizations live as commits on that branch; run
+  git log upstream/main..${FORK_BRANCH}
+in a clone with upstream + fork remotes to audit the customization set.
 EOF
 }
 
@@ -197,25 +207,6 @@ require_commands() {
   done
 }
 
-patch_strip_level() {
-  local patch_file="$1"
-  if grep -qE '^(diff --git a/|--- a/)' "${patch_file}"; then
-    echo 1
-  else
-    echo 0
-  fi
-}
-
-git_apply_patch() {
-  local repo_dir="$1"
-  local patch_file="$2"
-  shift 2
-
-  local strip_level
-  strip_level="$(patch_strip_level "${patch_file}")"
-  git -C "${repo_dir}" apply -p"${strip_level}" --recount --unidiff-zero "$@" "${patch_file}"
-}
-
 get_global_pi_agent_version() {
   local pkg_json="${HOME}/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/package.json"
   if [ -f "${pkg_json}" ]; then
@@ -300,7 +291,7 @@ update_report_line() {
 }
 
 refresh_source_checkout() {
-  status "Refreshing upstream cache in ${CACHE_DIR}"
+  status "Refreshing fork cache in ${CACHE_DIR}"
 
   if [ -e "${CACHE_DIR}" ] && [ ! -d "${CACHE_DIR}/.git" ]; then
     status "Removing non-git directory at ${CACHE_DIR}"
@@ -308,15 +299,17 @@ refresh_source_checkout() {
   fi
 
   if [ -d "${CACHE_DIR}/.git" ]; then
-    quiet git -C "${CACHE_DIR}" fetch --prune origin
-    quiet git -C "${CACHE_DIR}" reset --hard origin/HEAD
+    quiet git -C "${CACHE_DIR}" remote set-url origin "${FORK_URL}"
+    quiet git -C "${CACHE_DIR}" fetch --prune origin "${FORK_BRANCH}"
+    quiet git -C "${CACHE_DIR}" checkout -B "${FORK_BRANCH}" "origin/${FORK_BRANCH}"
+    quiet git -C "${CACHE_DIR}" reset --hard "origin/${FORK_BRANCH}"
   else
     rm -rf "${CACHE_DIR}"
-    quiet git clone "${REPO_URL}" "${CACHE_DIR}"
+    quiet git clone --branch "${FORK_BRANCH}" --single-branch "${FORK_URL}" "${CACHE_DIR}"
   fi
 
   status "Creating candidate checkout in ${SOURCE_DIR}"
-  quiet git clone --no-hardlinks "${CACHE_DIR}" "${SOURCE_DIR}"
+  quiet git clone --no-hardlinks --branch "${FORK_BRANCH}" --single-branch "${CACHE_DIR}" "${SOURCE_DIR}"
 }
 
 compare_versions_or_exit() {
@@ -349,57 +342,34 @@ compare_versions_or_exit() {
   fi
 
   if [ "${current_version}" = "${source_version}" ]; then
-    printf 'Already up to date\n'
-    exit 0
+    local current_commit source_commit
+    current_commit="$(git -C "${LIVE_DIR}" rev-parse HEAD)"
+    source_commit="$(git -C "${SOURCE_DIR}" rev-parse HEAD)"
+    if [ "${current_commit}" = "${source_commit}" ]; then
+      printf 'Already up to date\n'
+      exit 0
+    fi
   fi
 }
 
-apply_source_patches() {
-  local p
-  local count=0
+verify_fork_checkout_integrity() {
+  status "Verifying fork checkout integrity"
 
-  if [ ! -d "${PATCH_DIR}" ]; then
-    error "Patch directory does not exist: ${PATCH_DIR}"
+  if ! quiet git -C "${SOURCE_DIR}" diff --check HEAD; then
+    error "Candidate checkout has whitespace/conflict errors against HEAD"
     exit 1
   fi
 
-  status "Applying source patches from ${PATCH_DIR}"
-  cd "${SOURCE_DIR}"
-
-  for p in "${PATCH_DIR}"/[0-9]*.patch; do
-    [ -f "${p}" ] || continue
-    status "Checking patch $(basename "${p}")"
-    if ! quiet git_apply_patch "${SOURCE_DIR}" "${p}" --check; then
-      error "git apply --check failed for $(basename "${p}")"
-      exit 1
-    fi
-
-    status "Applying patch $(basename "${p}")"
-    if ! quiet git_apply_patch "${SOURCE_DIR}" "${p}"; then
-      error "git apply failed for $(basename "${p}")"
-      exit 1
-    fi
-
-    local leftover
-    leftover="$(find "${SOURCE_DIR}" \( -name '*.rej' -o -name '*.orig' \) -print)"
-    if [ -n "${leftover}" ]; then
-      printf '%s\n' "${leftover}" >&2
-      error "Patch $(basename "${p}") produced .rej/.orig files"
-      exit 1
-    fi
-
-    count=$((count + 1))
-  done
-
-  if [ "${count}" -eq 0 ]; then
-    error "No patches found in ${PATCH_DIR}"
+  if grep -R -n -E '^(<<<<<<<|=======|>>>>>>>)' "${SOURCE_DIR}" >/dev/null 2>&1; then
+    grep -R -n -E '^(<<<<<<<|=======|>>>>>>>)' "${SOURCE_DIR}" >&2 || true
+    error "Candidate checkout contains conflict markers"
     exit 1
   fi
 
-  status "Applied ${count} patch(es)"
+  verify_session_system_prompt_change
 }
 
-verify_session_system_prompt_patch() {
+verify_session_system_prompt_change() {
   local session_file="${SOURCE_DIR}/runtime/src/agent-pool/session.ts"
   [ -f "${session_file}" ] || return 0
 
@@ -407,60 +377,6 @@ verify_session_system_prompt_patch() {
     error "session.ts references getSystemPromptOverride without importing readFileSync"
     exit 1
   fi
-}
-
-verify_candidate_patch_integrity() {
-  local check_reverse_patches="${1:-1}"
-  status "Verifying patch integrity"
-
-  local leftover
-  leftover="$(find "${SOURCE_DIR}" \( -name '*.rej' -o -name '*.orig' \) -print)"
-  if [ -n "${leftover}" ]; then
-    printf '%s\n' "${leftover}" >&2
-    error "Patch application left .rej/.orig files in the candidate tree"
-    exit 1
-  fi
-
-  if [ "${check_reverse_patches}" -eq 1 ]; then
-    if ! quiet git -C "${SOURCE_DIR}" diff --check; then
-      error "Candidate checkout failed git diff --check after patch application"
-      exit 1
-    fi
-  fi
-
-  if grep -R -n -E '^(<<<<<<<|=======|>>>>>>>)' "${SOURCE_DIR}" >/dev/null 2>&1; then
-    grep -R -n -E '^(<<<<<<<|=======|>>>>>>>)' "${SOURCE_DIR}" >&2 || true
-    error "Candidate checkout contains conflict markers after patch application"
-    exit 1
-  fi
-
-  if [ "${check_reverse_patches}" -eq 1 ]; then
-    local reverse_check_dir="${WORK_DIR}/reverse-check-source"
-    rm -rf "${reverse_check_dir}"
-    rsync -a --delete "${SOURCE_DIR}/" "${reverse_check_dir}/"
-
-    local patches=()
-    local p
-    for p in "${PATCH_DIR}"/[0-9]*.patch; do
-      [ -f "${p}" ] || continue
-      patches+=("${p}")
-    done
-
-    local idx
-    for (( idx=${#patches[@]}-1; idx>=0; idx-- )); do
-      p="${patches[$idx]}"
-      if ! quiet git_apply_patch "${reverse_check_dir}" "${p}" --check --reverse; then
-        error "git apply reverse-check failed for $(basename "${p}")"
-        exit 1
-      fi
-      if ! quiet git_apply_patch "${reverse_check_dir}" "${p}" --reverse; then
-        error "git apply reverse failed for $(basename "${p}")"
-        exit 1
-      fi
-    done
-  fi
-
-  verify_session_system_prompt_patch
 }
 
 build_from_source() {
@@ -601,23 +517,26 @@ format_summary_version() {
   fi
 }
 
-count_active_patches() {
-  local count=0
-  local p
-  for p in "${PATCH_DIR}"/[0-9]*.patch; do
-    [ -f "${p}" ] || continue
-    count=$((count + 1))
-  done
+count_customization_commits() {
+  # Commits on pix/main not on upstream/main — reports our customization count.
+  # Returns a placeholder if the upstream ref isn't present in the checkout
+  # (single-branch clones don't carry upstream/main).
+  local count
+  if git -C "${LIVE_DIR}" rev-parse --verify --quiet upstream/main >/dev/null 2>&1; then
+    count="$(git -C "${LIVE_DIR}" rev-list --count upstream/main..HEAD 2>/dev/null || echo 0)"
+  else
+    count="n/a"
+  fi
   echo "${count}"
 }
 
 print_summary_report() {
-  local patch_count
-  patch_count="$(count_active_patches)"
+  local commit_count
+  commit_count="$(count_customization_commits)"
 
   # Single dense line for agent consumption
-  printf '[piclaw-update] Update complete: %s, %s patches, commit %s\n' \
-    "${PICLAW_VERSION_AFTER}" "${patch_count}" "${PICLAW_COMMIT_AFTER:0:10}"
+  printf '[piclaw-update] Update complete: %s, %s customization commits, commit %s\n' \
+    "${PICLAW_VERSION_AFTER}" "${commit_count}" "${PICLAW_COMMIT_AFTER:0:10}"
 }
 
 deploy_custom_extensions() {
@@ -682,13 +601,11 @@ main() {
 
   require_commands bun jq rsync curl python3
 
-  apply_source_patches
-  verify_candidate_patch_integrity 1
+  verify_fork_checkout_integrity
   build_from_source
   validate_candidate
   capture_tool_versions_before_updates
   apply_post_install_patches "${SOURCE_DIR}"
-  verify_candidate_patch_integrity 0
   stage_system_prompt
 
   if [ "${VERIFY_ONLY}" -eq 1 ]; then

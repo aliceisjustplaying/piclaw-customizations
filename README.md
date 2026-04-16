@@ -1,23 +1,19 @@
 # piclaw-customizations
 
-Patches, extensions, and maintenance scripts for a [PiClaw](https://github.com/rcarmo/piclaw) instance.
+Deployment tooling, extensions, post-install dependency patches, and the SYSTEM.md template for a [PiClaw](https://github.com/rcarmo/piclaw) instance.
+
+PiClaw source customizations themselves live as commits on `pix/main` in the fork (`https://github.com/aliceisjustplaying/piclaw.git`), not as `.patch` files in this repo. See [Customizations](#customizations-branch-workflow--new-as-of-2026-04-16) below.
 
 Deployment checkout: `/workspace/src/piclaw-live`
-Upstream PR work: `/workspace/src/piclaw-fork`
+Fork / customization branch / upstream PR work: `/workspace/src/piclaw-fork`
 
 ## Structure
 
 ```
-patches/                          # Source patches applied before build
-├── *.patch                       # Active source patches (see patches/README.md)
-├── retired/                      # Retired patches kept for history/reference
-├── post-install/                 # Post-install dependency patches
-├── manifest.json                 # Patch metadata; upstream PR polling is opt-in per patch
-├── audit-upstream.sh             # Classify active patches against upstream (needed/upstreamed/drifted)
-├── watch-upstream-prs.sh         # Poll tracked upstream PRs and rerun the audit on merge
-├── verify-patches.sh
-├── regenerate-patches.sh
-└── README.md
+patches/                          # Post-install dependency patches only (source-patch workflow retired)
+├── post-install/                 # Shell scripts applied after `bun install`
+├── archive/                      # Historical source patches + retired tooling (informational)
+└── README.md                     # Migration + common operations
 
 extensions/
 ├── codex-delegate/index.ts       # Multi-task Codex delegation with live widgets
@@ -27,8 +23,9 @@ configs/pi-openai-fast.json       # Project config for fast-mode
 SYSTEM.base.md                    # Exact text installed to ~/.pi/agent/SYSTEM.md
 
 scripts/
-├── piclaw-update.sh              # Full update: cache → patch → build → activate
+├── piclaw-update.sh              # Full update: clone pix/main → build → activate
 ├── piclaw-update-host.sh         # Host-side wrapper (systemd transient unit)
+├── piclaw-ci-check.sh            # Regression gate — patch-area tests, filters baseline
 ├── piclaw-verify-deploy.sh       # Verify candidate without activating
 ├── piclaw-rollback.sh            # Swap piclaw-live.previous back and restart
 ├── piclaw-rollback-host.sh       # Host-side rollback wrapper
@@ -36,26 +33,42 @@ scripts/
 └── piclaw-refresh-system-prompt  # Regenerate SYSTEM.md from live checkout
 ```
 
-## Patches
+## Customizations (branch workflow — new as of 2026-04-16)
 
-See [`patches/README.md`](patches/README.md) for the full patch table, retired patches, terminal patch outcomes, and upstream-audit automation.
+Source of truth: **`pix/main`** branch on `https://github.com/aliceisjustplaying/piclaw.git`.
 
-Active source patches: `01`, `02`, `04`, `05`, `11`, `24`, `28`, `32`, `51–53`, `57–62`
-Retired patches kept under `patches/retired/`: `06` (folded into `21`), `15` (folded into `05`), `20–23`, `25–27`, `31`, `45`, and `46` (merged upstream), `47`, `49`, `50`, `54–56` (merged upstream), `48` (subsumed upstream), `29–44` (retired after consolidation into `29–32`), consolidated active `29` (retired after re-splitting into `52–56`), consolidated active `30` (retired after re-splitting into `57–60`)
-Post-install patches: `01` (jiti/Bun fix), `02` (context usage)
-Next available number: **63**
+Customizations live as commits on `pix/main` on top of upstream `rcarmo/piclaw@main`. The deploy path (`scripts/piclaw-update.sh`) clones `pix/main` and builds from it directly — no more `git apply` step.
 
-Upstream maintenance helpers:
-- `./patches/audit-upstream.sh` audits every active patch against current upstream
-- `./patches/watch-upstream-prs.sh` polls only patches with `"track_upstream": true` in `patches/manifest.json`
-- local watcher/audit state is cached under ignored `patches/.state/`
+Historical source patches (formerly `patches/NN-*.patch`) were migrated into commits on `pix/main` on 2026-04-16. The originals are preserved under `patches/archive/` for reference/blame only. See [`patches/README.md`](patches/README.md) for migration details and common operations.
 
-Local-only note:
-- patch `28` (Anthropic OAuth provider usage) is intentionally not slated for upstreaming
-- patch `60` (push self-check endpoint) is also intentionally local-only
+### Common operations
 
-Upstream PR mapping note:
-- see [`patches/README.md`](patches/README.md) for the live patch -> PR -> status table
+```bash
+# Audit customization set (commits ahead of upstream):
+cd /workspace/src/piclaw-fork && git fetch upstream
+git log upstream/main..pix/main --oneline
+
+# Drop a merged-upstream customization:
+git rebase -i upstream/main   # delete the subsumed commit, force-push pix/main
+
+# Add a new customization:
+git checkout pix/main && [...edits...] && git commit && git push origin pix/main
+
+# Stage an upstream PR from an existing pix/main commit:
+git checkout -b upstream-ready/NN-short-name pix/main
+# cherry-pick / rebase / push; open PR against rcarmo/piclaw main
+```
+
+Local-only customizations (intentionally never upstreamed):
+- `session-system-prompt` — Codex-at-home harness system prompt override
+- `runtime-bootstrap` — `broadcastEvent` on globalThis for extensions
+- `web: codex action handlers` — Piclaw-specific UI plumbing
+- `web: slash commands` — `/update`, `/rebuild`, `/fast` autocomplete
+- `db: lazy init` — Jiti-specific runtime compatibility
+- `deps: ghostty-web pin` — until the upstream dep bump lands
+- `provider-usage: Anthropic OAuth` — 5h/week usage windows
+- `web: iOS share-sheet` — currently not in upstream PR flow
+- `web-push: /agent/push/test` — diagnostic endpoint, local-only by design
 
 ## Codex Delegate Extension
 
@@ -84,7 +97,24 @@ verify-deploy                 # validate candidate without activating
 rollback                      # swap piclaw-live.previous back
 ```
 
-The update script refreshes the upstream cache, applies patches with strict `git apply`, builds server + web, validates the candidate, activates it, deploys extensions, installs the fixed SYSTEM.md template, updates the global `pi-coding-agent` CLI, and updates companion CLIs.
+What the update script actually does, in order:
+
+1. Acquire `${STATE_DIR}/piclaw-live.update.lock` (mutex against concurrent update/rollback).
+2. Fetch `pix/main` from the fork into `/workspace/.cache/piclaw-fork`, then clone it into a fresh candidate checkout under `/workspace/.tmp/piclaw-update.*`.
+3. Compare the candidate's HEAD against the live tree; exit "Already up to date" if the SHAs match (overridable with `--force` / `--verify-only`).
+4. Verify the candidate: `git diff --check HEAD`, no conflict markers, `session.ts` imports match the customization.
+5. `bun install --ignore-scripts` + `bun run build` + `bun run build:web`, then delete `.map` files from `runtime/web/static/dist/`.
+6. Assert bundle + `@mariozechner/pi-coding-agent/dist/cli.js` exist.
+7. Apply post-install dependency patches (`patches/post-install/[0-9]*.sh`) against the candidate's `node_modules`.
+8. Stage a new `SYSTEM.md` from `SYSTEM.base.md` via `piclaw-refresh-system-prompt`.
+9. (`--verify-only` exits here.)
+10. Activate: `mv piclaw-live piclaw-live.previous`, `mv candidate piclaw-live`.
+11. Rsync `extensions/*/` to `/workspace/.pi/extensions`; copy matching `configs/<name>.json`; symlink each extension's `node_modules` to the live tree.
+12. Install the staged `SYSTEM.md` to `~/.pi/agent/SYSTEM.md`.
+13. `bun add -g @mariozechner/pi-coding-agent@latest`.
+14. Print a single-line summary (version, customization-commit count, HEAD prefix).
+
+Codex and Claude "updates" are explicit no-ops — those CLIs are Nix-managed; the script just prints their current version. On failure after step 10, the EXIT trap rolls back by swapping `piclaw-live.previous` back into place.
 
 ## System Prompt
 

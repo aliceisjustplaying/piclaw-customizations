@@ -452,6 +452,7 @@ index 60909478..91b7f47d 100644
 +  const currentArray = Array.isArray(currentPosts) ? currentPosts : [];
 +  const freshArray = Array.isArray(freshPosts) ? freshPosts : null;
 +  if (!freshArray) return currentArray;
++  if (freshArray.length === 0) return freshArray;
 +  if (currentArray.length === 0) return freshArray;
 +  return dedupePosts([...freshArray, ...currentArray]);
 +}
@@ -610,7 +611,7 @@ index 60909478..91b7f47d 100644
 +      postsRef.current = nextPosts;
 +      if (Array.isArray(nextPosts)) {
 +        mutationVersionRef.current += 1;
-+        if (shouldCacheCurrentView) {
++        if (shouldCacheCurrentView && nextPosts.length > 0) {
 +          cacheTimelineSnapshot(chatJid, {
 +            posts: nextPosts,
 +            has_more: hasMoreRef.current,
