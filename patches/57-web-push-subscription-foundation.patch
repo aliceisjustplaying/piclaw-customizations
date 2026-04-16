@@ -159,7 +159,7 @@ index 00000000..2836dd22
 +      userAgent: resolveUserAgent(req),
 +      deviceId: resolveDeviceId((body as Record<string, unknown> | null)?.device_id ?? (body as Record<string, unknown> | null)?.deviceId),
 +    });
-+    return Response.json({ ok: true, endpoint: stored.endpoint, device_id: stored.deviceId });
++    return Response.json({ ok: true, device_id: stored.deviceId });
 +  } catch (error) {
 +    return Response.json({ error: error instanceof Error ? error.message : "Invalid push subscription." }, { status: 400 });
 +  }
@@ -192,7 +192,7 @@ index 00000000..7a494b4f
 + */
 +
 +import { createPublicKey, generateKeyPairSync } from "node:crypto";
-+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
++import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 +import { dirname, resolve } from "node:path";
 +
 +import { WORKSPACE_DIR } from "../../../core/config.js";
@@ -247,6 +247,9 @@ index 00000000..7a494b4f
 +
 +function writeJsonFile(path: string, value: unknown): void {
 +  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
++  try {
++    chmodSync(dirname(path), 0o700);
++  } catch {}
 +  const tempPath = `${path}.tmp-${process.pid}-${Date.now()}`;
 +  try {
 +    writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
@@ -447,6 +450,26 @@ index e3d02f9f..73cc4fbd 100644
 +    const vapidReq = new Request("https://example.com/agent/push/vapid-public-key", { method: "GET" });
 +    expect((await handleAgentRoutes(channel, vapidReq, "/agent/push/vapid-public-key", new URL(vapidReq.url)))?.status).toBe(200);
 +
++    const upsertReq = new Request("https://example.com/agent/push/subscription", {
++      method: "POST",
++      headers: { "content-type": "application/json" },
++      body: JSON.stringify({
++        subscription: {
++          endpoint: "https://push.example.test/device/dispatch",
++          expirationTime: null,
++          keys: { auth: "auth-token", p256dh: "p256dh-token" },
++        },
++      }),
++    });
++    expect((await handleAgentRoutes(channel, upsertReq, "/agent/push/subscription", new URL(upsertReq.url)))?.status).toBe(200);
++
++    const deleteReq = new Request("https://example.com/agent/push/subscription", {
++      method: "DELETE",
++      headers: { "content-type": "application/json" },
++      body: JSON.stringify({ endpoint: "https://push.example.test/device/dispatch" }),
++    });
++    expect((await handleAgentRoutes(channel, deleteReq, "/agent/push/subscription", new URL(deleteReq.url)))?.status).toBe(200);
++
      const sidePromptReq = new Request("https://example.com/agent/side-prompt", { method: "POST" });
      expect((await handleAgentRoutes(channel, sidePromptReq, "/agent/side-prompt", new URL(sidePromptReq.url)))?.status).toBe(206);
  
@@ -556,7 +579,7 @@ index 00000000..9d735e8b
 +
 +    const upsertResponse = await handleWebPushSubscriptionUpsert(upsertReq, { baseDir });
 +    expect(upsertResponse.status).toBe(200);
-+    expect(await upsertResponse.json()).toEqual({ ok: true, endpoint: "https://push.example.test/device/1", device_id: "device-1" });
++    expect(await upsertResponse.json()).toEqual({ ok: true, device_id: "device-1" });
 +
 +    const deleteReq = new Request("https://example.com/agent/push/subscription", {
 +      method: "DELETE",
@@ -854,9 +877,13 @@ index 5ccaf9b6..a4f3fe55 100644
 +  return 'serviceWorker' in runtimeWindow.navigator && 'PushManager' in runtimeWindow;
 +}
 +
++async function ensureServiceWorkerReady(runtimeWindow) {
++  await runtimeWindow.navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
++  return await runtimeWindow.navigator.serviceWorker.ready;
++}
++
 +async function ensureStoredWebPushSubscription(runtimeWindow) {
-+  await runtimeWindow.navigator.serviceWorker.register('/sw.js');
-+  const registration = await runtimeWindow.navigator.serviceWorker.ready;
++  const registration = await ensureServiceWorkerReady(runtimeWindow);
 +  const existing = await registration.pushManager.getSubscription();
 +  if (existing) return existing;
 +  const payload = await getWebPushPublicKey();
@@ -879,8 +906,7 @@ index 5ccaf9b6..a4f3fe55 100644
 +
 +async function disableWebPushSubscription(runtimeWindow, deviceId) {
 +  if (!supportsWebPush(runtimeWindow)) return false;
-+  await runtimeWindow.navigator.serviceWorker.register('/sw.js');
-+  const registration = await runtimeWindow.navigator.serviceWorker.ready;
++  const registration = await ensureServiceWorkerReady(runtimeWindow);
 +  const subscription = await registration.pushManager.getSubscription();
 +  if (!subscription) return false;
 +  const serialized = subscription.toJSON ? subscription.toJSON() : subscription;
