@@ -1,0 +1,182 @@
+diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
+index b82f474..d02ecd7 100644
+--- a/runtime/src/channels/web/http/dispatch-agent.ts
++++ b/runtime/src/channels/web/http/dispatch-agent.ts
+@@ -7,6 +7,7 @@ import {
+   handleWebPushPresence,
+   handleWebPushSubscriptionDelete,
+   handleWebPushSubscriptionUpsert,
++  handleWebPushTest,
+   handleWebPushVapidPublicKey,
+ } from "../push/web-push-routes.js";
+ 
+@@ -161,6 +162,11 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+     path: "/agent/push/presence",
+     handle: (_channel, req) => handleWebPushPresence(req),
+   },
++  {
++    method: "POST",
++    path: "/agent/push/test",
++    handle: (_channel, req) => handleWebPushTest(req),
++  },
+   {
+     method: "POST",
+     path: "/agent/side-prompt",
+diff --git a/runtime/src/channels/web/push/web-push-routes.ts b/runtime/src/channels/web/push/web-push-routes.ts
+index 564cb24..16885b5 100644
+--- a/runtime/src/channels/web/push/web-push-routes.ts
++++ b/runtime/src/channels/web/push/web-push-routes.ts
+@@ -7,6 +7,10 @@ import {
+   removeStoredWebPushSubscription,
+   upsertStoredWebPushSubscription,
+ } from "./web-push-store.js";
++import {
++  sendStoredWebPushTestNotification,
++  type SendStoredWebPushNotificationOptions,
++} from "./web-push-service.js";
+ import {
+   webNotificationPresenceService,
+   type WebNotificationPresenceService,
+@@ -88,3 +92,26 @@ export async function handleWebPushPresence(
+     return Response.json({ error: error instanceof Error ? error.message : "Invalid web notification presence payload." }, { status: 400 });
+   }
+ }
++
++export async function handleWebPushTest(
++  req: Request,
++  options: SendStoredWebPushNotificationOptions = {},
++): Promise<Response> {
++  try {
++    const body = await req.json().catch(() => null);
++    const payload = body && typeof body === "object" ? body : {};
++    const result = await sendStoredWebPushTestNotification({
++      ...options,
++      title: typeof payload.title === "string" ? payload.title : undefined,
++      body: typeof payload.body === "string" ? payload.body : undefined,
++      url: typeof payload.url === "string" ? payload.url : undefined,
++      tag: typeof payload.tag === "string" ? payload.tag : undefined,
++      sourceLabel: typeof payload.sourceLabel === "string" ? payload.sourceLabel : undefined,
++      urgency: options.urgency || "high",
++      ttl: options.ttl ?? 120,
++    });
++    return Response.json({ ok: true, ...result });
++  } catch (error) {
++    return Response.json({ error: error instanceof Error ? error.message : "Failed to send test push notification." }, { status: 500 });
++  }
++}
+diff --git a/runtime/test/channels/web/web-push-routes.test.ts b/runtime/test/channels/web/web-push-routes.test.ts
+index 9a81bb5..75c9088 100644
+--- a/runtime/test/channels/web/web-push-routes.test.ts
++++ b/runtime/test/channels/web/web-push-routes.test.ts
+@@ -4,9 +4,11 @@ import { join } from "node:path";
+ import { tmpdir } from "node:os";
+ 
+ import { WebNotificationPresenceService } from "../../../src/channels/web/push/web-notification-presence-service.js";
++import { upsertStoredWebPushSubscription } from "../../../src/channels/web/push/web-push-store.js";
+ import {
+   handleWebPushPresence,
+   handleWebPushSubscriptionUpsert,
++  handleWebPushTest,
+ } from "../../../src/channels/web/push/web-push-routes.js";
+ 
+ const tempDirs: string[] = [];
+@@ -73,4 +75,53 @@ describe("web push routes", () => {
+     });
+     expect(presenceService.getDeviceChatState("device-1", "web:default").hasLiveClient).toBe(true);
+   });
++
++  test("sends a test notification using stored subscriptions", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription({
++      endpoint: "https://push.example.test/device/1",
++      expirationTime: null,
++      keys: {
++        auth: "auth-token",
++        p256dh: "p256dh-token",
++      },
++    }, { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    const req = new Request("https://example.com/agent/push/test", {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({
++        title: "Custom title",
++        body: "Custom body",
++        url: "/?chat_jid=web%3Atest",
++        tag: "piclaw:custom",
++        sourceLabel: "Web Push",
++      }),
++    });
++
++    const response = await handleWebPushTest(req, {
++      baseDir,
++      sendNotification: async (subscription, payload, options) => {
++        deliveries.push({
++          endpoint: subscription.endpoint,
++          payload: JSON.parse(payload),
++          options,
++        });
++      },
++    });
++
++    expect(response.status).toBe(200);
++    expect(await response.json()).toEqual({ ok: true, attempted: 1, sent: 1, removed: 0, failed: 0 });
++    expect(deliveries).toHaveLength(1);
++    expect(deliveries[0]?.payload).toEqual({
++      title: "Custom title",
++      body: "Custom body",
++      url: "/?chat_jid=web%3Atest",
++      tag: "piclaw:custom",
++      sourceLabel: "Web Push",
++    });
++    expect(((deliveries[0]?.options as any)?.TTL)).toBe(120);
++    expect(((deliveries[0]?.options as any)?.urgency)).toBe("high");
++  });
+ });
+diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
+index 3bcaed1..d8ee038 100644
+--- a/runtime/web/src/api.ts
++++ b/runtime/web/src/api.ts
+@@ -300,6 +300,13 @@ export async function deleteWebPushSubscription(subscription, options = {}) {
+     });
+ }
+ 
++export async function sendWebPushTestNotification(payload = {}) {
++    return request('/agent/push/test', {
++        method: 'POST',
++        body: JSON.stringify(payload || {}),
++    });
++}
++
+ /**
+  * Get available agents / current agent roster.
+  */
+diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
+index cb58f08..84fa3c6 100644
+--- a/runtime/web/src/ui/use-notifications.ts
++++ b/runtime/web/src/ui/use-notifications.ts
+@@ -1,4 +1,4 @@
+-import { deleteWebPushSubscription, getWebPushPublicKey, saveWebPushSubscription } from '../api.js';
++import { deleteWebPushSubscription, getWebPushPublicKey, saveWebPushSubscription, sendWebPushTestNotification } from '../api.js';
+ import { useCallback, useEffect, useRef, useState } from '../vendor/preact-htm.js';
+ import { getLocalStorageBoolean, setLocalStorageItem } from '../utils/storage.js';
+ import { focusWindowBestEffort } from './notification-focus.js';
+@@ -245,6 +245,17 @@ export function useNotifications(options = {}) {
+       try {
+         if (next) {
+           await syncWebPushSubscription(window, deviceId);
++          try {
++            await sendWebPushTestNotification({
++              title: 'PiClaw notifications enabled',
++              body: 'Web Push is configured for this device.',
++              url: window.location.pathname + window.location.search,
++              tag: 'piclaw:test',
++              sourceLabel: WEB_PUSH_NOTIFICATION_SOURCE_LABEL,
++            });
++          } catch (error) {
++            console.warn('Failed to send a test web push notification:', error);
++          }
+         } else {
+           await disableWebPushSubscription(window, deviceId);
+         }

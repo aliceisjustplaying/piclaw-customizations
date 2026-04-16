@@ -1,0 +1,1072 @@
+diff --git a/docs/web-notification-delivery-policy.md b/docs/web-notification-delivery-policy.md
+new file mode 100644
+index 0000000..721fab1
+--- /dev/null
++++ b/docs/web-notification-delivery-policy.md
+@@ -0,0 +1,70 @@
++# Web notification delivery policy
++
++PiClaw uses a per-**device**, per-**chat** delivery coordinator to decide whether a finished agent reply should surface as a local in-page notification or as server-side Web Push.
++
++## Rule
++
++For a given **device + chat_jid** pair:
++
++- **Visible live client** → **no notification** on that device for that chat
++- **Hidden-but-live client(s)** → **local notification only** on that device for that chat
++- **No live client** → **Web Push only** on that device for that chat
++
++## Why this is chat-scoped instead of device-scoped
++
++PiClaw can have multiple chats running at once. A user may be actively viewing one thread while other threads continue working in the background.
++
++Because of that, notification routing is based on the specific `chat_jid` that produced the reply:
++
++- If you are actively viewing chat **A**, replies in chat **A** should stay quiet on that device.
++- If chat **B** finishes while no live client for **B** exists on that device, PiClaw should still notify you for **B** even if chat **A** is currently visible.
++
++This ensures non-active threads still notify when they complete.
++
++## Local notification election
++
++Multiple hidden tabs or windows on the same device can still be live for the same chat. To avoid duplicate local notifications, the client elects exactly one hidden tab/window per **device + chat** to show the local notification.
++
++If any tab/window for that same chat is visible, hidden tabs stay silent.
++
++## Web Push suppression
++
++Each Web Push subscription is associated with a stable device id. Before sending a reply notification, the server checks whether that device has a recent live client for the same `chat_jid`.
++
++- live same-chat client present → suppress Web Push for that device
++- no live same-chat client → allow Web Push for that device
++
++This avoids `[Local]` + `[Web Push]` duplicates for the same chat on the same device while still allowing other chats to notify.
++
++## Presence model
++
++The client publishes lightweight presence updates containing:
++
++- `device_id`
++- `client_id`
++- `chat_jid`
++- `visibility_state`
++- `has_focus`
++
++Presence is refreshed periodically and expires quickly if the page disappears without clean shutdown.
++
++## Practical examples
++
++### Phone visible on chat A, chat B finishes
++
++- chat A is visible on the phone
++- no live phone client exists for chat B
++- result: **Web Push may still fire for chat B**
++
++### Hidden laptop tab on chat A, phone swiped away, chat A finishes
++
++- laptop has a hidden live client for chat A
++- phone has no live client for chat A
++- result:
++  - **laptop:** local notification only
++  - **phone:** Web Push only
++
++### Two hidden tabs for chat A on the same laptop
++
++- both are live, neither is visible
++- result: exactly **one** hidden tab shows the local notification
+diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
+index 2db5875..b82f474 100644
+--- a/runtime/src/channels/web/http/dispatch-agent.ts
++++ b/runtime/src/channels/web/http/dispatch-agent.ts
+@@ -4,6 +4,7 @@
+ 
+ import type { WebChannelLike } from "../core/web-channel-contracts.js";
+ import {
++  handleWebPushPresence,
+   handleWebPushSubscriptionDelete,
+   handleWebPushSubscriptionUpsert,
+   handleWebPushVapidPublicKey,
+@@ -155,6 +156,11 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+     path: "/agent/push/subscription",
+     handle: (_channel, req) => handleWebPushSubscriptionDelete(req),
+   },
++  {
++    method: "POST",
++    path: "/agent/push/presence",
++    handle: (_channel, req) => handleWebPushPresence(req),
++  },
+   {
+     method: "POST",
+     path: "/agent/side-prompt",
+diff --git a/runtime/src/channels/web/push/web-notification-presence-service.ts b/runtime/src/channels/web/push/web-notification-presence-service.ts
+new file mode 100644
+index 0000000..bde649d
+--- /dev/null
++++ b/runtime/src/channels/web/push/web-notification-presence-service.ts
+@@ -0,0 +1,137 @@
++/**
++ * web/push/web-notification-presence-service.ts – in-memory device/chat presence for notification routing.
++ *
++ * Tracks recent live browser clients by device + tab/window so reply delivery can distinguish:
++ * - visible current chat on a device → no notification on that device
++ * - hidden-but-live current chat on a device → local notification only on that device
++ * - no live client for that chat on a device → Web Push allowed for that device
++ */
++
++export const DEFAULT_WEB_NOTIFICATION_PRESENCE_TTL_MS = 45000;
++
++export interface WebNotificationPresenceRecord {
++  deviceId: string;
++  clientId: string;
++  chatJid: string;
++  visibilityState: "visible" | "hidden";
++  hasFocus: boolean;
++  updatedAtMs: number;
++  userAgent: string | null;
++}
++
++export interface WebNotificationPresenceState {
++  hasLiveClient: boolean;
++  hasVisibleClient: boolean;
++  clients: WebNotificationPresenceRecord[];
++}
++
++function normalizeTrimmedString(value: unknown): string {
++  return typeof value === "string" ? value.trim() : "";
++}
++
++export function normalizeWebNotificationPresence(
++  value: unknown,
++  options: { nowMs?: number; userAgent?: string | null } = {},
++): WebNotificationPresenceRecord | null {
++  if (!value || typeof value !== "object") return null;
++  const input = value as Record<string, unknown>;
++  const deviceId = normalizeTrimmedString(input.device_id ?? input.deviceId);
++  const clientId = normalizeTrimmedString(input.client_id ?? input.clientId);
++  const chatJid = normalizeTrimmedString(input.chat_jid ?? input.chatJid);
++  if (!deviceId || !clientId || !chatJid) return null;
++
++  const rawVisibility = normalizeTrimmedString(input.visibility_state ?? input.visibilityState).toLowerCase();
++  const visibilityState = rawVisibility === "hidden" ? "hidden" : "visible";
++  const hasFocus = Boolean(input.has_focus ?? input.hasFocus);
++  const rawUpdatedAtMs = Number(input.updated_at_ms ?? input.updatedAtMs);
++  const updatedAtMs = Number.isFinite(rawUpdatedAtMs) ? rawUpdatedAtMs : (options.nowMs ?? Date.now());
++
++  return {
++    deviceId,
++    clientId,
++    chatJid,
++    visibilityState,
++    hasFocus,
++    updatedAtMs,
++    userAgent: typeof options.userAgent === "string" && options.userAgent.trim() ? options.userAgent.trim() : null,
++  };
++}
++
++export class WebNotificationPresenceService {
++  private readonly records = new Map<string, WebNotificationPresenceRecord>();
++  private readonly now: () => number;
++  private readonly ttlMs: number;
++
++  constructor(options: { ttlMs?: number; now?: () => number } = {}) {
++    this.ttlMs = Number.isFinite(options.ttlMs) ? Number(options.ttlMs) : DEFAULT_WEB_NOTIFICATION_PRESENCE_TTL_MS;
++    this.now = typeof options.now === "function" ? options.now : () => Date.now();
++  }
++
++  private buildKey(deviceId: string, clientId: string): string {
++    return `${deviceId}::${clientId}`;
++  }
++
++  private isLive(record: WebNotificationPresenceRecord, nowMs = this.now()): boolean {
++    return nowMs - record.updatedAtMs <= this.ttlMs;
++  }
++
++  prune(nowMs = this.now()): void {
++    for (const [key, record] of this.records.entries()) {
++      if (this.isLive(record, nowMs)) continue;
++      this.records.delete(key);
++    }
++  }
++
++  upsert(value: unknown, options: { nowMs?: number; userAgent?: string | null } = {}): WebNotificationPresenceRecord {
++    const normalized = normalizeWebNotificationPresence(value, {
++      nowMs: options.nowMs ?? this.now(),
++      userAgent: options.userAgent,
++    });
++    if (!normalized) {
++      throw new Error("Invalid web notification presence payload.");
++    }
++    this.prune(normalized.updatedAtMs);
++    this.records.set(this.buildKey(normalized.deviceId, normalized.clientId), normalized);
++    return normalized;
++  }
++
++  remove(value: { device_id?: unknown; deviceId?: unknown; client_id?: unknown; clientId?: unknown }): boolean {
++    const deviceId = normalizeTrimmedString(value?.device_id ?? value?.deviceId);
++    const clientId = normalizeTrimmedString(value?.client_id ?? value?.clientId);
++    if (!deviceId || !clientId) return false;
++    return this.records.delete(this.buildKey(deviceId, clientId));
++  }
++
++  getDeviceChatState(deviceId: string, chatJid: string, nowMs = this.now()): WebNotificationPresenceState {
++    const normalizedDeviceId = normalizeTrimmedString(deviceId);
++    const normalizedChatJid = normalizeTrimmedString(chatJid);
++    if (!normalizedDeviceId || !normalizedChatJid) {
++      return { hasLiveClient: false, hasVisibleClient: false, clients: [] };
++    }
++
++    this.prune(nowMs);
++    const clients = Array.from(this.records.values())
++      .filter((record) => record.deviceId === normalizedDeviceId && record.chatJid === normalizedChatJid && this.isLive(record, nowMs))
++      .sort((left, right) => left.clientId.localeCompare(right.clientId));
++
++    return {
++      hasLiveClient: clients.length > 0,
++      hasVisibleClient: clients.some((record) => record.visibilityState === "visible"),
++      clients,
++    };
++  }
++
++  shouldSendWebPush(deviceId: string | null | undefined, chatJid: string | null | undefined, nowMs = this.now()): boolean {
++    const normalizedDeviceId = normalizeTrimmedString(deviceId);
++    const normalizedChatJid = normalizeTrimmedString(chatJid);
++    if (!normalizedDeviceId || !normalizedChatJid) return true;
++    return !this.getDeviceChatState(normalizedDeviceId, normalizedChatJid, nowMs).hasLiveClient;
++  }
++
++  list(nowMs = this.now()): WebNotificationPresenceRecord[] {
++    this.prune(nowMs);
++    return Array.from(this.records.values()).sort((left, right) => left.deviceId.localeCompare(right.deviceId) || left.clientId.localeCompare(right.clientId));
++  }
++}
++
++export const webNotificationPresenceService = new WebNotificationPresenceService();
+diff --git a/runtime/src/channels/web/push/web-push-routes.ts b/runtime/src/channels/web/push/web-push-routes.ts
+index 2836dd2..564cb24 100644
+--- a/runtime/src/channels/web/push/web-push-routes.ts
++++ b/runtime/src/channels/web/push/web-push-routes.ts
+@@ -7,6 +7,10 @@ import {
+   removeStoredWebPushSubscription,
+   upsertStoredWebPushSubscription,
+ } from "./web-push-store.js";
++import {
++  webNotificationPresenceService,
++  type WebNotificationPresenceService,
++} from "./web-notification-presence-service.js";
+ 
+ function resolveUserAgent(req: Request): string | null {
+   const value = req.headers.get("user-agent");
+@@ -53,3 +57,34 @@ export async function handleWebPushSubscriptionDelete(req: Request, options: { b
+   const removed = removeStoredWebPushSubscription(endpoint, options.baseDir);
+   return Response.json({ ok: true, removed });
+ }
++
++export async function handleWebPushPresence(
++  req: Request,
++  options: { presenceService?: WebNotificationPresenceService } = {},
++): Promise<Response> {
++  try {
++    const body = await req.json().catch(() => null);
++    const payload = body && typeof body === "object" ? body as Record<string, unknown> : null;
++    if (!payload) {
++      return Response.json({ error: "Invalid web notification presence payload." }, { status: 400 });
++    }
++
++    const presenceService = options.presenceService || webNotificationPresenceService;
++    if (payload.active === false) {
++      const removed = presenceService.remove(payload);
++      return Response.json({ ok: true, active: false, removed });
++    }
++
++    const stored = presenceService.upsert(payload, { userAgent: resolveUserAgent(req) });
++    return Response.json({
++      ok: true,
++      active: true,
++      device_id: stored.deviceId,
++      client_id: stored.clientId,
++      chat_jid: stored.chatJid,
++      visibility_state: stored.visibilityState,
++    });
++  } catch (error) {
++    return Response.json({ error: error instanceof Error ? error.message : "Invalid web notification presence payload." }, { status: 400 });
++  }
++}
+diff --git a/runtime/test/channels/web/http-dispatch-agent.test.ts b/runtime/test/channels/web/http-dispatch-agent.test.ts
+index 73cc4fb..54fa865 100644
+--- a/runtime/test/channels/web/http-dispatch-agent.test.ts
++++ b/runtime/test/channels/web/http-dispatch-agent.test.ts
+@@ -131,6 +131,19 @@ describe("web http agent dispatch", () => {
+     const vapidReq = new Request("https://example.com/agent/push/vapid-public-key", { method: "GET" });
+     expect((await handleAgentRoutes(channel, vapidReq, "/agent/push/vapid-public-key", new URL(vapidReq.url)))?.status).toBe(200);
+ 
++    const presenceReq = new Request("https://example.com/agent/push/presence", {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({
++        device_id: "device-1",
++        client_id: "client-1",
++        chat_jid: "web:default",
++        visibility_state: "hidden",
++        has_focus: false,
++      }),
++    });
++    expect((await handleAgentRoutes(channel, presenceReq, "/agent/push/presence", new URL(presenceReq.url)))?.status).toBe(200);
++
+     const sidePromptReq = new Request("https://example.com/agent/side-prompt", { method: "POST" });
+     expect((await handleAgentRoutes(channel, sidePromptReq, "/agent/side-prompt", new URL(sidePromptReq.url)))?.status).toBe(206);
+ 
+diff --git a/runtime/test/channels/web/web-notification-presence-service.test.ts b/runtime/test/channels/web/web-notification-presence-service.test.ts
+new file mode 100644
+index 0000000..90842e0
+--- /dev/null
++++ b/runtime/test/channels/web/web-notification-presence-service.test.ts
+@@ -0,0 +1,91 @@
++import { describe, expect, test } from "bun:test";
++
++import {
++  WebNotificationPresenceService,
++  normalizeWebNotificationPresence,
++} from "../../../src/channels/web/push/web-notification-presence-service.js";
++
++describe("web notification presence service", () => {
++  test("normalizes valid client presence payloads", () => {
++    const normalized = normalizeWebNotificationPresence({
++      device_id: "device-1",
++      client_id: "client-1",
++      chat_jid: "web:default",
++      visibility_state: "hidden",
++      has_focus: false,
++    }, { nowMs: 1234, userAgent: "PiClaw Test" });
++
++    expect(normalized).toEqual({
++      deviceId: "device-1",
++      clientId: "client-1",
++      chatJid: "web:default",
++      visibilityState: "hidden",
++      hasFocus: false,
++      updatedAtMs: 1234,
++      userAgent: "PiClaw Test",
++    });
++    expect(normalizeWebNotificationPresence(null)).toBeNull();
++  });
++
++  test("suppresses Web Push only when the same device still has the chat live", () => {
++    let now = 1000;
++    const service = new WebNotificationPresenceService({ now: () => now, ttlMs: 5000 });
++    service.upsert({
++      device_id: "device-1",
++      client_id: "client-1",
++      chat_jid: "web:default",
++      visibility_state: "hidden",
++      has_focus: false,
++    });
++
++    expect(service.shouldSendWebPush("device-1", "web:default")).toBe(false);
++    expect(service.shouldSendWebPush("device-1", "web:other")).toBe(true);
++    expect(service.shouldSendWebPush("device-2", "web:default")).toBe(true);
++
++    now = 7000;
++    expect(service.shouldSendWebPush("device-1", "web:default")).toBe(true);
++  });
++
++  test("reports visible clients for the matching device/chat", () => {
++    const service = new WebNotificationPresenceService({ now: () => 1000 });
++    service.upsert({
++      device_id: "device-1",
++      client_id: "client-a",
++      chat_jid: "web:default",
++      visibility_state: "visible",
++      has_focus: true,
++    });
++    service.upsert({
++      device_id: "device-1",
++      client_id: "client-b",
++      chat_jid: "web:default",
++      visibility_state: "hidden",
++      has_focus: false,
++    });
++
++    expect(service.getDeviceChatState("device-1", "web:default")).toEqual({
++      hasLiveClient: true,
++      hasVisibleClient: true,
++      clients: [
++        {
++          deviceId: "device-1",
++          clientId: "client-a",
++          chatJid: "web:default",
++          visibilityState: "visible",
++          hasFocus: true,
++          updatedAtMs: 1000,
++          userAgent: null,
++        },
++        {
++          deviceId: "device-1",
++          clientId: "client-b",
++          chatJid: "web:default",
++          visibilityState: "hidden",
++          hasFocus: false,
++          updatedAtMs: 1000,
++          userAgent: null,
++        },
++      ],
++    });
++  });
++});
+diff --git a/runtime/test/channels/web/web-push-routes.test.ts b/runtime/test/channels/web/web-push-routes.test.ts
+index 9d735e8..9a81bb5 100644
+--- a/runtime/test/channels/web/web-push-routes.test.ts
++++ b/runtime/test/channels/web/web-push-routes.test.ts
+@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
+ import { join } from "node:path";
+ import { tmpdir } from "node:os";
+ 
++import { WebNotificationPresenceService } from "../../../src/channels/web/push/web-notification-presence-service.js";
+ import {
+-  handleWebPushSubscriptionDelete,
++  handleWebPushPresence,
+   handleWebPushSubscriptionUpsert,
+-  handleWebPushVapidPublicKey,
+ } from "../../../src/channels/web/push/web-push-routes.js";
+ 
+ const tempDirs: string[] = [];
+@@ -26,17 +26,7 @@ afterEach(() => {
+ });
+ 
+ describe("web push routes", () => {
+-  test("returns a stored VAPID public key", async () => {
+-    const baseDir = createTempPushDir();
+-    const response = await handleWebPushVapidPublicKey({ baseDir });
+-    const payload = await response.json();
+-
+-    expect(response.status).toBe(200);
+-    expect(typeof payload.publicKey).toBe("string");
+-    expect(payload.publicKey.length).toBeGreaterThan(0);
+-  });
+-
+-  test("stores and removes subscription device ids", async () => {
++  test("stores subscription device ids and tracks live presence updates", async () => {
+     const baseDir = createTempPushDir();
+     const upsertReq = new Request("https://example.com/agent/push/subscription", {
+       method: "POST",
+@@ -58,13 +48,29 @@ describe("web push routes", () => {
+     expect(upsertResponse.status).toBe(200);
+     expect(await upsertResponse.json()).toEqual({ ok: true, endpoint: "https://push.example.test/device/1", device_id: "device-1" });
+ 
+-    const deleteReq = new Request("https://example.com/agent/push/subscription", {
+-      method: "DELETE",
+-      headers: { "Content-Type": "application/json" },
+-      body: JSON.stringify({ endpoint: "https://push.example.test/device/1" }),
++    const presenceService = new WebNotificationPresenceService({ now: () => 1000 });
++    const presenceReq = new Request("https://example.com/agent/push/presence", {
++      method: "POST",
++      headers: { "Content-Type": "application/json", "user-agent": "PiClaw Test" },
++      body: JSON.stringify({
++        device_id: "device-1",
++        client_id: "client-1",
++        chat_jid: "web:default",
++        visibility_state: "hidden",
++        has_focus: false,
++      }),
++    });
++
++    const presenceResponse = await handleWebPushPresence(presenceReq, { presenceService });
++    expect(presenceResponse.status).toBe(200);
++    expect(await presenceResponse.json()).toEqual({
++      ok: true,
++      active: true,
++      device_id: "device-1",
++      client_id: "client-1",
++      chat_jid: "web:default",
++      visibility_state: "hidden",
+     });
+-    const deleteResponse = await handleWebPushSubscriptionDelete(deleteReq, { baseDir });
+-    expect(deleteResponse.status).toBe(200);
+-    expect(await deleteResponse.json()).toEqual({ ok: true, removed: true });
++    expect(presenceService.getDeviceChatState("device-1", "web:default").hasLiveClient).toBe(true);
+   });
+ });
+diff --git a/runtime/test/web/notification-delivery-coordinator.test.ts b/runtime/test/web/notification-delivery-coordinator.test.ts
+new file mode 100644
+index 0000000..a4993ad
+--- /dev/null
++++ b/runtime/test/web/notification-delivery-coordinator.test.ts
+@@ -0,0 +1,144 @@
++import { describe, expect, test } from 'bun:test';
++
++import {
++  createLocalNotificationPresenceSnapshot,
++  getOrCreateNotificationClientId,
++  getOrCreateNotificationDeviceId,
++  listLiveLocalNotificationPresence,
++  publishLocalNotificationPresence,
++  shouldNotifyLocallyForChat,
++  withdrawLocalNotificationPresence,
++} from '../../web/src/ui/notification-delivery-coordinator.ts';
++
++function createStorage() {
++  const values = new Map();
++  return {
++    get length() {
++      return values.size;
++    },
++    getItem(key) {
++      return values.has(key) ? values.get(key) : null;
++    },
++    setItem(key, value) {
++      values.set(String(key), String(value));
++    },
++    removeItem(key) {
++      values.delete(String(key));
++    },
++    key(index) {
++      return Array.from(values.keys())[index] || null;
++    },
++  };
++}
++
++function createRuntime() {
++  const localStorage = createStorage();
++  const sessionStorage = createStorage();
++  const document = {
++    visibilityState: 'visible',
++    hasFocus() {
++      return true;
++    },
++  };
++  const runtimeWindow = {
++    localStorage,
++    sessionStorage,
++  };
++  return { runtimeWindow, document };
++}
++
++describe('notification delivery coordinator', () => {
++  test('creates stable device and client ids', () => {
++    const { runtimeWindow } = createRuntime();
++    const deviceId = getOrCreateNotificationDeviceId(runtimeWindow as any);
++    const clientId = getOrCreateNotificationClientId(runtimeWindow as any);
++
++    expect(deviceId).toBe(getOrCreateNotificationDeviceId(runtimeWindow as any));
++    expect(clientId).toBe(getOrCreateNotificationClientId(runtimeWindow as any));
++  });
++
++  test('elects exactly one hidden local notifier per device/chat', () => {
++    const { runtimeWindow, document } = createRuntime();
++    const deviceId = getOrCreateNotificationDeviceId(runtimeWindow as any);
++
++    publishLocalNotificationPresence({
++      deviceId,
++      clientId: 'client-a',
++      chatJid: 'web:default',
++      visibilityState: 'hidden',
++      hasFocus: false,
++      updatedAtMs: 1000,
++    }, runtimeWindow as any);
++    publishLocalNotificationPresence({
++      deviceId,
++      clientId: 'client-b',
++      chatJid: 'web:default',
++      visibilityState: 'hidden',
++      hasFocus: false,
++      updatedAtMs: 1000,
++    }, runtimeWindow as any);
++
++    expect(shouldNotifyLocallyForChat({
++      chatJid: 'web:default',
++      runtimeWindow: runtimeWindow as any,
++      runtimeDocument: { ...document, visibilityState: 'hidden', hasFocus: () => false } as any,
++      deviceId,
++      clientId: 'client-a',
++      updatedAtMs: 1000,
++    })).toBe(true);
++    expect(shouldNotifyLocallyForChat({
++      chatJid: 'web:default',
++      runtimeWindow: runtimeWindow as any,
++      runtimeDocument: { ...document, visibilityState: 'hidden', hasFocus: () => false } as any,
++      deviceId,
++      clientId: 'client-b',
++      updatedAtMs: 1000,
++    })).toBe(false);
++  });
++
++  test('suppresses local notifications when the same chat is visible elsewhere on the device', () => {
++    const { runtimeWindow, document } = createRuntime();
++    const deviceId = getOrCreateNotificationDeviceId(runtimeWindow as any);
++    publishLocalNotificationPresence({
++      deviceId,
++      clientId: 'client-visible',
++      chatJid: 'web:default',
++      visibilityState: 'visible',
++      hasFocus: true,
++      updatedAtMs: 1000,
++    }, runtimeWindow as any);
++
++    expect(shouldNotifyLocallyForChat({
++      chatJid: 'web:default',
++      runtimeWindow: runtimeWindow as any,
++      runtimeDocument: { ...document, visibilityState: 'hidden', hasFocus: () => false } as any,
++      deviceId,
++      clientId: 'client-hidden',
++      updatedAtMs: 1000,
++    })).toBe(false);
++  });
++
++  test('prunes withdrawn or stale presence records', () => {
++    const { runtimeWindow, document } = createRuntime();
++    const snapshot = createLocalNotificationPresenceSnapshot({
++      chatJid: 'web:default',
++      runtimeWindow: runtimeWindow as any,
++      runtimeDocument: document as any,
++      updatedAtMs: 1000,
++    });
++    publishLocalNotificationPresence(snapshot, runtimeWindow as any);
++
++    expect(listLiveLocalNotificationPresence({
++      runtimeWindow: runtimeWindow as any,
++      deviceId: snapshot.deviceId,
++      nowMs: 1000,
++    })).toHaveLength(1);
++
++    withdrawLocalNotificationPresence(snapshot, runtimeWindow as any);
++    expect(listLiveLocalNotificationPresence({
++      runtimeWindow: runtimeWindow as any,
++      deviceId: snapshot.deviceId,
++      nowMs: 1000,
++    })).toHaveLength(0);
++  });
++});
+diff --git a/runtime/web/src/app.ts b/runtime/web/src/app.ts
+index 0348aa4..9aab2b1 100644
+--- a/runtime/web/src/app.ts
++++ b/runtime/web/src/app.ts
+@@ -260,6 +260,7 @@ function MainApp({ locationParams, navigate }) {
+             lastNotifiedIdRef: surface.lastNotifiedIdRef,
+             agentsRef: surface.agentsRef,
+             notify: surface.notify,
++            shouldNotifyLocallyForChat: surface.shouldNotifyLocallyForChat,
+         },
+         recovery: {
+             isAgentRunningRef,
+diff --git a/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts b/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts
+index f8ac6cf..47105a1 100644
+--- a/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts
++++ b/runtime/web/src/ui/app-chat-pane-runtime-orchestration.ts
+@@ -72,6 +72,7 @@ interface UseChatPaneRuntimeOrchestrationOptions {
+   lastNotifiedIdRef: RefBox<string | number | null>;
+   agentsRef: RefBox<Record<string, any>>;
+   notify: (title: string, body: string) => void;
++  shouldNotifyLocallyForChat: (chatJid: string) => boolean;
+ }
+ 
+ export function useChatPaneRuntimeOrchestration(options: UseChatPaneRuntimeOrchestrationOptions) {
+@@ -122,6 +123,7 @@ export function useChatPaneRuntimeOrchestration(options: UseChatPaneRuntimeOrche
+     lastNotifiedIdRef,
+     agentsRef,
+     notify,
++    shouldNotifyLocallyForChat,
+   } = options;
+ 
+   const clearQueuedSteerStateIfStale = useCallback((remainingQueueCount: number) => {
+@@ -285,14 +287,12 @@ export function useChatPaneRuntimeOrchestration(options: UseChatPaneRuntimeOrche
+   }, [currentTurnIdRef, draftBufferRef, draftExpandedRef, lastAgentResponseRef, pendingRequestRef, setAgentDraft, setAgentPlan, setAgentThought, setCurrentTurnId, setPendingRequest, setSteerQueuedTurnId, silentRecoveryRef, steerQueuedTurnIdRef, thoughtBufferRef, thoughtExpandedRef]);
+ 
+   const notifyForFinalResponse = useCallback((turnId: string | null | undefined) => {
+-    if (typeof document !== 'undefined') {
+-      const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+-      if (!document.hidden && hasFocus) return;
+-    }
+     const entry = lastAgentResponseRef.current;
+     if (!entry || !entry.post) return;
+     if (turnId && entry.turnId && entry.turnId !== turnId) return;
+     const post = entry.post;
++    const chatJid = typeof post?.chat_jid === 'string' && post.chat_jid.trim() ? post.chat_jid.trim() : '';
++    if (!chatJid || !shouldNotifyLocallyForChat(chatJid)) return;
+     if (post.id && lastNotifiedIdRef.current === post.id) return;
+     const content = String(post?.data?.content || '').trim();
+     if (!content) return;
+@@ -302,8 +302,8 @@ export function useChatPaneRuntimeOrchestration(options: UseChatPaneRuntimeOrche
+     const agentsMap = agentsRef.current || {};
+     const agent = post?.data?.agent_id ? agentsMap[post.data.agent_id] : null;
+     const title = agent?.name || 'Pi';
+-    notify(title, body);
+-  }, [agentsRef, lastAgentResponseRef, lastNotifiedIdRef, notify]);
++    notify(title, body, { sourceLabel: 'Local' });
++  }, [agentsRef, lastAgentResponseRef, lastNotifiedIdRef, notify, shouldNotifyLocallyForChat]);
+ 
+   return {
+     clearQueuedSteerStateIfStale,
+diff --git a/runtime/web/src/ui/app-main-surface-state.ts b/runtime/web/src/ui/app-main-surface-state.ts
+index 997f57d..8134a09 100644
+--- a/runtime/web/src/ui/app-main-surface-state.ts
++++ b/runtime/web/src/ui/app-main-surface-state.ts
+@@ -91,7 +91,8 @@ export function useMainAppSurfaceState(options: {
+     notificationPermission,
+     toggleNotifications: handleToggleNotifications,
+     notify,
+-  } = useNotifications();
++    shouldNotifyLocallyForChat,
++  } = useNotifications({ chatJid: currentChatJid });
+ 
+   const [removingPostIds, setRemovingPostIds] = useState(() => new Set<string | number>());
+   const [workspaceOpen, setWorkspaceOpen] = useState(() => readStoredWorkspaceOpenPreference({
+@@ -204,6 +205,7 @@ export function useMainAppSurfaceState(options: {
+     notificationPermission,
+     handleToggleNotifications,
+     notify,
++    shouldNotifyLocallyForChat,
+     removingPostIds,
+     setRemovingPostIds,
+     workspaceOpen,
+diff --git a/runtime/web/src/ui/notification-delivery-coordinator.ts b/runtime/web/src/ui/notification-delivery-coordinator.ts
+new file mode 100644
+index 0000000..3d82c64
+--- /dev/null
++++ b/runtime/web/src/ui/notification-delivery-coordinator.ts
+@@ -0,0 +1,187 @@
++const DEVICE_ID_KEY = 'piclaw.notifications.deviceId';
++const CLIENT_ID_KEY = 'piclaw.notifications.clientId';
++const PRESENCE_KEY_PREFIX = 'piclaw.notifications.presence.';
++export const LOCAL_NOTIFICATION_PRESENCE_TTL_MS = 45000;
++
++function safeStorageGet(storage, key) {
++  if (!storage || !key) return null;
++  try {
++    return storage.getItem(key);
++  } catch {
++    return null;
++  }
++}
++
++function safeStorageSet(storage, key, value) {
++  if (!storage || !key) return;
++  try {
++    storage.setItem(key, value);
++  } catch {
++    return;
++  }
++}
++
++function safeStorageRemove(storage, key) {
++  if (!storage || !key) return;
++  try {
++    storage.removeItem(key);
++  } catch {
++    return;
++  }
++}
++
++function createRandomId(prefix = 'piclaw') {
++  try {
++    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
++      return `${prefix}-${crypto.randomUUID()}`;
++    }
++  } catch {}
++  return `${prefix}-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
++}
++
++export function getOrCreateNotificationDeviceId(runtimeWindow = typeof window !== 'undefined' ? window : null) {
++  const storage = runtimeWindow?.localStorage;
++  const existing = safeStorageGet(storage, DEVICE_ID_KEY);
++  if (existing) return existing;
++  const created = createRandomId('device');
++  safeStorageSet(storage, DEVICE_ID_KEY, created);
++  return safeStorageGet(storage, DEVICE_ID_KEY) || created;
++}
++
++export function getOrCreateNotificationClientId(runtimeWindow = typeof window !== 'undefined' ? window : null) {
++  const sessionStorage = runtimeWindow?.sessionStorage;
++  const existing = safeStorageGet(sessionStorage, CLIENT_ID_KEY);
++  if (existing) return existing;
++  const fallbackExisting = runtimeWindow?.__PICLAW_NOTIFICATION_CLIENT_ID__;
++  if (typeof fallbackExisting === 'string' && fallbackExisting.trim()) return fallbackExisting.trim();
++  const created = createRandomId('client');
++  safeStorageSet(sessionStorage, CLIENT_ID_KEY, created);
++  if (runtimeWindow) {
++    runtimeWindow.__PICLAW_NOTIFICATION_CLIENT_ID__ = safeStorageGet(sessionStorage, CLIENT_ID_KEY) || created;
++  }
++  return runtimeWindow?.__PICLAW_NOTIFICATION_CLIENT_ID__ || created;
++}
++
++function getPresenceStorageKey(deviceId, clientId) {
++  return `${PRESENCE_KEY_PREFIX}${String(deviceId || '').trim()}:${String(clientId || '').trim()}`;
++}
++
++export function createLocalNotificationPresenceSnapshot(options = {}) {
++  const runtimeWindow = options.runtimeWindow ?? (typeof window !== 'undefined' ? window : null);
++  const runtimeDocument = options.runtimeDocument ?? (typeof document !== 'undefined' ? document : null);
++  const chatJid = typeof options.chatJid === 'string' && options.chatJid.trim() ? options.chatJid.trim() : '';
++  const deviceId = typeof options.deviceId === 'string' && options.deviceId.trim()
++    ? options.deviceId.trim()
++    : getOrCreateNotificationDeviceId(runtimeWindow);
++  const clientId = typeof options.clientId === 'string' && options.clientId.trim()
++    ? options.clientId.trim()
++    : getOrCreateNotificationClientId(runtimeWindow);
++  const updatedAtMs = Number.isFinite(options.updatedAtMs) ? Number(options.updatedAtMs) : Date.now();
++  const hasFocus = Boolean(typeof runtimeDocument?.hasFocus === 'function' ? runtimeDocument.hasFocus() : true);
++  const rawVisibility = String(runtimeDocument?.visibilityState || '').trim().toLowerCase();
++  const visibilityState = rawVisibility === 'hidden' ? 'hidden' : 'visible';
++
++  return {
++    deviceId,
++    clientId,
++    chatJid,
++    visibilityState,
++    hasFocus,
++    updatedAtMs,
++  };
++}
++
++export function publishLocalNotificationPresence(snapshot, runtimeWindow = typeof window !== 'undefined' ? window : null) {
++  const storage = runtimeWindow?.localStorage;
++  const deviceId = typeof snapshot?.deviceId === 'string' ? snapshot.deviceId.trim() : '';
++  const clientId = typeof snapshot?.clientId === 'string' ? snapshot.clientId.trim() : '';
++  const chatJid = typeof snapshot?.chatJid === 'string' ? snapshot.chatJid.trim() : '';
++  if (!storage || !deviceId || !clientId || !chatJid) return false;
++  safeStorageSet(storage, getPresenceStorageKey(deviceId, clientId), JSON.stringify({
++    deviceId,
++    clientId,
++    chatJid,
++    visibilityState: snapshot.visibilityState === 'hidden' ? 'hidden' : 'visible',
++    hasFocus: Boolean(snapshot.hasFocus),
++    updatedAtMs: Number.isFinite(snapshot.updatedAtMs) ? Number(snapshot.updatedAtMs) : Date.now(),
++  }));
++  return true;
++}
++
++export function withdrawLocalNotificationPresence(value, runtimeWindow = typeof window !== 'undefined' ? window : null) {
++  const storage = runtimeWindow?.localStorage;
++  const deviceId = typeof value?.deviceId === 'string' ? value.deviceId.trim() : '';
++  const clientId = typeof value?.clientId === 'string' ? value.clientId.trim() : '';
++  if (!storage || !deviceId || !clientId) return false;
++  safeStorageRemove(storage, getPresenceStorageKey(deviceId, clientId));
++  return true;
++}
++
++export function listLiveLocalNotificationPresence(options = {}) {
++  const runtimeWindow = options.runtimeWindow ?? (typeof window !== 'undefined' ? window : null);
++  const storage = runtimeWindow?.localStorage;
++  const deviceId = typeof options.deviceId === 'string' && options.deviceId.trim()
++    ? options.deviceId.trim()
++    : getOrCreateNotificationDeviceId(runtimeWindow);
++  const nowMs = Number.isFinite(options.nowMs) ? Number(options.nowMs) : Date.now();
++  const ttlMs = Number.isFinite(options.ttlMs) ? Number(options.ttlMs) : LOCAL_NOTIFICATION_PRESENCE_TTL_MS;
++  if (!storage || !deviceId) return [];
++
++  const keyPrefix = `${PRESENCE_KEY_PREFIX}${deviceId}:`;
++  const live = [];
++  const staleKeys = [];
++  for (let index = 0; index < storage.length; index += 1) {
++    const key = storage.key(index);
++    if (!key || !key.startsWith(keyPrefix)) continue;
++    const raw = safeStorageGet(storage, key);
++    if (!raw) {
++      staleKeys.push(key);
++      continue;
++    }
++    try {
++      const parsed = JSON.parse(raw);
++      const updatedAtMs = Number(parsed?.updatedAtMs);
++      if (!Number.isFinite(updatedAtMs) || nowMs - updatedAtMs > ttlMs) {
++        staleKeys.push(key);
++        continue;
++      }
++      const chatJid = typeof parsed?.chatJid === 'string' ? parsed.chatJid.trim() : '';
++      const clientId = typeof parsed?.clientId === 'string' ? parsed.clientId.trim() : '';
++      if (!chatJid || !clientId) {
++        staleKeys.push(key);
++        continue;
++      }
++      live.push({
++        deviceId,
++        clientId,
++        chatJid,
++        visibilityState: parsed?.visibilityState === 'hidden' ? 'hidden' : 'visible',
++        hasFocus: Boolean(parsed?.hasFocus),
++        updatedAtMs,
++      });
++    } catch {
++      staleKeys.push(key);
++    }
++  }
++
++  staleKeys.forEach((key) => safeStorageRemove(storage, key));
++  return live.sort((left, right) => left.clientId.localeCompare(right.clientId));
++}
++
++export function shouldNotifyLocallyForChat(options = {}) {
++  const snapshot = createLocalNotificationPresenceSnapshot(options);
++  const chatJid = snapshot.chatJid;
++  if (!chatJid) return false;
++  const entries = listLiveLocalNotificationPresence({
++    runtimeWindow: options.runtimeWindow,
++    deviceId: snapshot.deviceId,
++    nowMs: snapshot.updatedAtMs,
++    ttlMs: options.ttlMs,
++  }).filter((entry) => entry.chatJid === chatJid && entry.clientId !== snapshot.clientId);
++  const candidates = [snapshot, ...entries];
++  if (candidates.some((entry) => entry.visibilityState === 'visible')) {
++    return false;
++  }
++  const leader = [...candidates].sort((left, right) => left.clientId.localeCompare(right.clientId))[0] || null;
++  return Boolean(leader && leader.clientId === snapshot.clientId);
++}
+diff --git a/runtime/web/src/ui/use-notifications.ts b/runtime/web/src/ui/use-notifications.ts
+index ae72abc..cb58f08 100644
+--- a/runtime/web/src/ui/use-notifications.ts
++++ b/runtime/web/src/ui/use-notifications.ts
+@@ -2,6 +2,14 @@ import { deleteWebPushSubscription, getWebPushPublicKey, saveWebPushSubscription
+ import { useCallback, useEffect, useRef, useState } from '../vendor/preact-htm.js';
+ import { getLocalStorageBoolean, setLocalStorageItem } from '../utils/storage.js';
+ import { focusWindowBestEffort } from './notification-focus.js';
++import {
++  createLocalNotificationPresenceSnapshot,
++  getOrCreateNotificationClientId,
++  getOrCreateNotificationDeviceId,
++  publishLocalNotificationPresence,
++  shouldNotifyLocallyForChat,
++  withdrawLocalNotificationPresence,
++} from './notification-delivery-coordinator.ts';
+ 
+ export const LOCAL_NOTIFICATION_SOURCE_LABEL = 'Local';
+ export const WEB_PUSH_NOTIFICATION_SOURCE_LABEL = 'Web Push';
+@@ -71,24 +79,34 @@ async function disableWebPushSubscription(runtimeWindow, deviceId) {
+   return true;
+ }
+ 
+-function getOrCreateNotificationDeviceId(runtimeWindow = typeof window !== 'undefined' ? window : null) {
+-  const storage = runtimeWindow?.localStorage;
+-  const existing = typeof storage?.getItem === 'function' ? storage.getItem('piclaw.notifications.deviceId') : null;
+-  if (existing) return existing;
+-  const created = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+-    ? `device-${crypto.randomUUID()}`
+-    : `device-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
++function postWebPushPresence(payload, options = {}) {
++  const runtimeWindow = options.runtimeWindow ?? (typeof window !== 'undefined' ? window : null);
++  if (!runtimeWindow?.fetch) return Promise.resolve(false);
++  return runtimeWindow.fetch('/agent/push/presence', {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify(payload),
++    keepalive: Boolean(options.keepalive),
++  }).then(() => true).catch(() => false);
++}
++
++function sendWebPushPresenceBeacon(payload, runtimeWindow = typeof window !== 'undefined' ? window : null) {
+   try {
+-    storage?.setItem?.('piclaw.notifications.deviceId', created);
++    if (runtimeWindow?.navigator?.sendBeacon) {
++      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
++      return runtimeWindow.navigator.sendBeacon('/agent/push/presence', blob);
++    }
+   } catch {}
+-  return (typeof storage?.getItem === 'function' ? storage.getItem('piclaw.notifications.deviceId') : null) || created;
++  return false;
+ }
+ 
+-export function useNotifications() {
++export function useNotifications(options = {}) {
++  const currentChatJid = typeof options?.chatJid === 'string' && options.chatJid.trim() ? options.chatJid.trim() : 'web:default';
+   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+   const [notificationPermission, setNotificationPermission] = useState('default');
+   const notificationsEnabledRef = useRef(false);
+   const deviceIdRef = useRef(null);
++  const clientIdRef = useRef(null);
+ 
+   useEffect(() => {
+     const enabled = getLocalStorageBoolean('notificationsEnabled', false);
+@@ -96,6 +114,7 @@ export function useNotifications() {
+     setNotificationsEnabled(enabled);
+     if (typeof window !== 'undefined') {
+       deviceIdRef.current = getOrCreateNotificationDeviceId(window);
++      clientIdRef.current = getOrCreateNotificationClientId(window);
+     }
+     if (typeof Notification === 'undefined') {
+       return;
+@@ -122,6 +141,64 @@ export function useNotifications() {
+     notificationsEnabledRef.current = notificationsEnabled;
+   }, [notificationsEnabled]);
+ 
++  useEffect(() => {
++    if (typeof window === 'undefined' || typeof document === 'undefined') return;
++    const deviceId = deviceIdRef.current || getOrCreateNotificationDeviceId(window);
++    const clientId = clientIdRef.current || getOrCreateNotificationClientId(window);
++    deviceIdRef.current = deviceId;
++    clientIdRef.current = clientId;
++
++    const publishPresence = (active = true, transport = 'fetch') => {
++      const snapshot = createLocalNotificationPresenceSnapshot({
++        chatJid: currentChatJid,
++        runtimeWindow: window,
++        runtimeDocument: document,
++        deviceId,
++        clientId,
++      });
++      if (active) {
++        publishLocalNotificationPresence(snapshot, window);
++      } else {
++        withdrawLocalNotificationPresence({ deviceId, clientId }, window);
++      }
++      const payload = {
++        device_id: deviceId,
++        client_id: clientId,
++        chat_jid: currentChatJid,
++        visibility_state: snapshot.visibilityState,
++        has_focus: snapshot.hasFocus,
++        active,
++      };
++      if (!active && transport === 'beacon' && sendWebPushPresenceBeacon(payload, window)) {
++        return;
++      }
++      void postWebPushPresence(payload, { runtimeWindow: window, keepalive: !active || transport === 'keepalive' });
++    };
++
++    const handleStateChange = () => publishPresence(true);
++    const handlePageHide = () => publishPresence(false, 'beacon');
++
++    publishPresence(true);
++    const interval = setInterval(() => publishPresence(true), 15000);
++    document.addEventListener('visibilitychange', handleStateChange);
++    window.addEventListener('focus', handleStateChange);
++    window.addEventListener('blur', handleStateChange);
++    window.addEventListener('pageshow', handleStateChange);
++    window.addEventListener('pagehide', handlePageHide);
++    window.addEventListener('beforeunload', handlePageHide);
++
++    return () => {
++      clearInterval(interval);
++      document.removeEventListener('visibilitychange', handleStateChange);
++      window.removeEventListener('focus', handleStateChange);
++      window.removeEventListener('blur', handleStateChange);
++      window.removeEventListener('pageshow', handleStateChange);
++      window.removeEventListener('pagehide', handlePageHide);
++      window.removeEventListener('beforeunload', handlePageHide);
++      publishPresence(false, 'beacon');
++    };
++  }, [currentChatJid]);
++
+   const requestNotificationPermission = useCallback(() => {
+     if (typeof Notification === 'undefined') return Promise.resolve('denied');
+     try {
+@@ -195,10 +272,22 @@ export function useNotifications() {
+     }
+   }, []);
+ 
++  const shouldNotifyLocallyForChatId = useCallback((chatJid) => {
++    if (typeof window === 'undefined' || typeof document === 'undefined') return false;
++    return shouldNotifyLocallyForChat({
++      chatJid: typeof chatJid === 'string' && chatJid.trim() ? chatJid.trim() : currentChatJid,
++      runtimeWindow: window,
++      runtimeDocument: document,
++      deviceId: deviceIdRef.current || getOrCreateNotificationDeviceId(window),
++      clientId: clientIdRef.current || getOrCreateNotificationClientId(window),
++    });
++  }, [currentChatJid]);
++
+   return {
+     notificationsEnabled,
+     notificationPermission,
+     toggleNotifications,
+     notify,
++    shouldNotifyLocallyForChat: shouldNotifyLocallyForChatId,
+   };
+ }

@@ -1,0 +1,136 @@
+diff --git a/bun.lock b/bun.lock
+index d8d59be..174b349 100644
+--- a/bun.lock
++++ b/bun.lock
+@@ -27,6 +27,7 @@
+         "preact": "10.29.0",
+         "qrcode-terminal": "0.12.0",
+         "sharp": "^0.34.5",
++        "web-push": "3.6.7",
+         "xlsx": "^0.18.5",
+       },
+       "devDependencies": {
+@@ -586,6 +587,8 @@
+ 
+     "argparse": ["argparse@2.0.1", "", {}, "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="],
+ 
++    "asn1.js": ["asn1.js@5.4.1", "", { "dependencies": { "bn.js": "^4.0.0", "inherits": "^2.0.1", "minimalistic-assert": "^1.0.0", "safer-buffer": "^2.1.0" } }, "sha512-+I//4cYPccV8LdmBLiX8CYvf9Sp3vQsrqu2QNXRcrbiWvcx/UdlFiqUJJzxRQxgsZmvhXhn4cSKeSmoFjVdupA=="],
++
+     "asn1js": ["asn1js@3.0.7", "", { "dependencies": { "pvtsutils": "^1.3.6", "pvutils": "^1.1.3", "tslib": "^2.8.1" } }, "sha512-uLvq6KJu04qoQM6gvBfKFjlh6Gl0vOKQuR5cJMDHQkmwfMOQeN3F3SHCv9SNYSL+CRoHvOGFfllDlVz03GQjvQ=="],
+ 
+     "assemblyscript": ["assemblyscript@0.28.10", "", { "dependencies": { "binaryen": "123.0.0-nightly.20250530", "long": "^5.2.4" }, "bin": { "asc": "bin/asc.js", "asinit": "bin/asinit.js" } }, "sha512-MGqjjNlPMmcWjfnme3cGFKmbBY/rj0bmE4M1Wg8tNqmHusA1PAjOMgWK67KWBK63lmvotFDoP8e5N0URxKlR/Q=="],
+@@ -608,6 +611,8 @@
+ 
+     "binaryen": ["binaryen@123.0.0-nightly.20250530", "", { "bin": { "wasm-as": "bin/wasm-as", "wasm2js": "bin/wasm2js", "wasm-dis": "bin/wasm-dis", "wasm-opt": "bin/wasm-opt", "wasm-merge": "bin/wasm-merge", "wasm-shell": "bin/wasm-shell", "wasm-reduce": "bin/wasm-reduce", "wasm-metadce": "bin/wasm-metadce", "wasm-ctor-eval": "bin/wasm-ctor-eval" } }, "sha512-d1zPHBN5YlOd3Ff+OUxvVExuFeh8heSnqe+X3bjItFxGLvn4VGBKmrvv7pgy/cRhrIUGuPW138iaWfDhwjyDqg=="],
+ 
++    "bn.js": ["bn.js@4.12.3", "", {}, "sha512-fGTi3gxV/23FTYdAoUtLYp6qySe2KE3teyZitipKNRuVYcBkoP/bB3guXN/XVKUe9mxCHXnc9C4ocyz8OmgN0g=="],
++
+     "body-parser": ["body-parser@2.2.2", "", { "dependencies": { "bytes": "^3.1.2", "content-type": "^1.0.5", "debug": "^4.4.3", "http-errors": "^2.0.0", "iconv-lite": "^0.7.0", "on-finished": "^2.4.1", "qs": "^6.14.1", "raw-body": "^3.0.1", "type-is": "^2.0.1" } }, "sha512-oP5VkATKlNwcgvxi0vM0p/D3n2C3EReYVX+DNYs5TjZFn/oQt2j+4sVJtSMr18pdRr8wjTcBl6LoV+FUwzPmNA=="],
+ 
+     "bowser": ["bowser@2.14.1", "", {}, "sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg=="],
+@@ -930,6 +935,8 @@
+ 
+     "http-proxy-agent": ["http-proxy-agent@7.0.2", "", { "dependencies": { "agent-base": "^7.1.0", "debug": "^4.3.4" } }, "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig=="],
+ 
++    "http_ece": ["http_ece@1.2.0", "", {}, "sha512-JrF8SSLVmcvc5NducxgyOrKXe3EsyHMgBFgSaIUGmArKe+rwr0uphRkRXvwiom3I+fpIfoItveHrfudL8/rxuA=="],
++
+     "https-proxy-agent": ["https-proxy-agent@7.0.6", "", { "dependencies": { "agent-base": "^7.1.2", "debug": "4" } }, "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw=="],
+ 
+     "iconv-lite": ["iconv-lite@0.6.3", "", { "dependencies": { "safer-buffer": ">= 2.1.2 < 3.0.0" } }, "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw=="],
+@@ -1036,8 +1043,12 @@
+ 
+     "mime-types": ["mime-types@3.0.2", "", { "dependencies": { "mime-db": "^1.54.0" } }, "sha512-Lbgzdk0h4juoQ9fCKXW4by0UJqj+nOOrI9MJ1sSj4nI8aI2eo1qmvQEie4VD1glsS250n15LsWsYtCugiStS5A=="],
+ 
++    "minimalistic-assert": ["minimalistic-assert@1.0.1", "", {}, "sha512-UtJcAD4yEaGtjPezWuO9wC4nwUnVH/8/Im3yEHQP4b67cXlD/Qr9hdITCU1xDbSEXg2XKNaP8jsReV7vQd00/A=="],
++
+     "minimatch": ["minimatch@10.2.4", "", { "dependencies": { "brace-expansion": "^5.0.2" } }, "sha512-oRjTw/97aTBN0RHbYCdtF1MQfvusSIBQM0IZEgzl6426+8jSC0nF1a/GmnVLpfB9yyr6g6FTqWqiZVbxrtaCIg=="],
+ 
++    "minimist": ["minimist@1.2.8", "", {}, "sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA=="],
++
+     "minipass": ["minipass@7.1.3", "", {}, "sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A=="],
+ 
+     "mkdirp": ["mkdirp@1.0.4", "", { "bin": { "mkdirp": "bin/cmd.js" } }, "sha512-vVqVZQyf3WLx2Shd0qJ9xuvqgAyKPLAiqITEtqW0oIUjzo3PePDd6fW9iFz30ef7Ysp/oiWqbhszeGWW2T6Gzw=="],
+@@ -1318,6 +1329,8 @@
+ 
+     "w3c-keyname": ["w3c-keyname@2.2.8", "", {}, "sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ=="],
+ 
++    "web-push": ["web-push@3.6.7", "", { "dependencies": { "asn1.js": "^5.3.0", "http_ece": "1.2.0", "https-proxy-agent": "^7.0.0", "jws": "^4.0.0", "minimist": "^1.2.5" }, "bin": { "web-push": "src/cli.js" } }, "sha512-OpiIUe8cuGjrj3mMBFWY+e4MMIkW3SVT+7vEIjvD9kejGUypv8GPDf84JdPWskK8zMRIJ6xYGm+Kxr8YkPyA0A=="],
++
+     "web-streams-polyfill": ["web-streams-polyfill@3.3.3", "", {}, "sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw=="],
+ 
+     "which": ["which@2.0.2", "", { "dependencies": { "isexe": "^2.0.0" }, "bin": { "node-which": "./bin/node-which" } }, "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA=="],
+diff --git a/package.json b/package.json
+index fe573e5..faac849 100644
+--- a/package.json
++++ b/package.json
+@@ -108,6 +108,7 @@
+     "preact": "10.29.0",
+     "qrcode-terminal": "0.12.0",
+     "sharp": "^0.34.5",
++    "web-push": "3.6.7",
+     "xlsx": "^0.18.5"
+   },
+   "devDependencies": {
+diff --git a/runtime/src/channels/web/messaging/agent-message-store.ts b/runtime/src/channels/web/messaging/agent-message-store.ts
+index 5df9d44..88cc1ef 100644
+--- a/runtime/src/channels/web/messaging/agent-message-store.ts
++++ b/runtime/src/channels/web/messaging/agent-message-store.ts
+@@ -12,6 +12,10 @@ import type { WebChannelLike } from "../core/web-channel-contracts.js";
+ import type { AttachmentInfo } from "../../../agent-pool/attachments.js";
+ import type { AgentEventEmitter } from "../sse/agent-events.js";
+ import { formatOutbound, type ChatChannel } from "../../../router.js";
++import { createLogger, debugSuppressedError } from "../../../utils/logger.js";
++import { sendStoredAgentReplyWebPushNotification } from "../push/web-push-service.js";
++
++const log = createLogger("web.agent-message-store");
+ 
+ function buildAttachmentBlocks(attachments: AttachmentInfo[]): {
+   mediaIds: number[];
+@@ -28,6 +32,19 @@ function buildAttachmentBlocks(attachments: AttachmentInfo[]): {
+   return { mediaIds, contentBlocks };
+ }
+ 
++function dispatchStoredReplyWebPush(
++  interaction: ReturnType<WebChannelLike["storeMessage"]>,
++  dispatchWebPushNotification?: (interaction: ReturnType<WebChannelLike["storeMessage"]>) => Promise<unknown>,
++): void {
++  if (!interaction) return;
++  void (dispatchWebPushNotification || sendStoredAgentReplyWebPushNotification)(interaction).catch((error) => {
++    debugSuppressedError(log, "Failed to dispatch Web Push for stored agent reply.", error, {
++      chatJid: interaction.chat_jid,
++      rowId: interaction.id,
++    });
++  });
++}
++
+ /** Persist the accumulated agent turn (text + attachments) to the database. */
+ export function storeAgentTurn(
+   channel: WebChannelLike,
+@@ -44,6 +61,7 @@ export function storeAgentTurn(
+     skipPlaceholder?: boolean;
+     /** True only for the terminal persisted assistant message of a run. */
+     isTerminalAgentReply?: boolean;
++    dispatchWebPushNotification?: (interaction: ReturnType<WebChannelLike["storeMessage"]>) => Promise<unknown>;
+   }
+ ): boolean {
+   const { mediaIds, contentBlocks } = buildAttachmentBlocks(params.attachments);
+@@ -71,6 +89,9 @@ export function storeAgentTurn(
+           thread_id: params.threadId ?? null,
+           row_id: placeholderId,
+         });
++        if (params.isTerminalAgentReply) {
++          dispatchStoredReplyWebPush(updated, params.dispatchWebPushNotification);
++        }
+         return true;
+       }
+     }
+@@ -83,6 +104,9 @@ export function storeAgentTurn(
+   });
+   if (interaction) {
+     emitter.response(interaction);
++    if (params.isTerminalAgentReply) {
++      dispatchStoredReplyWebPush(interaction, params.dispatchWebPushNotification);
++    }
+     return true;
+   }
+   return false;

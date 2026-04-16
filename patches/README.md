@@ -20,7 +20,6 @@ Automation helpers in this directory:
 | 11 | `runtime/src/db/connection.ts` | Lazy DB init for Jiti-loaded extension module graphs |
 | 24 | `package.json`, `bun.lock` | Pin `ghostty-web` vendoring to the forked commit that carries the upstream bootstrap/open-reset fix |
 | 28 | `provider-usage.ts`, `provider-usage.test.ts`, `compose-box.ts` | Local-only Anthropic OAuth provider usage: show 5h/week usage windows, fetch funded overage grant state, and keep extra-usage details in the model tooltip without adding them to the inline hint |
-| 30 | `dispatch-agent.ts`, push routes/store/service, `use-notifications.ts`, `sw.js`, push client/server tests, docs | Consolidated web push and notification delivery: subscription/storage foundation, outbound delivery, Bun-safe request generation, real VAPID subject, reply notifications, source markers, and per-device per-chat delivery coordination |
 | 32 | `app-resume.ts`, `use-sse-connection.ts`, related web tests | Consolidated iOS Safari share-sheet mitigation: guarded return-to-app detection and SSE wake/focus reconnect suppression |
 | 46 | `app-chat-refresh-lifecycle.ts`, `app-refresh-coordination.ts`, related tests | Coalesce overlapping thread-switch refresh work so duplicate foreground refresh bundles collapse into one unit |
 | 47 | `app-main-surface-state.ts`, related tests | Stabilize root chat resolution for direct branch opens so wrong-root route replay does not churn the UI |
@@ -33,17 +32,22 @@ Automation helpers in this directory:
 | 54 | `session-manager.ts`, `startup.ts`, branch refresh endpoint/UI glue, related tests | Serialize background warmups, prioritize the default chat at startup, and let branch refreshes explicitly prewarm the current chat first |
 | 55 | `app-window-actions.ts`, related tests | Route compose-triggered branch creation through the existing branch-loader surface so navigation happens immediately instead of waiting on fork hydration |
 | 56 | `agent-pool.ts`, `agent-pool.test.ts` | Raise the default idle session TTL from 2 minutes to 15 minutes so warmed sessions survive long enough to benefit the startup/thread-switch warmup lane |
+| 57 | `dispatch-agent.ts`, push store/routes, `use-notifications.ts`, `sw.js`, push foundation tests | Web Push subscription/storage foundation: persist subscriptions and VAPID keys, serve the service worker, and register/unregister push subscriptions from the web UI |
+| 58 | presence service/routes, `notification-delivery-coordinator.ts`, `use-notifications.ts`, chat-pane/main-surface wiring, docs, related tests | Per-device per-chat notification routing: publish live client presence, elect exactly one hidden local notifier, and suppress same-chat duplicates on the active device |
+| 59 | `agent-message-store.ts`, `web-push-service.ts`, `package.json`, `bun.lock`, related tests | Reply-delivery Web Push backend: add the `web-push` dependency, derive/send VAPID requests, and dispatch stored terminal replies as Web Push notifications |
+| 60 | `dispatch-agent.ts`, `web-push-routes.ts`, `api.ts`, `use-notifications.ts`, route tests | Local-only push self-check endpoint: expose `/agent/push/test` and fire a one-shot confirmation notification when a device enables Web Push |
 
 ## Retired patches
 
 Retired patches that are still useful for history/reference are kept under `patches/retired/`.
-Numbering preserved — next new patch is **57**.
+Numbering preserved — next new patch is **61**.
 
 Historical note:
 - the pre-consolidation split patches `29` through `44` were retired into `patches/retired/` on 2026-04-15 and first replaced by consolidated active patches `29` through `32`
 - the upstreamable subset of that consolidated perf lane was then re-split on 2026-04-15 into active patches `31`, `45`, `46`, and `47`
 - the remaining cold-open UI lane was then fixed and re-split on 2026-04-15 into active patches `48`, `49`, `50`, and `51`
 - the remaining consolidated startup/perf lane in active patch `29` was then retired and re-split on 2026-04-15 into active patches `52`, `53`, `54`, `55`, and `56`
+- active patch `30` was then retired and re-split on 2026-04-16 into active patches `57`, `58`, `59`, and `60`
 - active patch `31` then merged upstream via PR #42 and was retired on 2026-04-15
 - active patch `45` then merged upstream via PR #43 and was retired on 2026-04-15
 
@@ -65,6 +69,7 @@ Historical note:
 | ~~25~~ | Merged upstream | PR #37; upstream commit `610dda1c` |
 | ~~26~~ | Merged upstream | PR #38; upstream commit `f66f1035` |
 | ~~27~~ | Merged upstream | Upstream commit `581830a` |
+| ~~30~~ | Re-split | Replaced by active patches `57`, `58`, `59`, and `60`; monolith retained in `patches/retired/30-web-push-and-notification-delivery.patch` |
 | ~~31~~ | Merged upstream | PR #42; upstream commit `63f3aae4` |
 | ~~45~~ | Merged upstream | PR #43; upstream commit `41d6090c` |
 

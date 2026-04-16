@@ -37,11 +37,6 @@
       "track_upstream": false,
       "upstream_prs": []
     },
-    "30": {
-      "name": "web-push-and-notification-delivery",
-      "track_upstream": false,
-      "upstream_prs": []
-    },
     "32": {
       "name": "ios-share-sheet-resume-and-sse-guards",
       "track_upstream": false,
@@ -101,6 +96,26 @@
       "name": "longer-idle-session-ttl",
       "track_upstream": true,
       "upstream_prs": [52]
+    },
+    "57": {
+      "name": "web-push-subscription-foundation",
+      "track_upstream": true,
+      "upstream_prs": []
+    },
+    "58": {
+      "name": "web-notification-presence-routing",
+      "track_upstream": true,
+      "upstream_prs": []
+    },
+    "59": {
+      "name": "web-push-reply-delivery",
+      "track_upstream": true,
+      "upstream_prs": []
+    },
+    "60": {
+      "name": "web-push-test-endpoint",
+      "track_upstream": false,
+      "upstream_prs": []
     }
   }
 }
