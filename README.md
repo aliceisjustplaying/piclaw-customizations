@@ -86,6 +86,22 @@ rollback                      # swap piclaw-live.previous back
 
 The update script refreshes the upstream cache, applies patches with strict `git apply`, builds server + web, validates the candidate, activates it, deploys extensions, installs the fixed SYSTEM.md template, updates the global `pi-coding-agent` CLI, and updates companion CLIs.
 
+## Web Push / iPhone PWA
+
+PiClaw's web-push runtime needs a real public VAPID subject in the service environment:
+
+- `PICLAW_WEB_PUSH_VAPID_SUBJECT=https://pix.mosphere.at`
+
+Without that, iPhone Safari PWA subscriptions can be stored successfully in `/workspace/.piclaw/web-push/subscriptions.json`, but Apple Push rejects outbound deliveries with `403 {"reason":"BadJwtToken"}`. The upstream fallback `mailto:notifications@localhost.invalid` is not sufficient for this deployment.
+
+Source of truth for the live service env is the host config in [`/workspace/src/pix/modules/piclaw.nix`](/workspace/src/pix/modules/piclaw.nix). If mobile web push stops working after a restart or rebuild, check that rendered env first:
+
+```bash
+sudo grep PICLAW_WEB_PUSH_VAPID_SUBJECT /run/secrets/rendered/piclaw-env
+```
+
+If you need to prove the issue is config rather than routing, the local-only `pix/main` diagnostic endpoint `/agent/push/test` can confirm whether a stored device subscription is deliverable.
+
 ## System Prompt
 
 `scripts/piclaw-refresh-system-prompt` installs `SYSTEM.base.md` verbatim as `~/.pi/agent/SYSTEM.md`, with no local or repo append layers, and rewrites `~/.local/bin/pi` to prefer the live bundled CLI with a global fallback.
