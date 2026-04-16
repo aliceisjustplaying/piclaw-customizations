@@ -42,11 +42,6 @@
       "track_upstream": false,
       "upstream_prs": []
     },
-    "46": {
-      "name": "thread-switch-refresh-coalescing",
-      "track_upstream": true,
-      "upstream_prs": [45]
-    },
     "47": {
       "name": "stable-root-chat-resolution",
       "track_upstream": true,

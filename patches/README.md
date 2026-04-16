@@ -21,7 +21,6 @@ Automation helpers in this directory:
 | 24 | `package.json`, `bun.lock` | Pin `ghostty-web` vendoring to the forked commit that carries the upstream bootstrap/open-reset fix |
 | 28 | `provider-usage.ts`, `provider-usage.test.ts`, `compose-box.ts` | Local-only Anthropic OAuth provider usage: show 5h/week usage windows, fetch funded overage grant state, and keep extra-usage details in the model tooltip without adding them to the inline hint |
 | 32 | `app-resume.ts`, `use-sse-connection.ts`, related web tests | Consolidated iOS Safari share-sheet mitigation: guarded return-to-app detection and SSE wake/focus reconnect suppression |
-| 46 | `app-chat-refresh-lifecycle.ts`, `app-refresh-coordination.ts`, related tests | Coalesce overlapping thread-switch refresh work so duplicate foreground refresh bundles collapse into one unit |
 | 47 | `app-main-surface-state.ts`, related tests | Stabilize root chat resolution for direct branch opens so wrong-root route replay does not churn the UI |
 | 48 | `app-perf-tracing.ts`, `app-shell-bootstrap.ts`, branch/timeline load orchestration files, branch/window action tests | Add web UI perf trace hooks for thread switches and branch creation so timeline/runtime phases can be correlated in the browser |
 | 49 | `app-chat-refresh-lifecycle.ts`, `app-view-refresh-lifecycle.ts`, `app-main-lifecycle-composition.ts`, related tests | Move thread-state hydration behind timeline load completion and failure so cold opens do not show stale status/queue/context state |
@@ -49,6 +48,7 @@ Historical note:
 - the remaining consolidated startup/perf lane in active patch `29` was then retired and re-split on 2026-04-15 into active patches `52`, `53`, `54`, `55`, and `56`
 - active patch `30` was then retired and re-split on 2026-04-16 into active patches `57`, `58`, `59`, and `60`
 - active patch `31` then merged upstream via PR #42 and was retired on 2026-04-15
+- active patch `46` then merged upstream via PR #45 and was retired on 2026-04-16
 - active patch `45` then merged upstream via PR #43 and was retired on 2026-04-15
 
 | # | Status | Reason |
@@ -71,6 +71,7 @@ Historical note:
 | ~~27~~ | Merged upstream | Upstream commit `581830a` |
 | ~~30~~ | Re-split | Replaced by active patches `57`, `58`, `59`, and `60`; monolith retained in `patches/retired/30-web-push-and-notification-delivery.patch` |
 | ~~31~~ | Merged upstream | PR #42; upstream commit `63f3aae4` |
+| ~~46~~ | Merged upstream | PR #45; upstream commit `d16b5cc` |
 | ~~45~~ | Merged upstream | PR #43; upstream commit `41d6090c` |
 
 ## Terminal patch outcomes

@@ -1,7 +1,16 @@
 diff --git a/bun.lock b/bun.lock
-index d8d59be..174b349 100644
+index d8d59be..eb731ec 100644
 --- a/bun.lock
 +++ b/bun.lock
+@@ -17,7 +17,7 @@
+         "d3": "^7.9.0",
+         "docx-preview": "^0.3.7",
+         "fflate": "0.8.2",
+-        "ghostty-web": "github:aliceisjustplaying/ghostty-web#8c02b065cd8a9e4cf7ea711f5a2cb3ed61a15ca5",
++        "ghostty-web": "github:rcarmo/ghostty-web#fcc47d423a7fce1c02c702b6464d0b1ab89175f1",
+         "htm": "3.1.1",
+         "js-yaml": "^4.1.1",
+         "katex": "0.16.38",
 @@ -27,6 +27,7 @@
          "preact": "10.29.0",
          "qrcode-terminal": "0.12.0",
@@ -28,6 +37,15 @@ index d8d59be..174b349 100644
      "body-parser": ["body-parser@2.2.2", "", { "dependencies": { "bytes": "^3.1.2", "content-type": "^1.0.5", "debug": "^4.4.3", "http-errors": "^2.0.0", "iconv-lite": "^0.7.0", "on-finished": "^2.4.1", "qs": "^6.14.1", "raw-body": "^3.0.1", "type-is": "^2.0.1" } }, "sha512-oP5VkATKlNwcgvxi0vM0p/D3n2C3EReYVX+DNYs5TjZFn/oQt2j+4sVJtSMr18pdRr8wjTcBl6LoV+FUwzPmNA=="],
  
      "bowser": ["bowser@2.14.1", "", {}, "sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg=="],
+@@ -892,7 +897,7 @@
+ 
+     "get-uri": ["get-uri@6.0.5", "", { "dependencies": { "basic-ftp": "^5.0.2", "data-uri-to-buffer": "^6.0.2", "debug": "^4.3.4" } }, "sha512-b1O07XYq8eRuVzBNgJLstU6FYc1tS6wnMtF1I1D9lE8LxZSOGZ7LhxN54yPP6mGw5f2CkXY2BQUL9Fx41qvcIg=="],
+ 
+-    "ghostty-web": ["ghostty-web@github:aliceisjustplaying/ghostty-web#8c02b06", {}, "aliceisjustplaying-ghostty-web-8c02b06"],
++    "ghostty-web": ["ghostty-web@github:rcarmo/ghostty-web#fcc47d4", {}, "rcarmo-ghostty-web-fcc47d4"],
+ 
+     "glob": ["glob@13.0.6", "", { "dependencies": { "minimatch": "^10.2.2", "minipass": "^7.1.3", "path-scurry": "^2.0.2" } }, "sha512-Wjlyrolmm8uDpm/ogGyXZXb1Z+Ca2B8NbJwqBVg0axK9GbBeoS7yGV6vjXnYdGm6X53iehEuxxbyiKp8QmN4Vw=="],
+ 
 @@ -930,6 +935,8 @@
  
      "http-proxy-agent": ["http-proxy-agent@7.0.2", "", { "dependencies": { "agent-base": "^7.1.0", "debug": "^4.3.4" } }, "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig=="],
@@ -60,9 +78,18 @@ index d8d59be..174b349 100644
  
      "which": ["which@2.0.2", "", { "dependencies": { "isexe": "^2.0.0" }, "bin": { "node-which": "./bin/node-which" } }, "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA=="],
 diff --git a/package.json b/package.json
-index fe573e5..faac849 100644
+index fe573e5..1432ca2 100644
 --- a/package.json
 +++ b/package.json
+@@ -98,7 +98,7 @@
+     "d3": "^7.9.0",
+     "docx-preview": "^0.3.7",
+     "fflate": "0.8.2",
+-    "ghostty-web": "github:aliceisjustplaying/ghostty-web#8c02b065cd8a9e4cf7ea711f5a2cb3ed61a15ca5",
++    "ghostty-web": "github:rcarmo/ghostty-web#fcc47d423a7fce1c02c702b6464d0b1ab89175f1",
+     "htm": "3.1.1",
+     "js-yaml": "^4.1.1",
+     "katex": "0.16.38",
 @@ -108,6 +108,7 @@
      "preact": "10.29.0",
      "qrcode-terminal": "0.12.0",
@@ -134,3 +161,724 @@ index 5df9d44..88cc1ef 100644
      return true;
    }
    return false;
+diff --git a/runtime/src/channels/web/push/web-push-service.ts b/runtime/src/channels/web/push/web-push-service.ts
+new file mode 100644
+index 0000000..ab619ed
+--- /dev/null
++++ b/runtime/src/channels/web/push/web-push-service.ts
+@@ -0,0 +1,314 @@
++/**
++ * web/push/web-push-service.ts – outbound Web Push delivery helpers.
++ */
++
++import { createPrivateKey } from "node:crypto";
++
++import type { InteractionRow } from "../../../db.js";
++import { createLogger, debugSuppressedError } from "../../../utils/logger.js";
++import {
++  ensureStoredVapidKeys,
++  listStoredWebPushSubscriptions,
++  removeStoredWebPushSubscription,
++  type StoredWebPushSubscription,
++} from "./web-push-store.js";
++import {
++  webNotificationPresenceService,
++  type WebNotificationPresenceService,
++} from "./web-notification-presence-service.js";
++
++const log = createLogger("web.push.service");
++const DEFAULT_VAPID_SUBJECT = typeof process.env.PICLAW_WEB_PUSH_VAPID_SUBJECT === "string" && process.env.PICLAW_WEB_PUSH_VAPID_SUBJECT.trim()
++  ? process.env.PICLAW_WEB_PUSH_VAPID_SUBJECT.trim()
++  : "https://pix.mosphere.at";
++
++export interface WebPushNotificationPayload {
++  title: string;
++  body: string;
++  url?: string;
++  tag?: string;
++  sourceLabel?: string;
++}
++
++export interface StoredWebPushSendResult {
++  attempted: number;
++  sent: number;
++  removed: number;
++  failed: number;
++}
++
++export interface SendStoredWebPushNotificationOptions {
++  baseDir?: string;
++  vapidSubject?: string;
++  chatJid?: string;
++  ttl?: number;
++  urgency?: "very-low" | "low" | "normal" | "high";
++  sendNotification?: (
++    subscription: StoredWebPushSubscription,
++    payload: string,
++    options: {
++      TTL: number;
++      urgency: "very-low" | "low" | "normal" | "high";
++      vapidDetails: {
++        subject: string;
++        publicKey: string;
++        privateKey: string;
++      };
++    },
++  ) => Promise<unknown>;
++  generateRequestDetails?: (
++    subscription: StoredWebPushSubscription,
++    payload: string,
++    options: {
++      TTL: number;
++      urgency: "very-low" | "low" | "normal" | "high";
++      vapidDetails: {
++        subject: string;
++        publicKey: string;
++        privateKey: string;
++      };
++    },
++  ) => GeneratedWebPushRequestDetails;
++  fetchImpl?: typeof fetch;
++  presenceService?: WebNotificationPresenceService;
++}
++
++export interface GeneratedWebPushRequestDetails {
++  endpoint: string;
++  method?: string;
++  headers?: Record<string, string | number>;
++  body?: BodyInit | null;
++  timeout?: number;
++}
++
++function resolvePushPath(url: string | undefined): string {
++  const value = typeof url === "string" ? url.trim() : "";
++  if (!value) return "/";
++  if (value.startsWith("/")) return value;
++  return `/${value}`;
++}
++
++function normalizePayload(payload: WebPushNotificationPayload): WebPushNotificationPayload {
++  const title = typeof payload?.title === "string" && payload.title.trim()
++    ? payload.title.trim()
++    : "PiClaw";
++  const body = typeof payload?.body === "string" && payload.body.trim()
++    ? payload.body.trim()
++    : "You have a new update.";
++  const tag = typeof payload?.tag === "string" && payload.tag.trim()
++    ? payload.tag.trim()
++    : "piclaw";
++  const sourceLabel = typeof payload?.sourceLabel === "string" && payload.sourceLabel.trim()
++    ? payload.sourceLabel.trim()
++    : undefined;
++  return {
++    title,
++    body,
++    tag,
++    url: resolvePushPath(payload?.url),
++    ...(sourceLabel ? { sourceLabel } : {}),
++  };
++}
++
++function getStoredVapidDetails(baseDir?: string, vapidSubject?: string): {
++  subject: string;
++  publicKey: string;
++  privateKey: string;
++} {
++  const keys = ensureStoredVapidKeys(baseDir);
++  const privateJwk = createPrivateKey(keys.privateKeyPem).export({ format: "jwk" }) as JsonWebKey;
++  const privateKey = typeof privateJwk.d === "string" ? privateJwk.d : "";
++  if (!privateKey) {
++    throw new Error("Stored VAPID key is missing the private key scalar.");
++  }
++
++  return {
++    subject: typeof vapidSubject === "string" && vapidSubject.trim() ? vapidSubject.trim() : DEFAULT_VAPID_SUBJECT,
++    publicKey: keys.publicKey,
++    privateKey,
++  };
++}
++
++async function loadGenerateRequestDetailsImpl(): Promise<NonNullable<SendStoredWebPushNotificationOptions["generateRequestDetails"]>> {
++  const mod = await import("web-push");
++  const api = (mod as Record<string, any>).default && typeof (mod as Record<string, any>).default === "object"
++    ? (mod as Record<string, any>).default
++    : mod;
++  const generateRequestDetails = api?.generateRequestDetails;
++  if (typeof generateRequestDetails !== "function") {
++    throw new Error("web-push generateRequestDetails is unavailable.");
++  }
++  return generateRequestDetails.bind(api);
++}
++
++function normalizeRequestHeaders(headers: GeneratedWebPushRequestDetails["headers"]): Record<string, string> {
++  const normalized: Record<string, string> = {};
++  for (const [key, value] of Object.entries(headers || {})) {
++    const normalizedKey = String(key || "").trim();
++    if (!normalizedKey) continue;
++    if (normalizedKey.toLowerCase() === "content-length") continue;
++    normalized[normalizedKey] = String(value);
++  }
++  return normalized;
++}
++
++async function dispatchGeneratedWebPushRequest(
++  requestDetails: GeneratedWebPushRequestDetails,
++  fetchImpl: typeof fetch = fetch,
++): Promise<void> {
++  const controller = typeof AbortController !== "undefined" && Number.isFinite(requestDetails.timeout) && Number(requestDetails.timeout) > 0
++    ? new AbortController()
++    : null;
++  const timeoutId = controller
++    ? setTimeout(() => controller.abort(), Number(requestDetails.timeout))
++    : null;
++
++  try {
++    const response = await fetchImpl(requestDetails.endpoint, {
++      method: requestDetails.method || "POST",
++      headers: normalizeRequestHeaders(requestDetails.headers),
++      body: requestDetails.body ?? undefined,
++      ...(controller ? { signal: controller.signal } : {}),
++    });
++    if (response.ok) return;
++
++    const body = await response.text().catch(() => "");
++    throw {
++      message: "Received unexpected response code",
++      statusCode: response.status,
++      headers: Object.fromEntries(response.headers.entries()),
++      body,
++      endpoint: requestDetails.endpoint,
++    };
++  } finally {
++    if (timeoutId) clearTimeout(timeoutId);
++  }
++}
++
++function isExpiredSubscriptionError(error: unknown): boolean {
++  const statusCode = Number((error as { statusCode?: unknown } | null)?.statusCode);
++  return statusCode === 404 || statusCode === 410;
++}
++
++function buildReplyNotificationBody(interaction: InteractionRow): string {
++  const content = String(interaction?.data?.content || "").trim();
++  if (content) {
++    return content.replace(/\s+/g, " ").slice(0, 200);
++  }
++  const contentBlocks = Array.isArray(interaction?.data?.content_blocks)
++    ? interaction.data.content_blocks
++    : [];
++  if (contentBlocks.length > 0) {
++    return "Sent an attachment.";
++  }
++  return "You have a new reply.";
++}
++
++export function buildStoredAgentReplyWebPushNotification(interaction: InteractionRow): WebPushNotificationPayload | null {
++  if (!interaction || typeof interaction !== "object") return null;
++  const chatJid = typeof interaction.chat_jid === "string" ? interaction.chat_jid.trim() : "";
++  if (!chatJid) return null;
++  const rowId = Number(interaction.id);
++  const suffix = rowId > 0 ? `#msg-${rowId}` : "";
++  return {
++    title: "PiClaw reply",
++    body: buildReplyNotificationBody(interaction),
++    url: `/?chat_jid=${encodeURIComponent(chatJid)}${suffix}`,
++    tag: `piclaw:reply:${chatJid}`,
++    sourceLabel: "Web Push",
++  };
++}
++
++export async function sendStoredAgentReplyWebPushNotification(
++  interaction: InteractionRow,
++  options: SendStoredWebPushNotificationOptions = {},
++): Promise<StoredWebPushSendResult> {
++  const payload = buildStoredAgentReplyWebPushNotification(interaction);
++  if (!payload) {
++    return { attempted: 0, sent: 0, removed: 0, failed: 0 };
++  }
++  return await sendStoredWebPushNotification(payload, {
++    ...options,
++    chatJid: typeof interaction.chat_jid === "string" ? interaction.chat_jid.trim() : options.chatJid,
++  });
++}
++
++export async function sendStoredWebPushNotification(
++  payload: WebPushNotificationPayload,
++  options: SendStoredWebPushNotificationOptions = {},
++): Promise<StoredWebPushSendResult> {
++  const subscriptions = listStoredWebPushSubscriptions(options.baseDir);
++  if (subscriptions.length === 0) {
++    return { attempted: 0, sent: 0, removed: 0, failed: 0 };
++  }
++
++  const normalizedPayload = normalizePayload(payload);
++  const serializedPayload = JSON.stringify(normalizedPayload);
++  const vapidDetails = getStoredVapidDetails(options.baseDir, options.vapidSubject);
++  const requestOptions = {
++    TTL: Number.isFinite(options.ttl) ? Number(options.ttl) : 60,
++    urgency: options.urgency || "normal",
++    vapidDetails,
++  } as const;
++  const generateRequestDetails = options.sendNotification
++    ? null
++    : (options.generateRequestDetails || await loadGenerateRequestDetailsImpl());
++  const presenceService = options.presenceService || webNotificationPresenceService;
++
++  let attempted = 0;
++  let sent = 0;
++  let removed = 0;
++  let failed = 0;
++
++  for (const subscription of subscriptions) {
++    if (!presenceService.shouldSendWebPush(subscription.deviceId, options.chatJid)) {
++      continue;
++    }
++
++    attempted += 1;
++    try {
++      if (options.sendNotification) {
++        await options.sendNotification(subscription, serializedPayload, requestOptions);
++      } else if (generateRequestDetails) {
++        const requestDetails = generateRequestDetails(subscription, serializedPayload, requestOptions);
++        await dispatchGeneratedWebPushRequest(requestDetails, options.fetchImpl || fetch);
++      }
++      sent += 1;
++    } catch (error) {
++      if (isExpiredSubscriptionError(error)) {
++        if (removeStoredWebPushSubscription(subscription.endpoint, options.baseDir)) {
++          removed += 1;
++        }
++        log.info("Removed expired web push subscription after delivery failure.", {
++          endpoint: subscription.endpoint,
++          statusCode: (error as { statusCode?: unknown } | null)?.statusCode,
++        });
++        continue;
++      }
++
++      failed += 1;
++      debugSuppressedError(log, "Web push delivery failed for a stored subscription.", error, {
++        endpoint: subscription.endpoint,
++      });
++    }
++  }
++
++  return {
++    attempted,
++    sent,
++    removed,
++    failed,
++  };
++}
++
++export async function sendStoredWebPushTestNotification(
++  options: SendStoredWebPushNotificationOptions & { title?: string; body?: string; url?: string; tag?: string; sourceLabel?: string } = {},
++): Promise<StoredWebPushSendResult> {
++  return await sendStoredWebPushNotification({
++    title: options.title || "PiClaw notifications enabled",
++    body: options.body || "Web Push is configured for this device.",
++    url: options.url || "/",
++    tag: options.tag || "piclaw:test",
++    sourceLabel: options.sourceLabel || "Web Push",
++  }, options);
++}
+diff --git a/runtime/src/types/web-push.d.ts b/runtime/src/types/web-push.d.ts
+new file mode 100644
+index 0000000..60182f0
+--- /dev/null
++++ b/runtime/src/types/web-push.d.ts
+@@ -0,0 +1,41 @@
++declare module "web-push" {
++  export interface WebPushVapidDetails {
++    subject: string;
++    publicKey: string;
++    privateKey: string;
++  }
++
++  export interface WebPushRequestOptions {
++    TTL?: number;
++    urgency?: "very-low" | "low" | "normal" | "high";
++    vapidDetails?: WebPushVapidDetails;
++    [key: string]: unknown;
++  }
++
++  export interface WebPushGeneratedRequestDetails {
++    endpoint: string;
++    method?: string;
++    headers?: Record<string, string | number>;
++    body?: BodyInit | null;
++    timeout?: number;
++  }
++
++  export function sendNotification(
++    subscription: unknown,
++    payload?: string | Buffer | null,
++    options?: WebPushRequestOptions,
++  ): Promise<unknown>;
++
++  export function generateRequestDetails(
++    subscription: unknown,
++    payload?: string | Buffer | null,
++    options?: WebPushRequestOptions,
++  ): WebPushGeneratedRequestDetails;
++
++  const api: {
++    sendNotification: typeof sendNotification;
++    generateRequestDetails: typeof generateRequestDetails;
++  };
++
++  export default api;
++}
+diff --git a/runtime/test/channels/web/agent-message-store.test.ts b/runtime/test/channels/web/agent-message-store.test.ts
+new file mode 100644
+index 0000000..eacbc82
+--- /dev/null
++++ b/runtime/test/channels/web/agent-message-store.test.ts
+@@ -0,0 +1,79 @@
++import { describe, expect, test } from "bun:test";
++
++import { storeAgentTurn } from "../../../src/channels/web/messaging/agent-message-store.js";
++
++describe("agent message store", () => {
++  test("dispatches Web Push for terminal persisted replies", async () => {
++    const interaction = {
++      id: 101,
++      chat_jid: "web:default",
++      timestamp: "2026-04-14T22:10:00.000Z",
++      data: {
++        content: "Final reply",
++      },
++    } as any;
++
++    const deliveries: any[] = [];
++    const emitter = {
++      response(payload: any) {
++        deliveries.push({ type: "response", payload });
++      },
++    } as any;
++
++    const pushCalls: any[] = [];
++    const ok = storeAgentTurn({
++      consumeQueuedFollowupPlaceholder: () => null,
++      replaceQueuedFollowupPlaceholder: () => null,
++      broadcastEvent: () => {},
++      storeMessage: () => interaction,
++    } as any, emitter, {
++      chatJid: "web:default",
++      text: "Final reply",
++      attachments: [],
++      channelName: "web" as any,
++      isTerminalAgentReply: true,
++      dispatchWebPushNotification: async (payload) => {
++        pushCalls.push(payload);
++      },
++    });
++
++    expect(ok).toBe(true);
++    expect(deliveries).toHaveLength(1);
++    await Promise.resolve();
++    expect(pushCalls).toEqual([interaction]);
++  });
++
++  test("does not dispatch Web Push for non-terminal replies", async () => {
++    const interaction = {
++      id: 102,
++      chat_jid: "web:default",
++      timestamp: "2026-04-14T22:11:00.000Z",
++      data: {
++        content: "Intermediate reply",
++      },
++    } as any;
++
++    const pushCalls: any[] = [];
++    const ok = storeAgentTurn({
++      consumeQueuedFollowupPlaceholder: () => null,
++      replaceQueuedFollowupPlaceholder: () => null,
++      broadcastEvent: () => {},
++      storeMessage: () => interaction,
++    } as any, {
++      response: () => {},
++    } as any, {
++      chatJid: "web:default",
++      text: "Intermediate reply",
++      attachments: [],
++      channelName: "web" as any,
++      isTerminalAgentReply: false,
++      dispatchWebPushNotification: async (payload) => {
++        pushCalls.push(payload);
++      },
++    });
++
++    expect(ok).toBe(true);
++    await Promise.resolve();
++    expect(pushCalls).toEqual([]);
++  });
++});
+diff --git a/runtime/test/channels/web/web-push-service.test.ts b/runtime/test/channels/web/web-push-service.test.ts
+new file mode 100644
+index 0000000..98e3e8d
+--- /dev/null
++++ b/runtime/test/channels/web/web-push-service.test.ts
+@@ -0,0 +1,263 @@
++import { afterEach, describe, expect, test } from "bun:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
++
++import { upsertStoredWebPushSubscription, listStoredWebPushSubscriptions } from "../../../src/channels/web/push/web-push-store.js";
++import {
++  buildStoredAgentReplyWebPushNotification,
++  sendStoredAgentReplyWebPushNotification,
++  sendStoredWebPushNotification,
++  sendStoredWebPushTestNotification,
++} from "../../../src/channels/web/push/web-push-service.js";
++import { WebNotificationPresenceService } from "../../../src/channels/web/push/web-notification-presence-service.js";
++
++const tempDirs: string[] = [];
++
++function createTempPushDir(): string {
++  const dir = mkdtempSync(join(tmpdir(), "piclaw-web-push-service-"));
++  tempDirs.push(dir);
++  return dir;
++}
++
++afterEach(() => {
++  while (tempDirs.length > 0) {
++    const dir = tempDirs.pop();
++    if (!dir) continue;
++    rmSync(dir, { recursive: true, force: true });
++  }
++});
++
++function createSubscription(id: number, deviceId: string | null = null) {
++  return {
++    endpoint: `https://push.example.test/device/${id}`,
++    expirationTime: null,
++    keys: {
++      auth: `auth-${id}`,
++      p256dh: `p256dh-${id}`,
++    },
++    ...(deviceId ? { deviceId } : {}),
++  };
++}
++
++describe("web push service", () => {
++  test("sends payloads with derived VAPID details", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(1), { baseDir });
++
++    const deliveries: Array<{ endpoint: string; payload: Record<string, unknown>; options: Record<string, unknown> }> = [];
++    const result = await sendStoredWebPushNotification({
++      title: "Hello",
++      body: "World",
++      url: "/?chat_jid=web%3Adefault",
++      tag: "piclaw:test",
++    }, {
++      baseDir,
++      vapidSubject: "mailto:test@example.com",
++      ttl: 30,
++      urgency: "high",
++      sendNotification: async (subscription, payload, options) => {
++        deliveries.push({
++          endpoint: subscription.endpoint,
++          payload: JSON.parse(payload),
++          options,
++        });
++      },
++    });
++
++    expect(result).toEqual({ attempted: 1, sent: 1, removed: 0, failed: 0 });
++    expect(deliveries).toHaveLength(1);
++    expect(deliveries[0]?.endpoint).toBe("https://push.example.test/device/1");
++    expect(deliveries[0]?.payload).toEqual({
++      title: "Hello",
++      body: "World",
++      url: "/?chat_jid=web%3Adefault",
++      tag: "piclaw:test",
++    });
++    expect(deliveries[0]?.options.TTL).toBe(30);
++    expect(deliveries[0]?.options.urgency).toBe("high");
++    expect((deliveries[0]?.options.vapidDetails as any)?.subject).toBe("mailto:test@example.com");
++    expect((deliveries[0]?.options.vapidDetails as any)?.publicKey).toBeTruthy();
++    expect((deliveries[0]?.options.vapidDetails as any)?.privateKey).toBeTruthy();
++    expect(String((deliveries[0]?.options.vapidDetails as any)?.privateKey)).not.toContain("BEGIN");
++  });
++
++  test("defaults to the production VAPID subject when one is not supplied", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(11), { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    const result = await sendStoredWebPushNotification({
++      title: "Default subject",
++      body: "Uses the deployment URL subject",
++    }, {
++      baseDir,
++      sendNotification: async (_subscription, _payload, options) => {
++        deliveries.push(options.vapidDetails as Record<string, unknown>);
++      },
++    });
++
++    expect(result).toEqual({ attempted: 1, sent: 1, removed: 0, failed: 0 });
++    expect(deliveries).toHaveLength(1);
++    expect(deliveries[0]?.subject).toBe("https://pix.mosphere.at");
++  });
++
++  test("removes expired subscriptions and keeps non-expired failures", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(1), { baseDir });
++    upsertStoredWebPushSubscription(createSubscription(2), { baseDir });
++    upsertStoredWebPushSubscription(createSubscription(3), { baseDir });
++
++    const result = await sendStoredWebPushNotification({
++      title: "Hello again",
++      body: "Testing cleanup",
++    }, {
++      baseDir,
++      sendNotification: async (subscription) => {
++        if (subscription.endpoint.endsWith("/1")) {
++          throw { statusCode: 410 };
++        }
++        if (subscription.endpoint.endsWith("/2")) {
++          throw new Error("temporary failure");
++        }
++      },
++    });
++
++    expect(result).toEqual({ attempted: 3, sent: 1, removed: 1, failed: 1 });
++    expect(listStoredWebPushSubscriptions(baseDir).map((entry) => entry.endpoint)).toEqual([
++      "https://push.example.test/device/2",
++      "https://push.example.test/device/3",
++    ]);
++  });
++
++  test("uses generated request details with fetch and cleans up 410 responses", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(5), { baseDir });
++
++    const result = await sendStoredWebPushNotification({
++      title: "Hello via fetch",
++      body: "Testing generated request details",
++    }, {
++      baseDir,
++      generateRequestDetails: (subscription, payload) => ({
++        endpoint: subscription.endpoint,
++        method: "POST",
++        headers: {
++          TTL: 60,
++          Authorization: "WebPush test",
++          "Content-Length": payload.length,
++        },
++        body: payload,
++      }),
++      fetchImpl: async () => ({
++        ok: false,
++        status: 410,
++        headers: new Headers({ "content-type": "text/plain" }),
++        text: async () => "gone",
++      } as Response),
++    });
++
++    expect(result).toEqual({ attempted: 1, sent: 0, removed: 1, failed: 0 });
++    expect(listStoredWebPushSubscriptions(baseDir)).toEqual([]);
++  });
++
++  test("suppresses Web Push when the same device still has a live client for that chat", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(13, "device-13"), { baseDir, deviceId: "device-13" });
++
++    const presenceService = new WebNotificationPresenceService({ now: () => 1000 });
++    presenceService.upsert({
++      device_id: "device-13",
++      client_id: "client-1",
++      chat_jid: "web:default",
++      visibility_state: "hidden",
++      has_focus: false,
++    }, { nowMs: 1000 });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    const result = await sendStoredAgentReplyWebPushNotification({
++      id: 88,
++      chat_jid: "web:default",
++      timestamp: "2026-04-14T22:02:00.000Z",
++      data: { content: "Suppressed" },
++    } as any, {
++      baseDir,
++      presenceService,
++      sendNotification: async (_subscription, payload) => {
++        deliveries.push(JSON.parse(payload));
++      },
++    });
++
++    expect(result).toEqual({ attempted: 0, sent: 0, removed: 0, failed: 0 });
++    expect(deliveries).toEqual([]);
++  });
++
++  test("builds a reply notification payload from a stored interaction", () => {
++    const payload = buildStoredAgentReplyWebPushNotification({
++      id: 42,
++      chat_jid: "web:default:branch:abc",
++      timestamp: "2026-04-14T22:00:00.000Z",
++      data: {
++        content: "Hello from PiClaw\n\nwith extra whitespace.",
++      },
++    } as any);
++
++    expect(payload).toEqual({
++      title: "PiClaw reply",
++      body: "Hello from PiClaw with extra whitespace.",
++      url: "/?chat_jid=web%3Adefault%3Abranch%3Aabc#msg-42",
++      tag: "piclaw:reply:web:default:branch:abc",
++      sourceLabel: "Web Push",
++    });
++  });
++
++  test("sends a reply notification built from a stored interaction", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(7), { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    const result = await sendStoredAgentReplyWebPushNotification({
++      id: 77,
++      chat_jid: "web:default",
++      timestamp: "2026-04-14T22:01:00.000Z",
++      data: {
++        content: "Reply body",
++      },
++    } as any, {
++      baseDir,
++      sendNotification: async (_subscription, payload) => {
++        deliveries.push(JSON.parse(payload));
++      },
++    });
++
++    expect(result).toEqual({ attempted: 1, sent: 1, removed: 0, failed: 0 });
++    expect(deliveries).toEqual([{
++      title: "PiClaw reply",
++      body: "Reply body",
++      url: "/?chat_jid=web%3Adefault#msg-77",
++      tag: "piclaw:reply:web:default",
++      sourceLabel: "Web Push",
++    }]);
++  });
++
++  test("adds a default source marker to test notifications", async () => {
++    const baseDir = createTempPushDir();
++    upsertStoredWebPushSubscription(createSubscription(9), { baseDir });
++
++    const deliveries: Array<Record<string, unknown>> = [];
++    await sendStoredWebPushTestNotification({
++      baseDir,
++      sendNotification: async (_subscription, payload) => {
++        deliveries.push(JSON.parse(payload));
++      },
++    });
++
++    expect(deliveries).toEqual([{
++      title: "PiClaw notifications enabled",
++      body: "Web Push is configured for this device.",
++      url: "/",
++      tag: "piclaw:test",
++      sourceLabel: "Web Push",
++    }]);
++  });
++});

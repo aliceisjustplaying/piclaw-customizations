@@ -1,5 +1,5 @@
 diff --git a/runtime/src/channels/web/http/dispatch-agent.ts b/runtime/src/channels/web/http/dispatch-agent.ts
-index 947eb80..2db5875 100644
+index a77a57f..2db5875 100644
 --- a/runtime/src/channels/web/http/dispatch-agent.ts
 +++ b/runtime/src/channels/web/http/dispatch-agent.ts
 @@ -3,6 +3,11 @@
@@ -14,7 +14,101 @@ index 947eb80..2db5875 100644
  
  interface ExactAgentRoute {
    method: string;
-@@ -135,6 +140,21 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+@@ -60,93 +65,6 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
+     path: "/agent/autoresearch/dismiss",
+     handle: (channel, req) => channel.handleAutoresearchDismiss(req),
+   },
+-  {
+-    method: "POST" as const,
+-    path: "/agent/codex/dismiss",
+-    handle: async (_channel: any, req: Request) => {
+-      try {
+-        let taskId = "";
+-        let chatJid = "web:default";
+-        try {
+-          const body = await req.json();
+-          if (typeof body?.key === "string") taskId = body.key.replace("codex.dismiss.", "");
+-          if (typeof body?.chat_jid === "string" && body.chat_jid.trim()) chatJid = body.chat_jid.trim();
+-        } catch {}
+-        if (taskId) {
+-          try {
+-            const { existsSync, readFileSync } = await import("node:fs");
+-            const { join } = await import("node:path");
+-            const metaPath = join("/workspace/.piclaw/data/extensions/codex-delegate/tasks", taskId, "task.json");
+-            if (existsSync(metaPath)) {
+-              const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+-              if (typeof meta?.chat_jid === "string" && meta.chat_jid.trim()) chatJid = meta.chat_jid.trim();
+-            }
+-          } catch {}
+-        }
+-        const broadcast = (globalThis as any).__PICLAW_BROADCAST_EVENT__;
+-        if (typeof broadcast === "function") {
+-          const wkey = taskId ? `codex-${taskId}` : "codex-delegate";
+-          broadcast("extension_ui_widget", { chat_jid: chatJid, key: wkey, content: [], options: { surface: "status-panel", remove: true } });
+-        }
+-        return Response.json({ ok: true });
+-      } catch (err) {
+-        return Response.json({ error: String(err) }, { status: 500 });
+-      }
+-    },
+-  },
+-  {
+-    method: "POST" as const,
+-    path: "/agent/codex/stop",
+-    handle: async (_channel: any, req: Request) => {
+-      try {
+-        let taskId = "";
+-        let chatJid = "web:default";
+-        try {
+-          const body = await req.json();
+-          if (typeof body?.key === "string") taskId = body.key.replace("codex.stop.", "");
+-          if (typeof body?.chat_jid === "string" && body.chat_jid.trim()) chatJid = body.chat_jid.trim();
+-        } catch {}
+-        const { spawnSync } = await import("node:child_process");
+-        const { accessSync, constants, existsSync, readFileSync } = await import("node:fs");
+-        const { join } = await import("node:path");
+-        const searchPath = [
+-          ...(process.env.PATH || "").split(":"),
+-          "/run/current-system/sw/bin",
+-          "/etc/profiles/per-user/agent/bin",
+-          "/home/agent/.nix-profile/bin",
+-          "/nix/profile/bin",
+-          "/home/agent/.local/bin",
+-          "/home/agent/.bun/bin",
+-        ].filter(Boolean);
+-        let tmuxBin = "tmux";
+-        for (const dir of searchPath) {
+-          const candidate = `${dir}/tmux`;
+-          try { accessSync(candidate, constants.X_OK); tmuxBin = candidate; break; } catch {}
+-        }
+-        const env = { ...process.env, PATH: Array.from(new Set(searchPath)).join(":") };
+-        const tmuxSession = "codex-" + taskId;
+-        spawnSync(tmuxBin, ["send-keys", "-t", tmuxSession, "C-c", ""], { stdio: "ignore", env });
+-        setTimeout(() => spawnSync(tmuxBin, ["kill-session", "-t", tmuxSession], { stdio: "ignore", env }), 2000);
+-        if (taskId) {
+-          try {
+-            const metaPath = join("/workspace/.piclaw/data/extensions/codex-delegate/tasks", taskId, "task.json");
+-            if (existsSync(metaPath)) {
+-              const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+-              if (typeof meta?.chat_jid === "string" && meta.chat_jid.trim()) chatJid = meta.chat_jid.trim();
+-            }
+-          } catch {}
+-        }
+-        const broadcast = (globalThis as any).__PICLAW_BROADCAST_EVENT__;
+-        if (typeof broadcast === "function") {
+-          const wkey = "codex-" + taskId;
+-          broadcast("extension_ui_widget", { chat_jid: chatJid, key: wkey, content: [], options: { surface: "status-panel", remove: true } });
+-        }
+-        return Response.json({ ok: true });
+-      } catch (err) {
+-        return Response.json({ error: String(err) }, { status: 500 });
+-      }
+-    },
+-  },
+   {
+     method: "GET",
+     path: "/agent/queue-state",
+@@ -222,6 +140,21 @@ const EXACT_AGENT_ROUTES: ExactAgentRoute[] = [
      path: "/agent/card-action",
      handle: (channel, req) => channel.handleAdaptiveCardAction(req),
    },
@@ -688,10 +782,21 @@ index 0000000..6f74358
 +  expect(formatNotificationTitle('', '')).toBe('PiClaw');
 +});
 diff --git a/runtime/web/src/api.ts b/runtime/web/src/api.ts
-index 72756d0..3bcaed1 100644
+index ba6bdf0..3bcaed1 100644
 --- a/runtime/web/src/api.ts
 +++ b/runtime/web/src/api.ts
-@@ -274,6 +274,32 @@ export async function sendPeerAgentMessage(sourceChatJid, targetChatOrName, cont
+@@ -202,10 +202,6 @@ export async function getChatBranches(rootChatJid = null, options = {}) {
+     const params = new URLSearchParams();
+     if (rootChatJid) params.set('root_chat_jid', String(rootChatJid));
+     if (options?.includeArchived) params.set('include_archived', '1');
+-    if (options?.prewarmRecent) params.set('prewarm_recent', '1');
+-    if (Number.isFinite(options?.prewarmLimit)) params.set('prewarm_limit', String(options.prewarmLimit));
+-    if (options?.excludeChatJid) params.set('exclude_chat_jid', String(options.excludeChatJid));
+-    if (options?.prewarmChatJid) params.set('prewarm_chat_jid', String(options.prewarmChatJid));
+     const query = params.toString() ? `?${params.toString()}` : '';
+     return request(`/agent/branches${query}`);
+ }
+@@ -278,6 +274,32 @@ export async function sendPeerAgentMessage(sourceChatJid, targetChatOrName, cont
      });
  }
  
@@ -725,10 +830,18 @@ index 72756d0..3bcaed1 100644
   * Get available agents / current agent roster.
   */
 diff --git a/runtime/web/src/ui/app-shell-bootstrap.ts b/runtime/web/src/ui/app-shell-bootstrap.ts
-index 6dc4e0f..df44296 100644
+index 6068117..df44296 100644
 --- a/runtime/web/src/ui/app-shell-bootstrap.ts
 +++ b/runtime/web/src/ui/app-shell-bootstrap.ts
-@@ -26,6 +26,7 @@ interface AppApiSurface {
+@@ -18,7 +18,6 @@ import {
+   mindmapPaneExtension,
+   kanbanPaneExtension,
+ } from '../panes/index.js';
+-import { installAppPerfTracing } from './app-perf-tracing.js';
+ import { resolveOptionalApi } from './optional-api.js';
+ 
+ interface AppApiSurface {
+@@ -27,6 +26,7 @@ interface AppApiSurface {
  
  let initialized = false;
  let browserNoiseFilterInstalled = false;
@@ -736,7 +849,7 @@ index 6dc4e0f..df44296 100644
  
  export function configureMarked(markedInstance: { setOptions?: (options: Record<string, unknown>) => void } | null | undefined): void {
    if (!markedInstance || typeof markedInstance.setOptions !== 'function') return;
-@@ -72,6 +73,16 @@ export function registerAppPaneExtensions(): void {
+@@ -73,6 +73,16 @@ export function registerAppPaneExtensions(): void {
    paneRegistry.register(terminalTabPaneExtension);
  }
  
@@ -753,10 +866,11 @@ index 6dc4e0f..df44296 100644
  export function initializeAppShellRuntime(): void {
    if (initialized) return;
    const markedInstance = typeof window !== 'undefined'
-@@ -80,6 +91,7 @@ export function initializeAppShellRuntime(): void {
+@@ -81,7 +91,7 @@ export function initializeAppShellRuntime(): void {
    configureMarked(markedInstance);
    installBrowserNoiseFilters(typeof window !== 'undefined' ? window : null);
    registerAppPaneExtensions();
+-  installAppPerfTracing(typeof window !== 'undefined' ? window as any : null);
 +  registerAppServiceWorker(typeof window !== 'undefined' ? window : null);
    initialized = true;
  }

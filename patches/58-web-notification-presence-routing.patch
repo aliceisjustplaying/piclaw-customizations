@@ -636,10 +636,19 @@ index 0000000..a4993ad
 +  });
 +});
 diff --git a/runtime/web/src/app.ts b/runtime/web/src/app.ts
-index 0348aa4..9aab2b1 100644
+index d371d69..9aab2b1 100644
 --- a/runtime/web/src/app.ts
 +++ b/runtime/web/src/app.ts
-@@ -260,6 +260,7 @@ function MainApp({ locationParams, navigate }) {
+@@ -153,8 +153,6 @@ function MainApp({ locationParams, navigate }) {
+         viewStateRef: surface.viewStateRef,
+         followupQueueRowIdsRef: surface.followupQueueRowIdsRef,
+         currentChatJid,
+-        currentHashtag: surface.currentHashtag,
+-        searchQuery: surface.searchQuery,
+         followupQueueItems: surface.followupQueueItems,
+     });
+ 
+@@ -262,6 +260,7 @@ function MainApp({ locationParams, navigate }) {
              lastNotifiedIdRef: surface.lastNotifiedIdRef,
              agentsRef: surface.agentsRef,
              notify: surface.notify,
@@ -696,10 +705,10 @@ index f8ac6cf..47105a1 100644
    return {
      clearQueuedSteerStateIfStale,
 diff --git a/runtime/web/src/ui/app-main-surface-state.ts b/runtime/web/src/ui/app-main-surface-state.ts
-index 997f57d..8134a09 100644
+index 4f44251..84f9831 100644
 --- a/runtime/web/src/ui/app-main-surface-state.ts
 +++ b/runtime/web/src/ui/app-main-surface-state.ts
-@@ -91,7 +91,8 @@ export function useMainAppSurfaceState(options: {
+@@ -111,7 +111,8 @@ export function useMainAppSurfaceState(options: {
      notificationPermission,
      toggleNotifications: handleToggleNotifications,
      notify,
@@ -709,7 +718,7 @@ index 997f57d..8134a09 100644
  
    const [removingPostIds, setRemovingPostIds] = useState(() => new Set<string | number>());
    const [workspaceOpen, setWorkspaceOpen] = useState(() => readStoredWorkspaceOpenPreference({
-@@ -204,6 +205,7 @@ export function useMainAppSurfaceState(options: {
+@@ -224,6 +225,7 @@ export function useMainAppSurfaceState(options: {
      notificationPermission,
      handleToggleNotifications,
      notify,
