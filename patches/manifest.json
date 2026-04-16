@@ -55,7 +55,7 @@
     "47": {
       "name": "stable-root-chat-resolution",
       "track_upstream": true,
-      "upstream_prs": []
+      "upstream_prs": [48]
     },
     "48": {
       "name": "web-ui-tracing-hooks",
@@ -65,12 +65,12 @@
     "49": {
       "name": "thread-state-hydration-after-timeline-load",
       "track_upstream": true,
-      "upstream_prs": []
+      "upstream_prs": [49]
     },
     "50": {
       "name": "cold-open-refresh-coordination",
       "track_upstream": true,
-      "upstream_prs": []
+      "upstream_prs": [50]
     },
     "51": {
       "name": "recent-thread-timeline-cache",
@@ -80,7 +80,7 @@
     "52": {
       "name": "deferred-branch-session-seeding",
       "track_upstream": true,
-      "upstream_prs": []
+      "upstream_prs": [51]
     },
     "53": {
       "name": "recent-branch-warmup",
@@ -100,7 +100,7 @@
     "56": {
       "name": "longer-idle-session-ttl",
       "track_upstream": true,
-      "upstream_prs": []
+      "upstream_prs": [52]
     }
   }
 }
