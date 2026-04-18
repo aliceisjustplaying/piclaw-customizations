@@ -312,15 +312,17 @@ refresh_source_checkout() {
     quiet git clone --branch "${FORK_BRANCH}" --no-single-branch "${FORK_URL}" "${CACHE_DIR}"
   fi
 
-  # Track upstream/main in the cache so we can count customization commits
-  # (commits on pix/main not on upstream/main). Network cost is low since
-  # upstream history is already present via the fork.
+  # Track upstream/main plus upstream tags in the cache so we can count
+  # customization commits and keep `git describe` anchored to the current
+  # upstream release tag. `--force` is intentional here: the fork may carry
+  # older local tag objects for the same release names, and we want the cache's
+  # release tags to match upstream exactly.
   if git -C "${CACHE_DIR}" remote get-url upstream >/dev/null 2>&1; then
     quiet git -C "${CACHE_DIR}" remote set-url upstream "${UPSTREAM_URL}"
   else
     quiet git -C "${CACHE_DIR}" remote add upstream "${UPSTREAM_URL}"
   fi
-  quiet git -C "${CACHE_DIR}" fetch --prune upstream main
+  quiet git -C "${CACHE_DIR}" fetch --prune --force --tags upstream main
 
   status "Creating candidate checkout in ${SOURCE_DIR}"
   # Clone from the local cache with tags so `git describe` works in the
