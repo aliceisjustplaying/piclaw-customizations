@@ -100,6 +100,7 @@ What the update script actually does, in order:
 
 1. Acquire `${STATE_DIR}/piclaw-live.update.lock` (mutex against concurrent update/rollback).
 2. Fetch `pix/main` from the fork into `/workspace/.cache/piclaw-fork`, then clone it into a fresh candidate checkout under `/workspace/.tmp/piclaw-update.*`.
+   The cache is only a local accelerator. Candidate/live checkouts are rewritten so `origin` points at the GitHub fork, `upstream` points at `rcarmo/piclaw`, and the local cache is exposed as `fork-cache`.
 3. Compare the candidate's HEAD against the live tree; exit "Already up to date" if the SHAs match (overridable with `--force` / `--verify-only`).
 4. Verify the candidate: `git diff --check HEAD`, no conflict markers, `session.ts` imports match the customization.
 5. `bun install --ignore-scripts` + `bun run build` + `bun run build:web`, then delete `.map` files from `runtime/web/static/dist/`.

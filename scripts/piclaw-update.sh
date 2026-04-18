@@ -260,6 +260,27 @@ get_source_version() {
   git -C "${SOURCE_DIR}" describe --always --dirty --tags
 }
 
+configure_candidate_git_remotes() {
+  # Candidate/live checkouts should point at GitHub directly. Keep the local
+  # cache as an optional side remote for debugging, not as the default origin.
+  quiet git -C "${SOURCE_DIR}" remote set-url origin "${FORK_URL}"
+
+  if git -C "${SOURCE_DIR}" remote get-url upstream >/dev/null 2>&1; then
+    quiet git -C "${SOURCE_DIR}" remote set-url upstream "${UPSTREAM_URL}"
+  else
+    quiet git -C "${SOURCE_DIR}" remote add upstream "${UPSTREAM_URL}"
+  fi
+
+  if git -C "${SOURCE_DIR}" remote get-url fork-cache >/dev/null 2>&1; then
+    quiet git -C "${SOURCE_DIR}" remote set-url fork-cache "${CACHE_DIR}"
+  else
+    quiet git -C "${SOURCE_DIR}" remote add fork-cache "${CACHE_DIR}"
+  fi
+
+  quiet git -C "${SOURCE_DIR}" fetch upstream \
+    "+refs/heads/main:refs/remotes/upstream/main"
+}
+
 get_current_pi_agent_version() {
   if [ -d "${LIVE_DIR}/node_modules" ]; then
     get_pi_agent_version_from_root "${LIVE_DIR}"
@@ -360,12 +381,7 @@ refresh_source_checkout() {
   # Clone from the local cache with tags so `git describe` works in the
   # candidate / activated live tree.
   quiet git clone --no-hardlinks --branch "${FORK_BRANCH}" --no-single-branch "${CACHE_DIR}" "${SOURCE_DIR}"
-
-  # Carry the cache's upstream/main ref into the candidate so
-  # count_customization_commits can resolve it post-activation. `git clone`
-  # does not copy remote-tracking refs, so fetch it explicitly from the cache.
-  quiet git -C "${SOURCE_DIR}" fetch "${CACHE_DIR}" \
-    "+refs/remotes/upstream/main:refs/remotes/upstream/main"
+  configure_candidate_git_remotes
 }
 
 compare_versions_or_exit() {
