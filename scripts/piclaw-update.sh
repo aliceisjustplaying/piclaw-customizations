@@ -329,8 +329,12 @@ refresh_source_checkout() {
   if [ -d "${CACHE_DIR}/.git" ]; then
     quiet git -C "${CACHE_DIR}" remote set-url origin "${FORK_URL}"
     # Fetch branch + all tags so `git describe` finds the correct upstream
-    # release tag (v1.7.x) instead of falling back to an older one.
-    quiet git -C "${CACHE_DIR}" fetch --prune --tags origin "${FORK_BRANCH}"
+    # release tag (v1.7.x / v1.8.x) instead of falling back to an older one.
+    # `--force` is required because upstream/main fetches below also use
+    # `--force --tags`; without `--force` here, any tag-object conflict on
+    # shared release tags causes git to silently drop the branch ref update,
+    # leaving `origin/${FORK_BRANCH}` pointing at the previous deploy's HEAD.
+    quiet git -C "${CACHE_DIR}" fetch --prune --force --tags origin "${FORK_BRANCH}"
     quiet git -C "${CACHE_DIR}" checkout -B "${FORK_BRANCH}" "origin/${FORK_BRANCH}"
     quiet git -C "${CACHE_DIR}" reset --hard "origin/${FORK_BRANCH}"
   else
