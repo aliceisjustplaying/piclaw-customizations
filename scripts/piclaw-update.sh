@@ -290,6 +290,34 @@ update_report_line() {
   fi
 }
 
+check_disk_space() {
+  local required_mb="${PICLAW_UPDATE_MIN_FREE_MB:-2048}"
+  local check_dir="${WORK_ROOT:-/workspace/.tmp}"
+  local mount_point="${check_dir}"
+
+  # df expects an existing path; fall back to /workspace if the tmp root
+  # hasn't been created yet at this point in the run.
+  if [ ! -e "${mount_point}" ]; then
+    mount_point="/workspace"
+  fi
+
+  local avail_mb
+  avail_mb="$(df --output=avail -B1M "${mount_point}" 2>/dev/null | tail -1 | tr -d ' ')"
+
+  if [ -z "${avail_mb}" ] || ! [[ "${avail_mb}" =~ ^[0-9]+$ ]]; then
+    status "WARNING: could not determine free space on ${mount_point}; continuing"
+    return 0
+  fi
+
+  if [ "${avail_mb}" -lt "${required_mb}" ]; then
+    error "Insufficient disk space on ${mount_point}: ${avail_mb} MB free, need >= ${required_mb} MB"
+    error "Run ${SCRIPT_DIR}/piclaw-tmp-gc.sh (or set PICLAW_UPDATE_MIN_FREE_MB to override)"
+    exit 1
+  fi
+
+  status "Disk check OK: ${avail_mb} MB free on ${mount_point}"
+}
+
 refresh_source_checkout() {
   status "Refreshing fork cache in ${CACHE_DIR}"
 
@@ -624,6 +652,7 @@ main() {
   require_command git
   acquire_lock
   setup_work_dirs
+  check_disk_space
   refresh_source_checkout
   compare_versions_or_exit
 
