@@ -20,7 +20,12 @@ const FAST_FLAG = "fast";
 const FAST_CONFIG_BASENAME = "pi-openai-fast.json";
 const FAST_COMMAND_ARGS = ["on", "off", "status"] as const;
 const FAST_SERVICE_TIER = "priority";
-const DEFAULT_SUPPORTED_MODEL_KEYS = ["openai/gpt-5.4", "openai-codex/gpt-5.4"] as const;
+const DEFAULT_SUPPORTED_MODEL_KEYS = [
+	"openai/gpt-5.4",
+	"openai-codex/gpt-5.4",
+	"openai/gpt-5.5",
+	"openai-codex/gpt-5.5",
+] as const;
 
 interface FastModeState {
 	active: boolean;

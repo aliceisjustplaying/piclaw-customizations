@@ -51,7 +51,9 @@ Default config:
   "active": false,
   "supportedModels": [
     "openai/gpt-5.4",
-    "openai-codex/gpt-5.4"
+    "openai-codex/gpt-5.4",
+    "openai/gpt-5.5",
+    "openai-codex/gpt-5.5"
   ]
 }
 ```
