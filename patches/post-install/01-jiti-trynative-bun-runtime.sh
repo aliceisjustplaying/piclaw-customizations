@@ -46,7 +46,8 @@ PATCHED=0
 for loader in "${UNIQUE_PATHS[@]}"; do
   needs_patch=0
 
-  if grep -q 'import { getAgentDir, isBunBinary }' "$loader" 2>/dev/null; then
+  if grep -q 'import { getAgentDir, isBunBinary }' "$loader" 2>/dev/null || \
+     grep -q 'import { CONFIG_DIR_NAME, getAgentDir, isBunBinary }' "$loader" 2>/dev/null; then
     needs_patch=1
   fi
 
@@ -66,6 +67,7 @@ for loader in "${UNIQUE_PATHS[@]}"; do
   cp "$loader" "$tmp"
 
   sed -i 's|import { getAgentDir, isBunBinary }|import { getAgentDir, isBunBinary, isBunRuntime }|' "$tmp"
+  sed -i 's|import { CONFIG_DIR_NAME, getAgentDir, isBunBinary }|import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBunRuntime }|' "$tmp"
   sed -i 's|isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }|isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases(), ...(isBunRuntime \&\& { tryNative: false }) }|' "$tmp"
 
   cp "$tmp" "$loader" 2>/dev/null || sudo cp --preserve=mode,ownership "$tmp" "$loader"
