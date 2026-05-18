@@ -4,7 +4,7 @@
 # Fix: jiti's tryNative must be false when running under Bun (not just
 # compiled Bun binaries). Without this, Bun's native resolver handles
 # imports before jiti can apply its alias map, breaking pi package
-# extensions that import @mariozechner/* peer dependencies.
+# extensions that import pi-coding-agent peer dependencies.
 #
 # Two changes needed:
 # 1. Add isBunRuntime to the import from config.js
@@ -20,12 +20,14 @@ if [ "$#" -ne 1 ]; then
 fi
 
 REPO_ROOT="$1"
-TOP_LEVEL_LOADER="${REPO_ROOT}/node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/loader.js"
-NESTED_LOADER="${REPO_ROOT}/node_modules/piclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/loader.js"
-
 LOADER_PATHS=()
-[ -f "${TOP_LEVEL_LOADER}" ] && LOADER_PATHS+=("${TOP_LEVEL_LOADER}")
-[ -f "${NESTED_LOADER}" ] && LOADER_PATHS+=("${NESTED_LOADER}")
+for loader in \
+  "${REPO_ROOT}/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js" \
+  "${REPO_ROOT}/node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/loader.js" \
+  "${REPO_ROOT}/node_modules/piclaw/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js" \
+  "${REPO_ROOT}/node_modules/piclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/extensions/loader.js"; do
+  [ -f "${loader}" ] && LOADER_PATHS+=("${loader}")
+done
 
 if [ "${#LOADER_PATHS[@]}" -eq 0 ]; then
   echo "No pi-coding-agent loader.js found under ${REPO_ROOT}" >&2

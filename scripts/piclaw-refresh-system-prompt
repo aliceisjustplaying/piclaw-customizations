@@ -9,8 +9,10 @@ write_system_prompt() {
   local template="${REPO_DIR}/SYSTEM.base.md"
   local out="${PICLAW_SYSTEM_PROMPT_OUT}"
   local pi_bin="${HOME}/.local/bin/pi"
-  local bundled_cli="/workspace/src/piclaw-live/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
-  local global_cli="${HOME}/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
+  local bundled_cli="/workspace/src/piclaw-live/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+  local bundled_cli_legacy="/workspace/src/piclaw-live/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
+  local global_cli="${HOME}/.bun/install/global/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+  local global_cli_legacy="${HOME}/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
 
   if [ ! -f "${template}" ]; then
     echo "piclaw-refresh-system-prompt: missing template ${template}" >&2
@@ -27,14 +29,24 @@ write_system_prompt() {
 set -euo pipefail
 
 bundled_cli="${bundled_cli}"
+bundled_cli_legacy="${bundled_cli_legacy}"
 global_cli="${global_cli}"
+global_cli_legacy="${global_cli_legacy}"
 
 if [ -f "\$bundled_cli" ]; then
   exec node "\$bundled_cli" "\$@"
 fi
 
+if [ -f "\$bundled_cli_legacy" ]; then
+  exec node "\$bundled_cli_legacy" "\$@"
+fi
+
 if [ -f "\$global_cli" ]; then
   exec node "\$global_cli" "\$@"
+fi
+
+if [ -f "\$global_cli_legacy" ]; then
+  exec node "\$global_cli_legacy" "\$@"
 fi
 
 echo "pi launcher: no pi-coding-agent CLI found in bundled or global locations" >&2

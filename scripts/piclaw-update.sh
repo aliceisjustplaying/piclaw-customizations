@@ -208,22 +208,30 @@ require_commands() {
 }
 
 get_global_pi_agent_version() {
-  local pkg_json="${HOME}/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/package.json"
-  if [ -f "${pkg_json}" ]; then
-    jq -r '.version' "${pkg_json}" 2>/dev/null || echo "unknown"
-  else
-    echo "not installed"
-  fi
+  local pkg_json
+  for pkg_json in \
+    "${HOME}/.bun/install/global/node_modules/@earendil-works/pi-coding-agent/package.json" \
+    "${HOME}/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/package.json"; do
+    if [ -f "${pkg_json}" ]; then
+      jq -r '.version' "${pkg_json}" 2>/dev/null || echo "unknown"
+      return 0
+    fi
+  done
+  echo "not installed"
 }
 
 get_pi_agent_version_from_root() {
   local root="$1"
-  local pkg_json="${root}/node_modules/@mariozechner/pi-coding-agent/package.json"
-  if [ -f "${pkg_json}" ]; then
-    jq -r '.version' "${pkg_json}" 2>/dev/null || echo "unknown"
-  else
-    echo "not installed"
-  fi
+  local pkg_json
+  for pkg_json in \
+    "${root}/node_modules/@earendil-works/pi-coding-agent/package.json" \
+    "${root}/node_modules/@mariozechner/pi-coding-agent/package.json"; do
+    if [ -f "${pkg_json}" ]; then
+      jq -r '.version' "${pkg_json}" 2>/dev/null || echo "unknown"
+      return 0
+    fi
+  done
+  echo "not installed"
 }
 
 get_current_piclaw_version() {
@@ -473,16 +481,24 @@ build_from_source() {
     exit 1
   fi
 
-  find runtime/web/static/dist -type f -name '*.map' -delete
+  find runtime/web/static -path '*/dist/*.map' -type f -delete
 }
 
 validate_candidate() {
   status "Validating candidate checkout"
-  test -s "${SOURCE_DIR}/runtime/web/static/dist/app.bundle.js"
-  test -s "${SOURCE_DIR}/runtime/web/static/dist/app.bundle.css"
-  test -s "${SOURCE_DIR}/runtime/web/static/dist/login.bundle.js"
-  test -s "${SOURCE_DIR}/runtime/web/static/dist/login.bundle.css"
-  test -f "${SOURCE_DIR}/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
+  if [ -d "${SOURCE_DIR}/runtime/web/static/classic/dist" ] || [ -d "${SOURCE_DIR}/runtime/web/static/common/dist" ]; then
+    test -s "${SOURCE_DIR}/runtime/web/static/classic/dist/app.bundle.js"
+    test -s "${SOURCE_DIR}/runtime/web/static/classic/dist/app.bundle.css"
+    test -s "${SOURCE_DIR}/runtime/web/static/common/dist/login.bundle.js"
+    test -s "${SOURCE_DIR}/runtime/web/static/common/dist/login.bundle.css"
+  else
+    test -s "${SOURCE_DIR}/runtime/web/static/dist/app.bundle.js"
+    test -s "${SOURCE_DIR}/runtime/web/static/dist/app.bundle.css"
+    test -s "${SOURCE_DIR}/runtime/web/static/dist/login.bundle.js"
+    test -s "${SOURCE_DIR}/runtime/web/static/dist/login.bundle.css"
+  fi
+  test -f "${SOURCE_DIR}/node_modules/@earendil-works/pi-coding-agent/dist/cli.js" \
+    || test -f "${SOURCE_DIR}/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
 }
 
 stage_system_prompt() {
@@ -522,7 +538,7 @@ update_global_pi_agent_cli() {
   fi
 
   status "Updating global pi-coding-agent CLI"
-  if ! quiet bun add -g @mariozechner/pi-coding-agent@latest; then
+  if ! quiet bun add -g @earendil-works/pi-coding-agent@latest; then
     status "Global pi-coding-agent update failed; continuing"
   fi
 

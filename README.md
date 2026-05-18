@@ -103,15 +103,15 @@ What the update script actually does, in order:
    The cache is only a local accelerator. Candidate/live checkouts are rewritten so `origin` points at the GitHub fork, `upstream` points at `rcarmo/piclaw`, and the local cache is exposed as `fork-cache`.
 3. Compare the candidate's HEAD against the live tree; exit "Already up to date" if the SHAs match (overridable with `--force` / `--verify-only`).
 4. Verify the candidate: `git diff --check HEAD`, no conflict markers, `session.ts` imports match the customization.
-5. `bun install --ignore-scripts` + `bun run build` + `bun run build:web`, then delete `.map` files from `runtime/web/static/dist/`.
-6. Assert bundle + `@mariozechner/pi-coding-agent/dist/cli.js` exist.
+5. `bun install --ignore-scripts` + `bun run build` + `bun run build:web`, then delete `.map` files from built `runtime/web/static/*/dist/` bundles.
+6. Assert bundle + `@earendil-works/pi-coding-agent/dist/cli.js` exist, with legacy package fallback.
 7. Apply post-install dependency patches (`patches/post-install/[0-9]*.sh`) against the candidate's `node_modules`.
 8. Stage a new `SYSTEM.md` from `SYSTEM.base.md` via `piclaw-refresh-system-prompt`.
 9. (`--verify-only` exits here.)
 10. Activate: `mv piclaw-live piclaw-live.previous`, `mv candidate piclaw-live`.
 11. Rsync `extensions/*/` to `/workspace/.pi/extensions`; copy matching `configs/<name>.json`; symlink each extension's `node_modules` to the live tree.
 12. Install the staged `SYSTEM.md` to `~/.pi/agent/SYSTEM.md`.
-13. `bun add -g @mariozechner/pi-coding-agent@latest`.
+13. `bun add -g @earendil-works/pi-coding-agent@latest`.
 14. Print a single-line summary (version, customization-commit count, HEAD prefix).
 
 Codex and Claude "updates" are explicit no-ops — those CLIs are Nix-managed; the script just prints their current version. On failure after step 10, the EXIT trap rolls back by swapping `piclaw-live.previous` back into place.

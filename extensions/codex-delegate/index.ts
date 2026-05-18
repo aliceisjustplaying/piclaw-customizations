@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { Type } from "@sinclair/typebox";
-import type { AgentToolResult, ExtensionAPI, ExtensionContext, ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 type TaskState = "running" | "completed" | "failed" | "stopped";
 

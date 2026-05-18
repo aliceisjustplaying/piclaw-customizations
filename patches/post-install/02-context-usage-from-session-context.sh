@@ -18,11 +18,20 @@ if [ -z "$SUDO_BIN" ] && [ -x /run/current-system/sw/bin/sudo ]; then
 fi
 
 TARGETS=(
+  /home/agent/.bun/install/global/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js
   /home/agent/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js
 )
 
+for cached in /home/agent/.bun/install/cache/@earendil-works/pi-coding-agent@*/dist/core/agent-session.js; do
+  [ -f "$cached" ] && TARGETS+=("$cached")
+done
+
 for cached in /home/agent/.bun/install/cache/@mariozechner/pi-coding-agent@*/dist/core/agent-session.js; do
   [ -f "$cached" ] && TARGETS+=("$cached")
+done
+
+for nested in /home/agent/.bun/install/global/node_modules/piclaw/node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js; do
+  [ -f "$nested" ] && TARGETS+=("$nested")
 done
 
 for nested in /home/agent/.bun/install/global/node_modules/piclaw/node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js; do
