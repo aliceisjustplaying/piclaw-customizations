@@ -15,7 +15,7 @@ error() {
 }
 
 run_as_agent() {
-  sudo -u agent -H env \
+  runuser -u agent -- env \
     HOME="${AGENT_HOME}" \
     USER=agent \
     PATH="${AGENT_PATH}" \
